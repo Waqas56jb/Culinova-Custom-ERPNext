@@ -5,7 +5,7 @@ import { authorize, redactFinancials } from '../../middleware/rbac.js'
 import { asyncWrap } from '../../middleware/error.js'
 import { logAudit } from '../../core/audit.js'
 import { uploadAttachment, signAttachments } from '../../core/chatfiles.js'
-import { winOpportunityForCustomer } from '../../core/winopp.js'
+import { ensureLeadAndOpportunity, advanceOpportunity, winOpportunityForCustomer } from '../../core/crmflow.js'
 import { validateRequiredFields, computeFinancials, evaluateApproval, discountSource, RULES } from './quotation.rules.js'
 
 const r = Router()
@@ -72,6 +72,9 @@ r.post('/quotations', authRequired, authorize('sales', 'create'), asyncWrap(asyn
     })))
   }
   await supabase.from('quotation_revisions').insert({ quotation_id: q.id, revision: 0, changed_by: req.user.id, changes: { action: 'created', ...fin } })
+  // CRM automation: ensure the customer has an opportunity, then move it to the Quotation stage
+  await ensureLeadAndOpportunity({ name: q.customer, email: q.customer_email })
+  await advanceOpportunity(q.customer, 'Quotation')
   await logAudit(req.user, 'quotation', q.id, 'created', { number: q.number, status, gp: fin.gp_percent })
   res.status(201).json({ ...redactFinancials(req.user.role, q), _approval: decision })
 }))

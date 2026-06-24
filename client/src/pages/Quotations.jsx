@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, AlertTriangle, Pencil, Check, X, ThumbsUp, ShoppingCart, FileText, Loader2 } from 'lucide-react'
+import { Plus, AlertTriangle, Pencil, Check, X, ThumbsUp, FileText, Loader2 } from 'lucide-react'
 import { PageHeader, Badge, statusTone } from '../components/ui.jsx'
 import { sar } from '../data/mockData.js'
 import { useData } from '../store/DataContext.jsx'
@@ -10,7 +10,7 @@ const MGMT = ['Management', 'System Admin']
 const APPROVERS = ['Management', 'System Admin', 'Sales Manager']
 
 export default function Quotations() {
-  const { quotations, openForm, approveQuotation, rejectQuotation, acceptQuotation, lostQuotation } = useData()
+  const { quotations, openForm, approveQuotation, rejectQuotation } = useData()
   const { user } = useAuth()
   const isMgmt = MGMT.includes(user?.role)
   const canApprove = APPROVERS.includes(user?.role)
@@ -19,9 +19,10 @@ export default function Quotations() {
 
   const run = async (id, fn) => { setBusy(id); try { await fn() } catch (e) { alert(e.message) } finally { setBusy(null) } }
 
-  const accept = (q) => { if (window.confirm(`Accept ${q.ref}? This creates a Sales Order + Project automatically.`)) run(q.id, () => acceptQuotation(q.id)) }
-  const markLost = (q) => { const reason = window.prompt(`Mark ${q.ref} as Lost — reason is required:`); if (reason && reason.trim()) run(q.id, () => lostQuotation(q.id, reason.trim())) }
-  const reject = (q) => { const reason = window.prompt('Reject — reason (optional):') ?? ''; run(q.id, () => rejectQuotation(q.id, reason)) }
+  // NOTE: Accepting / rejecting a quotation is the CUSTOMER's decision (done in their portal).
+  // The salesperson only creates, edits, sends and views. `reject` here is the internal
+  // manager approval-reject (discount/GP), not the customer's order decision.
+  const reject = (q) => { const reason = window.prompt('Reject (approval) — reason (optional):') ?? ''; run(q.id, () => rejectQuotation(q.id, reason)) }
 
   const Act = ({ onClick, tone = 'brand', icon: Icon, children, disabled, loading }) => (
     <button onClick={onClick} disabled={disabled || loading}
@@ -42,7 +43,7 @@ export default function Quotations() {
 
       <div className="mb-4 flex items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 animate-fade-up">
         <AlertTriangle size={18} className="shrink-0" />
-        <span><b>Business rules:</b> discount &gt;20% (or GP &lt;35%) needs manager approval before sending · discount &gt;25% is blocked · quotations are never deleted, only marked Lost.</span>
+        <span><b>Business rules:</b> discount &gt;20% (or GP &lt;35%) needs manager approval before sending · discount &gt;25% is blocked · <b>only the customer</b> can Accept / Reject a quotation (in their portal).</span>
       </div>
 
       <div className="card overflow-hidden">
@@ -58,7 +59,6 @@ export default function Quotations() {
             <tbody>
               {quotations.map((q) => {
                 const pending = q.approval === 'Pending'
-                const editable = ['Open', 'Draft', 'Pending Approval'].includes(q.status)
                 return (
                   <tr key={q.id} className="hover:bg-slate-50/60">
                     <td className="td font-semibold text-brand-600">{q.ref}</td>
@@ -82,15 +82,11 @@ export default function Quotations() {
                         {!pending && q.status === 'Open' && (
                           <>
                             <Act onClick={() => openForm('quotation', q)} icon={Pencil} disabled={busy === q.id}>Edit</Act>
-                            <Act onClick={() => accept(q)} tone="emerald" icon={ShoppingCart} loading={busy === q.id}>Accept</Act>
-                            <Act onClick={() => markLost(q)} tone="rose" icon={X} loading={busy === q.id}>Lost</Act>
+                            <span className="text-xs font-medium text-slate-400">Sent · awaiting customer</span>
                           </>
                         )}
                         {!pending && q.status === 'Draft' && (
-                          <>
-                            <Act onClick={() => openForm('quotation', q)} icon={Pencil} disabled={busy === q.id}>Edit</Act>
-                            <Act onClick={() => markLost(q)} tone="rose" icon={X} loading={busy === q.id}>Lost</Act>
-                          </>
+                          <Act onClick={() => openForm('quotation', q)} icon={Pencil} disabled={busy === q.id}>Edit</Act>
                         )}
                         {q.status === 'Ordered' && <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600"><Check size={13} /> Ordered</span>}
                         {q.status === 'Lost' && <span className="text-xs font-semibold text-slate-400">Lost</span>}

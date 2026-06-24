@@ -3,7 +3,7 @@ import { supabase } from '../../config/supabase.js'
 import { authRequired } from '../../middleware/auth.js'
 import { asyncWrap } from '../../middleware/error.js'
 import { uploadAttachment, signAttachments } from '../../core/chatfiles.js'
-import { winOpportunityForCustomer } from '../../core/winopp.js'
+import { ensureLeadAndOpportunity, advanceOpportunity, winOpportunityForCustomer, loseOpportunityForCustomer } from '../../core/crmflow.js'
 
 const r = Router()
 const num = (p) => `${p}-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`
@@ -40,6 +40,11 @@ r.post('/customer/messages', authRequired, asyncWrap(async (req, res) => {
     customer_name: req.user.name, customer_email: req.user.email, sender: 'customer', body, ...file,
   }).select().single()
   if (error) throw error
+  // CRM automation: first contact → capture Lead + Opportunity (Prospecting);
+  // if a quotation is already in play, a reply moves it to Negotiation.
+  await ensureLeadAndOpportunity({ name: req.user.name, email: req.user.email })
+  const { data: hasQuote } = await supabase.from('quotations').select('id').ilike('customer', req.user.name).limit(1).maybeSingle()
+  if (hasQuote) await advanceOpportunity(req.user.name, 'Negotiation')
   res.status(201).json(data)
 }))
 
@@ -70,6 +75,7 @@ r.post('/customer/quotations/:id/reject', authRequired, asyncWrap(async (req, re
   if (!ownsQuote(q, req.user)) return res.status(403).json({ error: 'Not your quotation' })
   await supabase.from('quotations').update({ status: 'Lost' }).eq('id', q.id)
   await supabase.from('quotation_revisions').insert({ quotation_id: q.id, revision: 9999, changed_by: req.user.id, changes: { action: 'customer-rejected', reason } })
+  await loseOpportunityForCustomer(q.customer, reason) // opportunity → Lost
   await supabase.from('messages').insert({ customer_name: req.user.name, customer_email: req.user.email, sender: 'customer', body: `❌ I have REJECTED quotation ${q.number}. Reason: ${reason}` })
   res.json({ ok: true })
 }))
@@ -87,6 +93,7 @@ r.post('/customer/quotations/:id/concession', authRequired, asyncWrap(async (req
   const note = (req.body.note || '').trim()
   const { data: q } = await supabase.from('quotations').select('*').eq('id', req.params.id).single()
   if (!ownsQuote(q, req.user)) return res.status(403).json({ error: 'Not your quotation' })
+  await advanceOpportunity(q.customer, 'Negotiation') // concession → Negotiation
   await supabase.from('messages').insert({ customer_name: req.user.name, customer_email: req.user.email, sender: 'customer', body: `💬 Concession request on quotation ${q.number}: ${note || 'Could you please offer a better price?'}` })
   res.json({ ok: true })
 }))
