@@ -7,7 +7,8 @@ import { notFound, errorHandler } from './middleware/error.js'
 
 export function createApp() {
   const app = express()
-  app.use(cors({ origin: env.corsOrigins, credentials: true }))
+  // CORS '*' (or unset) → reflect any origin. Auth is via Bearer token, not cookies.
+  app.use(cors({ origin: env.corsOrigins.includes('*') ? true : env.corsOrigins, credentials: true }))
   app.use(express.json({ limit: '2mb' }))
   app.use(morgan('dev'))
 
