@@ -33,19 +33,23 @@ export default function SalesDashboard() {
   const { openForm, leads, opportunities, quotations, salesOrders, customers } = useData()
 
   const openOpps = opportunities.filter((o) => !['Won', 'Lost'].includes(o.stage))
+  const wonOpps = opportunities.filter((o) => o.stage === 'Won').length
   const pipelineValue = openOpps.reduce((s, o) => s + (o.value || 0), 0)
   const wonValue = salesOrders.reduce((s, o) => s + (o.amount || 0), 0)
+  const oppSub = opportunities.length
+    ? `${openOpps.length} open · ${wonOpps} won`
+    : 'none yet'
 
   const kpis = [
     { key: 'leads', label: 'Leads', value: String(leads.length), sub: 'total captured', accent: 'brand', icon: Users2 },
-    { key: 'opps', label: 'Open Opportunities', value: String(openOpps.length), sub: `${sar(pipelineValue)} pipeline`, accent: 'violet', icon: Target },
+    { key: 'opps', label: 'Opportunities', value: String(opportunities.length), sub: oppSub, accent: 'violet', icon: Target },
     { key: 'quotes', label: 'Quotations', value: String(quotations.length), sub: 'created', accent: 'gold', icon: FileText },
     { key: 'orders', label: 'Sales Orders', value: String(salesOrders.length), sub: `${sar(wonValue)} won`, accent: 'emerald', icon: ClipboardList },
   ]
 
   const pipelineFunnel = [
     { stage: 'Leads', value: leads.length, fill: '#0EA99A' },
-    { stage: 'Opportunities', value: openOpps.length, fill: '#2bb6a6' },
+    { stage: 'Opportunities', value: opportunities.length, fill: '#2bb6a6' },
     { stage: 'Quotations', value: quotations.length, fill: '#5fcabd' },
     { stage: 'Orders', value: salesOrders.length, fill: '#E0A82E' },
   ]
