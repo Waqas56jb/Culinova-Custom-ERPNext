@@ -1,14 +1,15 @@
 import express from 'express'
 import cors from 'cors'
 import morgan from 'morgan'
-import { env } from './config/env.js'
 import api from './routes/index.js'
 import { notFound, errorHandler } from './middleware/error.js'
 
 export function createApp() {
   const app = express()
-  // CORS '*' (or unset) → reflect any origin. Auth is via Bearer token, not cookies.
-  app.use(cors({ origin: env.corsOrigins.includes('*') ? true : env.corsOrigins, credentials: true }))
+  // Allow ALL origins (reflects the request origin). Auth is via Bearer token, not
+  // cookies, so this is safe — and it removes any CORS_ORIGINS misconfiguration as a
+  // cause of "Failed to fetch" in production.
+  app.use(cors({ origin: true, credentials: true }))
   app.use(express.json({ limit: '2mb' }))
   app.use(morgan('dev'))
 
