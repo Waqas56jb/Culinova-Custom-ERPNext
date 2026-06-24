@@ -1,4 +1,4 @@
-const BASE = import.meta.env.VITE_API_URL || 'http://localhost:5050/api'
+const BASE = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? 'https://culinova-backend.vercel.app/api' : 'http://localhost:5050/api')
 
 export const getToken = () => localStorage.getItem('culinova_token')
 
