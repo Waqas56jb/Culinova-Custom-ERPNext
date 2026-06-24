@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react'
 import { X, Plus, Loader2 } from 'lucide-react'
 import { useData } from '../store/DataContext.jsx'
 import { Modal, Field, Select, Row } from './Modal.jsx'
-import { emailTemplates } from '../data/mailData.js'
 import { sar } from '../data/mockData.js'
 import { useAuth } from '../auth/AuthContext.jsx'
 
@@ -164,16 +163,18 @@ function QuotationModal({ open, d }) {
 
   const save = async (send) => {
     const payload = { ...v, amount: Math.round(total) }
+    let created
     try {
-      if (isEdit) await d.updateQuotation(editing.id, payload)
-      else await d.addQuotation(payload)
+      if (isEdit) { await d.updateQuotation(editing.id, payload); created = editing }
+      else { created = await d.addQuotation(payload) }
     } catch (e) { alert(e.message); return }
     d.closeForm()
     if (send) {
-      if (needsApproval) { alert('This quotation needs manager approval before it can be emailed to the customer.'); return }
-      const rec = { customer: v.customer, id: editing?.ref || editing?.number || 'Quotation', amount: Math.round(total), email: v.email }
-      const tpl = emailTemplates.quotation(rec.customer, rec.id, sar(rec.amount))
-      d.openCompose({ to: rec.email || '', toName: rec.customer, subject: tpl.subject, body: tpl.body, attachment: `${rec.id}.pdf`, quotation: rec })
+      if (needsApproval) { alert('This quotation needs manager approval before it can be sent to the customer.'); return }
+      if (!v.email) { alert('Saved. Add the customer’s email so they can see it in their portal/chat.'); return }
+      const ref = created?.number || editing?.ref || 'your quotation'
+      // No email module — notify the customer via their chat; they Accept/Reject/Concession in their portal.
+      await d.sendChatReply(v.email, v.customer, `📄 Quotation ${ref} (Total ${sar(Math.round(total))}) has been sent for your review. Please Accept, Reject, or request a concession in your portal.`).catch(() => {})
     }
   }
 
@@ -182,13 +183,14 @@ function QuotationModal({ open, d }) {
       footer={isEdit ? (
         <>
           <button className="btn-ghost" onClick={d.closeForm}>Close</button>
-          <SaveButton onClick={() => save(true)}>Update &amp; Email</SaveButton>
+          <SaveButton onClick={() => save(false)} className="btn-ghost">Save</SaveButton>
+          <SaveButton onClick={() => save(true)}>Update &amp; Send</SaveButton>
         </>
       ) : (
         <>
           <button className="btn-ghost" onClick={d.closeForm}>Cancel</button>
           <SaveButton onClick={() => save(false)} className="btn-ghost">Save</SaveButton>
-          <SaveButton onClick={() => save(true)}>Save &amp; Email</SaveButton>
+          <SaveButton onClick={() => save(true)}>Send to Customer</SaveButton>
         </>
       )}>
       <Row>

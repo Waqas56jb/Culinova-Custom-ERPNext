@@ -40,6 +40,44 @@ r.post('/customer/messages', authRequired, asyncWrap(async (req, res) => {
   res.status(201).json(data)
 }))
 
+// ── CUSTOMER acts on a quotation: Accept / Reject / Request concession ──
+const ownsQuote = (q, user) => q && (q.customer || '').toLowerCase() === (user.name || '').toLowerCase()
+
+r.post('/customer/quotations/:id/accept', authRequired, asyncWrap(async (req, res) => {
+  const { data: q } = await supabase.from('quotations').select('*, quotation_items(*)').eq('id', req.params.id).single()
+  if (!ownsQuote(q, req.user)) return res.status(403).json({ error: 'Not your quotation' })
+  if (q.status === 'Ordered') return res.status(422).json({ error: 'Already accepted' })
+  const { data: so, error: e1 } = await supabase.from('sales_orders').insert({ number: num('SO'), quotation_id: q.id, customer: q.customer, amount: q.total_amount }).select().single()
+  if (e1) throw e1
+  const { data: proj, error: e2 } = await supabase.from('projects').insert({ number: num('PRJ'), name: `${q.customer} — ${q.project_name || 'Project'}`, customer: q.customer, sales_order_id: so.id, contract_value: q.total_amount, status: 'On Track' }).select().single()
+  if (e2) throw e2
+  const items = q.quotation_items || []
+  if (items.length) await supabase.from('project_boq').insert(items.map((it) => ({ project_id: proj.id, item_name: it.item_name, qty: it.qty, status: 'Waiting' })))
+  await supabase.from('sales_orders').update({ project_id: proj.id }).eq('id', so.id)
+  await supabase.from('quotations').update({ status: 'Ordered' }).eq('id', q.id)
+  await supabase.from('messages').insert({ customer_name: req.user.name, customer_email: req.user.email, sender: 'customer', body: `✅ I have ACCEPTED quotation ${q.number}.` })
+  res.json({ ok: true, sales_order: so.number })
+}))
+
+r.post('/customer/quotations/:id/reject', authRequired, asyncWrap(async (req, res) => {
+  const reason = (req.body.reason || '').trim()
+  if (!reason) return res.status(422).json({ error: 'Please tell us why (reason is required)' })
+  const { data: q } = await supabase.from('quotations').select('*').eq('id', req.params.id).single()
+  if (!ownsQuote(q, req.user)) return res.status(403).json({ error: 'Not your quotation' })
+  await supabase.from('quotations').update({ status: 'Lost' }).eq('id', q.id)
+  await supabase.from('quotation_revisions').insert({ quotation_id: q.id, revision: 9999, changed_by: req.user.id, changes: { action: 'customer-rejected', reason } })
+  await supabase.from('messages').insert({ customer_name: req.user.name, customer_email: req.user.email, sender: 'customer', body: `❌ I have REJECTED quotation ${q.number}. Reason: ${reason}` })
+  res.json({ ok: true })
+}))
+
+r.post('/customer/quotations/:id/concession', authRequired, asyncWrap(async (req, res) => {
+  const note = (req.body.note || '').trim()
+  const { data: q } = await supabase.from('quotations').select('*').eq('id', req.params.id).single()
+  if (!ownsQuote(q, req.user)) return res.status(403).json({ error: 'Not your quotation' })
+  await supabase.from('messages').insert({ customer_name: req.user.name, customer_email: req.user.email, sender: 'customer', body: `💬 Concession request on quotation ${q.number}: ${note || 'Could you please offer a better price?'}` })
+  res.json({ ok: true })
+}))
+
 // ── SUPPLIER PORTAL — open RFQs to quote + this supplier's POs/deliveries ──
 r.get('/supplier/overview', authRequired, asyncWrap(async (req, res) => {
   const name = req.user.name

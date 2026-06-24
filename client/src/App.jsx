@@ -42,7 +42,6 @@ import Employees from './pages/Employees.jsx'
 import Attendance from './pages/Attendance.jsx'
 import Payroll from './pages/Payroll.jsx'
 import FormModals from './components/FormModals.jsx'
-import ComposeModal from './components/ComposeModal.jsx'
 import Login from './pages/Login.jsx'
 import { useAuth } from './auth/AuthContext.jsx'
 
@@ -120,7 +119,6 @@ export default function App() {
 
       {/* global overlays — available on every route */}
       <FormModals />
-      <ComposeModal />
     </>
   )
 }

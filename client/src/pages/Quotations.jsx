@@ -1,17 +1,16 @@
 import { useState } from 'react'
-import { Plus, AlertTriangle, Mail, Pencil, Check, X, ThumbsUp, ShoppingCart, FileText, Loader2 } from 'lucide-react'
+import { Plus, AlertTriangle, Pencil, Check, X, ThumbsUp, ShoppingCart, FileText, Loader2 } from 'lucide-react'
 import { PageHeader, Badge, statusTone } from '../components/ui.jsx'
 import { sar } from '../data/mockData.js'
 import { useData } from '../store/DataContext.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
-import { emailTemplates } from '../data/mailData.js'
 import QuotationPreview from '../components/QuotationPreview.jsx'
 
 const MGMT = ['Management', 'System Admin']
 const APPROVERS = ['Management', 'System Admin', 'Sales Manager']
 
 export default function Quotations() {
-  const { quotations, openForm, openCompose, approveQuotation, rejectQuotation, acceptQuotation, lostQuotation } = useData()
+  const { quotations, openForm, approveQuotation, rejectQuotation, acceptQuotation, lostQuotation } = useData()
   const { user } = useAuth()
   const isMgmt = MGMT.includes(user?.role)
   const canApprove = APPROVERS.includes(user?.role)
@@ -20,10 +19,6 @@ export default function Quotations() {
 
   const run = async (id, fn) => { setBusy(id); try { await fn() } catch (e) { alert(e.message) } finally { setBusy(null) } }
 
-  const emailQuote = (q) => {
-    const tpl = emailTemplates.quotation(q.customer, q.ref || q.number, sar(q.amount))
-    openCompose({ to: q.email || '', toName: q.customer, subject: tpl.subject, body: tpl.body, attachment: `${q.ref || 'quotation'}.pdf`, quotation: q })
-  }
   const accept = (q) => { if (window.confirm(`Accept ${q.ref}? This creates a Sales Order + Project automatically.`)) run(q.id, () => acceptQuotation(q.id)) }
   const markLost = (q) => { const reason = window.prompt(`Mark ${q.ref} as Lost — reason is required:`); if (reason && reason.trim()) run(q.id, () => lostQuotation(q.id, reason.trim())) }
   const reject = (q) => { const reason = window.prompt('Reject — reason (optional):') ?? ''; run(q.id, () => rejectQuotation(q.id, reason)) }
@@ -87,7 +82,6 @@ export default function Quotations() {
                         {!pending && q.status === 'Open' && (
                           <>
                             <Act onClick={() => openForm('quotation', q)} icon={Pencil} disabled={busy === q.id}>Edit</Act>
-                            <Act onClick={() => emailQuote(q)} icon={Mail} disabled={busy === q.id}>Email</Act>
                             <Act onClick={() => accept(q)} tone="emerald" icon={ShoppingCart} loading={busy === q.id}>Accept</Act>
                             <Act onClick={() => markLost(q)} tone="rose" icon={X} loading={busy === q.id}>Lost</Act>
                           </>
