@@ -10,7 +10,7 @@ export function createApp() {
   // cookies, so this is safe — and it removes any CORS_ORIGINS misconfiguration as a
   // cause of "Failed to fetch" in production.
   app.use(cors({ origin: true, credentials: true }))
-  app.use(express.json({ limit: '2mb' }))
+  app.use(express.json({ limit: '14mb' })) // allows base64 chat file uploads (≤10MB)
   app.use(morgan('dev'))
 
   app.get('/', (req, res) => res.json({ service: 'CULINOVA ERP API', version: '0.1.0', docs: '/api/health' }))

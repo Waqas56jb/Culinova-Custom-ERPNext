@@ -1,111 +1,153 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
-import { Send, FileText, UserPlus, Mail, MessageSquare, Loader2, ArrowLeft } from 'lucide-react'
-import { PageHeader } from '../components/ui.jsx'
+import { Send, FileText, UserPlus, Mail, MessageSquare, Loader2, ArrowLeft, Paperclip, X, Download, Search } from 'lucide-react'
 import { useData } from '../store/DataContext.jsx'
 
 const initials = (n) => (n || '?').split(' ').map((x) => x[0]).join('').slice(0, 2).toUpperCase()
-const timeOf = (s) => (s ? new Date(s).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '')
+const fileToDataUrl = (file) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file) })
+const isImg = (name = '', type = '') => /^image\//.test(type) || /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(name)
+const timeOf = (s) => (s ? new Date(s).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '')
+const dayLabel = (s) => {
+  if (!s) return ''
+  const d = new Date(s), t = new Date()
+  const same = (a, b) => a.toDateString() === b.toDateString()
+  if (same(d, t)) return 'Today'
+  const y = new Date(t); y.setDate(t.getDate() - 1)
+  if (same(d, y)) return 'Yesterday'
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+function Attachment({ m, mine }) {
+  if (!m.attachment_path) return null
+  const url = m.attachment_url
+  if (isImg(m.attachment_name) && url) return <a href={url} target="_blank" rel="noreferrer" className="mt-1.5 block"><img src={url} alt={m.attachment_name} className="max-h-56 max-w-full rounded-xl object-cover" /></a>
+  return (
+    <a href={url || '#'} target="_blank" rel="noreferrer" className={`mt-1.5 flex items-center gap-2 rounded-xl border px-3 py-2 text-xs ${mine ? 'border-white/25 bg-white/10' : 'border-slate-200 bg-white'}`}>
+      <FileText size={18} className={mine ? 'text-white' : 'text-brand-600'} />
+      <span className="min-w-0 flex-1 truncate font-medium">{m.attachment_name}</span>
+      <Download size={15} className="shrink-0 opacity-70" />
+    </a>
+  )
+}
 
 export default function Chat() {
   const { chatMessages, sendChatReply, markChatRead, openForm } = useData()
   const [active, setActive] = useState(null)
   const [text, setText] = useState('')
+  const [file, setFile] = useState(null)
   const [sending, setSending] = useState(false)
-  const endRef = useRef(null)
+  const [q, setQ] = useState('')
+  const endRef = useRef(null); const fileRef = useRef(null); const taRef = useRef(null)
 
   const threads = useMemo(() => {
     const map = {}
     for (const m of chatMessages) {
       const k = m.customer_email
       if (!map[k]) map[k] = { email: k, name: m.customer_name, messages: [], unread: 0 }
-      map[k].messages.push(m)
-      map[k].name = m.customer_name
+      map[k].messages.push(m); map[k].name = m.customer_name
       if (m.sender === 'customer' && !m.read) map[k].unread++
     }
-    return Object.values(map).sort((a, b) => (b.messages[b.messages.length - 1]?.created_at || '').localeCompare(a.messages[a.messages.length - 1]?.created_at || ''))
-  }, [chatMessages])
+    return Object.values(map)
+      .filter((t) => (t.name + t.email).toLowerCase().includes(q.toLowerCase()))
+      .sort((a, b) => (b.messages.at(-1)?.created_at || '').localeCompare(a.messages.at(-1)?.created_at || ''))
+  }, [chatMessages, q])
 
-  const current = threads.find((t) => t.email === active)
+  const current = threads.find((t) => t.email === active) || (active ? { email: active, name: active, messages: [] } : null)
   useEffect(() => { endRef.current?.scrollIntoView({ block: 'end' }) }, [current?.messages.length, active])
+  useEffect(() => { const ta = taRef.current; if (ta) { ta.style.height = '0px'; ta.style.height = Math.min(ta.scrollHeight, 140) + 'px' } }, [text])
 
-  const openThread = (t) => { setActive(t.email); if (t.unread) markChatRead(t.email) }
+  const openThread = (t) => { setActive(t.email); setFile(null); setText(''); if (t.unread) markChatRead(t.email) }
+  const pickFile = async (e) => { const f = e.target.files?.[0]; e.target.value = ''; if (!f) return; if (f.size > 10 * 1024 * 1024) return alert('File too large (max 10MB)'); setFile({ name: f.name, type: f.type, dataUrl: await fileToDataUrl(f) }) }
   const send = async () => {
-    if (!text.trim() || !current) return
-    const body = text.trim(); setText(''); setSending(true)
-    try { await sendChatReply(current.email, current.name, body) } catch (e) { alert(e.message) } finally { setSending(false) }
+    if ((!text.trim() && !file) || !current) return
+    const body = text.trim(), att = file; setText(''); setFile(null); setSending(true)
+    try { await sendChatReply(current.email, current.name, body, att) } catch (e) { alert(e.message) } finally { setSending(false) }
   }
 
-  return (
-    <>
-      <PageHeader title="Customer Chat" subtitle="Messages from customers — reply, then create a quotation or lead from their details" />
+  let lastDay = null
 
-      <div className="card flex h-[calc(100vh-190px)] min-h-[440px] overflow-hidden">
-        {/* thread list */}
-        <div className={`${active ? 'hidden md:flex' : 'flex'} w-full flex-col border-r border-slate-100 md:w-[300px] md:shrink-0`}>
-          <div className="flex-1 overflow-y-auto">
-            {threads.length === 0 && <p className="p-6 text-center text-sm text-slate-400">No customer messages yet.</p>}
-            {threads.map((t) => (
-              <button key={t.email} onClick={() => openThread(t)}
-                className={`flex w-full items-center gap-3 border-b border-slate-50 p-3 text-left transition hover:bg-slate-50 ${active === t.email ? 'bg-brand-50/60' : ''}`}>
-                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-gradient-to-br from-navy-700 to-brand-600 text-xs font-bold text-white">{initials(t.name)}</span>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold text-ink">{t.name}</p>
-                  <p className="truncate text-xs text-muted">{t.messages[t.messages.length - 1]?.body}</p>
-                </div>
-                {t.unread > 0 && <span className="rounded-full bg-brand-500 px-2 py-0.5 text-[11px] font-bold text-white">{t.unread}</span>}
-              </button>
-            ))}
+  return (
+    <div className="flex h-[calc(100vh-128px)] min-h-[460px] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-card">
+      {/* thread list */}
+      <div className={`${active ? 'hidden md:flex' : 'flex'} w-full flex-col border-r border-slate-100 md:w-[320px] md:shrink-0`}>
+        <div className="shrink-0 border-b border-slate-100 p-3">
+          <h2 className="mb-2 px-1 font-display text-lg font-extrabold text-ink">Customer Chat</h2>
+          <div className="relative">
+            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search customers…" className="w-full rounded-xl border border-slate-200 bg-slate-50/70 py-2 pl-9 pr-3 text-sm outline-none focus:border-brand-400 focus:bg-white" />
           </div>
         </div>
-
-        {/* conversation */}
-        <div className={`${active ? 'flex' : 'hidden md:flex'} min-w-0 flex-1 flex-col`}>
-          {current ? (
-            <>
-              {/* customer profile header */}
-              <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-slate-100 p-4">
-                <button onClick={() => setActive(null)} className="grid h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-slate-100 md:hidden"><ArrowLeft size={18} /></button>
-                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-gradient-to-br from-navy-700 to-brand-600 text-sm font-bold text-white">{initials(current.name)}</span>
-                <div className="min-w-0">
-                  <p className="truncate font-bold text-ink">{current.name}</p>
-                  <p className="flex items-center gap-1 truncate text-xs text-muted"><Mail size={12} /> {current.email}</p>
+        <div className="flex-1 overflow-y-auto">
+          {threads.length === 0 && <p className="p-6 text-center text-sm text-slate-400">No conversations yet.</p>}
+          {threads.map((t) => {
+            const last = t.messages.at(-1)
+            return (
+              <button key={t.email} onClick={() => openThread(t)} className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition hover:bg-slate-50 ${active === t.email ? 'bg-brand-50/70' : ''}`}>
+                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-gradient-to-br from-navy-700 to-brand-600 text-xs font-bold text-white">{initials(t.name)}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2"><p className="truncate text-sm font-semibold text-ink">{t.name}</p><span className="shrink-0 text-[10px] text-muted">{timeOf(last?.created_at)}</span></div>
+                  <p className="truncate text-xs text-muted">{last?.attachment_path && !last?.body ? '📎 Attachment' : last?.body}</p>
                 </div>
-                <div className="ml-auto flex flex-wrap gap-2">
-                  <button onClick={() => openForm('quotation', { customer: current.name, email: current.email })}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-brand-200 px-3 py-1.5 text-xs font-semibold text-brand-600 hover:bg-brand-50"><FileText size={14} /> Create Quotation</button>
-                  <button onClick={() => openForm('lead', { company: current.name, email: current.email, name: current.name })}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"><UserPlus size={14} /> Store as Lead</button>
-                </div>
-              </div>
-
-              {/* messages */}
-              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-slate-50/50 p-4">
-                {current.messages.map((m) => (
-                  <div key={m.id} className={`flex ${m.sender === 'staff' ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`max-w-[78%] rounded-2xl px-3.5 py-2 text-sm shadow-soft ${m.sender === 'staff' ? 'bg-brand-500 text-white' : 'bg-white text-ink'}`}>
-                      <p className="whitespace-pre-wrap break-words">{m.body}</p>
-                      <p className={`mt-1 text-[10px] ${m.sender === 'staff' ? 'text-white/70' : 'text-muted'}`}>{m.sender === 'staff' ? (m.staff_name || 'You') : current.name} · {timeOf(m.created_at)}</p>
-                    </div>
-                  </div>
-                ))}
-                <div ref={endRef} />
-              </div>
-
-              {/* reply box */}
-              <div className="flex shrink-0 items-center gap-2 border-t border-slate-100 bg-white p-3">
-                <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && send()}
-                  placeholder="Type a reply…" className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-2.5 text-sm outline-none transition focus:border-brand-400 focus:bg-white focus:ring-2 focus:ring-brand-500/15" />
-                <button onClick={send} disabled={sending || !text.trim()} className="btn-primary shrink-0 disabled:opacity-60">{sending ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}<span className="hidden sm:inline">Send</span></button>
-              </div>
-            </>
-          ) : (
-            <div className="flex flex-1 flex-col items-center justify-center text-slate-400">
-              <MessageSquare size={40} className="mb-2 opacity-40" />
-              <p className="text-sm">Select a conversation</p>
-            </div>
-          )}
+                {t.unread > 0 && <span className="grid h-5 min-w-[20px] place-items-center rounded-full bg-brand-500 px-1.5 text-[11px] font-bold text-white">{t.unread}</span>}
+              </button>
+            )
+          })}
         </div>
       </div>
-    </>
+
+      {/* conversation */}
+      <div className={`${active ? 'flex' : 'hidden md:flex'} min-w-0 flex-1 flex-col bg-slate-50/40`}>
+        {current ? (
+          <>
+            <div className="flex shrink-0 items-center gap-3 border-b border-slate-100 bg-white px-3 py-2.5 sm:px-4">
+              <button onClick={() => setActive(null)} className="grid h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-slate-100 md:hidden"><ArrowLeft size={18} /></button>
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-gradient-to-br from-navy-700 to-brand-600 text-xs font-bold text-white">{initials(current.name)}</span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-bold text-ink">{current.name}</p>
+                <p className="flex items-center gap-1 truncate text-[11px] text-muted"><Mail size={11} /> {current.email}</p>
+              </div>
+              <button onClick={() => openForm('quotation', { customer: current.name, email: current.email })} className="hidden items-center gap-1.5 rounded-lg border border-brand-200 px-3 py-1.5 text-xs font-semibold text-brand-600 hover:bg-brand-50 sm:inline-flex"><FileText size={14} /> Quotation</button>
+              <button onClick={() => openForm('lead', { company: current.name, email: current.email, name: current.name })} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"><UserPlus size={14} /><span className="hidden sm:inline">Lead</span></button>
+            </div>
+
+            <div className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-4 sm:px-6">
+              {current.messages.map((m) => {
+                const mine = m.sender === 'staff'
+                const day = dayLabel(m.created_at); const showDay = day !== lastDay; lastDay = day
+                return (
+                  <div key={m.id}>
+                    {showDay && <div className="my-3 flex justify-center"><span className="rounded-full bg-slate-200/70 px-3 py-0.5 text-[10px] font-semibold text-slate-500">{day}</span></div>}
+                    <div className={`flex ${mine ? 'justify-end' : 'justify-start'} mb-1`}>
+                      <div className={`max-w-[82%] rounded-2xl px-3.5 py-2 text-sm shadow-soft sm:max-w-[70%] ${mine ? 'rounded-br-md bg-brand-500 text-white' : 'rounded-bl-md bg-white text-ink'}`}>
+                        {m.body && <p className="whitespace-pre-wrap break-words">{m.body}</p>}
+                        <Attachment m={m} mine={mine} />
+                        <p className={`mt-1 text-right text-[10px] ${mine ? 'text-white/70' : 'text-muted'}`}>{timeOf(m.created_at)}</p>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+              {current.messages.length === 0 && <div className="flex h-full flex-col items-center justify-center text-slate-400"><MessageSquare size={40} className="mb-2 opacity-40" /><p className="text-sm">No messages yet</p></div>}
+              <div ref={endRef} />
+            </div>
+
+            {file && (
+              <div className="mx-3 mb-2 flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs shadow-soft sm:mx-6">
+                <FileText size={16} className="text-brand-600" /><span className="min-w-0 flex-1 truncate font-medium text-ink">{file.name}</span>
+                <button onClick={() => setFile(null)} className="text-slate-400 hover:text-rose-500"><X size={15} /></button>
+              </div>
+            )}
+            <div className="flex shrink-0 items-end gap-2 border-t border-slate-100 bg-white p-2.5 sm:p-3">
+              <input ref={fileRef} type="file" hidden onChange={pickFile} />
+              <button onClick={() => fileRef.current?.click()} title="Attach a document" className="grid h-10 w-10 shrink-0 place-items-center rounded-xl text-slate-500 hover:bg-slate-100"><Paperclip size={19} /></button>
+              <textarea ref={taRef} rows={1} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
+                placeholder="Type a message…" className="max-h-[140px] min-h-[40px] min-w-0 flex-1 resize-none rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-2.5 text-sm outline-none transition focus:border-brand-400 focus:bg-white" />
+              <button onClick={send} disabled={sending || (!text.trim() && !file)} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-500 text-white transition hover:bg-brand-600 disabled:opacity-50">{sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}</button>
+            </div>
+          </>
+        ) : (
+          <div className="flex flex-1 flex-col items-center justify-center text-slate-400"><MessageSquare size={44} className="mb-2 opacity-40" /><p className="text-sm">Select a conversation</p></div>
+        )}
+      </div>
+    </div>
   )
 }

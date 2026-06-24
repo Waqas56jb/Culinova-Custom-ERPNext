@@ -136,10 +136,21 @@ export function DataProvider({ children }) {
   }, [reload, loadProjects, loadQuotations, loadChat])
 
   // ── SALES CHAT (replies to customers) ──
-  const sendChatReply = async (customer_email, customer_name, body) => { await post('sales/messages', { customer_email, customer_name, body }); await loadChat() }
+  const sendChatReply = async (customer_email, customer_name, body, attachment) => { await post('sales/messages', { customer_email, customer_name, body, attachment }); await loadChat() }
   const markChatRead = async (customer_email) => { await post('sales/messages/read', { customer_email }).catch(() => {}); await loadChat() }
 
   useEffect(() => { if (user) loadAll() }, [user, loadAll])
+
+  // ── REAL-TIME SYNC ── poll the records that change as deals flow (accept → order →
+  // project → opportunity Won) + chat, so the salesperson sees updates without refreshing.
+  useEffect(() => {
+    if (!user) return
+    const id = setInterval(() => {
+      loadChat(); loadQuotations(); loadProjects(); reload('salesOrders'); reload('opportunities'); reload('customers')
+    }, 12000)
+    return () => clearInterval(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, panels])
 
   // helpers
   const post = (ep, body) => api('/' + ep, { method: 'POST', body })

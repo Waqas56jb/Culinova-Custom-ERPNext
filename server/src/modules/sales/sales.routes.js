@@ -4,6 +4,8 @@ import { authRequired } from '../../middleware/auth.js'
 import { authorize, redactFinancials } from '../../middleware/rbac.js'
 import { asyncWrap } from '../../middleware/error.js'
 import { logAudit } from '../../core/audit.js'
+import { uploadAttachment, signAttachments } from '../../core/chatfiles.js'
+import { winOpportunityForCustomer } from '../../core/winopp.js'
 import { validateRequiredFields, computeFinancials, evaluateApproval, discountSource, RULES } from './quotation.rules.js'
 
 const r = Router()
@@ -179,6 +181,7 @@ r.post('/quotations/:id/accept', authRequired, authorize('sales', 'create'), asy
   // 4) link + mark ordered
   await supabase.from('sales_orders').update({ project_id: proj.id }).eq('id', so.id)
   await supabase.from('quotations').update({ status: 'Ordered' }).eq('id', q.id)
+  await winOpportunityForCustomer(q.customer) // opportunity auto-Won
   await logAudit(req.user, 'quotation', q.id, 'accepted', { sales_order: so.number, project: proj.number })
   res.status(201).json({ ok: true, sales_order: so, project: proj })
 }))
@@ -232,14 +235,15 @@ r.post('/opportunities/:id/won', authRequired, authorize('sales', 'create'), asy
 r.get('/messages', authRequired, authorize('sales', 'read'), asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('messages').select('*').order('created_at', { ascending: true })
   if (error) throw error
-  res.json(data || [])
+  res.json(await signAttachments(data))
 }))
 
 r.post('/messages', authRequired, authorize('sales', 'create'), asyncWrap(async (req, res) => {
   const { customer_email, customer_name, body } = req.body
-  if (!customer_email || !(body || '').trim()) return res.status(422).json({ error: 'customer_email and message body are required' })
+  const file = await uploadAttachment(req.body.attachment)
+  if (!customer_email || (!(body || '').trim() && !file.attachment_path)) return res.status(422).json({ error: 'customer_email and a message or file are required' })
   const { data, error } = await supabase.from('messages').insert({
-    customer_name: customer_name || customer_email, customer_email, sender: 'staff', staff_name: req.user.name, body: body.trim(),
+    customer_name: customer_name || customer_email, customer_email, sender: 'staff', staff_name: req.user.name, body: (body || '').trim(), ...file,
   }).select().single()
   if (error) throw error
   res.status(201).json(data)

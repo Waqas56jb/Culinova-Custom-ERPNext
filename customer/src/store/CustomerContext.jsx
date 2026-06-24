@@ -35,6 +35,13 @@ export function CustomerProvider({ children }) {
   }, [])
   useEffect(() => { if (user) { load(); loadMessages() } }, [user, load, loadMessages])
 
+  // real-time sync — keep quotations/projects/invoices + chat fresh (e.g. quote → Ordered)
+  useEffect(() => {
+    if (!user) return
+    const id = setInterval(() => { load(); loadMessages() }, 12000)
+    return () => clearInterval(id)
+  }, [user, load, loadMessages])
+
   // quotation actions — REAL (accept creates order+project; reject/concession notify sales)
   const acceptQuote = async (id) => { await api(`/portal/customer/quotations/${id}/accept`, { method: 'POST' }); await load(); await loadMessages() }
   const rejectQuote = async (id, reason) => { await api(`/portal/customer/quotations/${id}/reject`, { method: 'POST', body: { reason } }); await load(); await loadMessages() }
@@ -43,7 +50,7 @@ export function CustomerProvider({ children }) {
   const payInvoice = (id) => setInvoices((p) => p.map((i) => (i.id === id ? { ...i, paid: i.total, status: 'Paid' } : i)))
   const raiseTicket = async (d) => { await api('/portal/customer/tickets', { method: 'POST', body: { subject: d.subject, priority: d.priority } }); await load() }
   // chat — message goes to ONE recipient: the sales team
-  const sendMessage = async (body) => { await api('/portal/customer/messages', { method: 'POST', body: { body } }); await loadMessages() }
+  const sendMessage = async (body, attachment) => { await api('/portal/customer/messages', { method: 'POST', body: { body, attachment } }); await loadMessages() }
 
   return <Ctx.Provider value={{ projects, quotations, invoices, tickets, messages, acceptQuote, rejectQuote, requestConcession, deleteQuote, payInvoice, raiseTicket, sendMessage, loadMessages }}>{children}</Ctx.Provider>
 }

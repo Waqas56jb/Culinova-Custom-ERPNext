@@ -2,6 +2,8 @@ import { Router } from 'express'
 import { supabase } from '../../config/supabase.js'
 import { authRequired } from '../../middleware/auth.js'
 import { asyncWrap } from '../../middleware/error.js'
+import { uploadAttachment, signAttachments } from '../../core/chatfiles.js'
+import { winOpportunityForCustomer } from '../../core/winopp.js'
 
 const r = Router()
 const num = (p) => `${p}-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`
@@ -28,13 +30,14 @@ r.post('/customer/tickets', authRequired, asyncWrap(async (req, res) => {
 r.get('/customer/messages', authRequired, asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('messages').select('*').eq('customer_email', req.user.email).order('created_at', { ascending: true })
   if (error) throw error
-  res.json(data || [])
+  res.json(await signAttachments(data))
 }))
 r.post('/customer/messages', authRequired, asyncWrap(async (req, res) => {
   const body = (req.body.body || '').trim()
-  if (!body) return res.status(422).json({ error: 'Message is required' })
+  const file = await uploadAttachment(req.body.attachment)
+  if (!body && !file.attachment_path) return res.status(422).json({ error: 'A message or a file is required' })
   const { data, error } = await supabase.from('messages').insert({
-    customer_name: req.user.name, customer_email: req.user.email, sender: 'customer', body,
+    customer_name: req.user.name, customer_email: req.user.email, sender: 'customer', body, ...file,
   }).select().single()
   if (error) throw error
   res.status(201).json(data)
@@ -55,6 +58,7 @@ r.post('/customer/quotations/:id/accept', authRequired, asyncWrap(async (req, re
   if (items.length) await supabase.from('project_boq').insert(items.map((it) => ({ project_id: proj.id, item_name: it.item_name, qty: it.qty, status: 'Waiting' })))
   await supabase.from('sales_orders').update({ project_id: proj.id }).eq('id', so.id)
   await supabase.from('quotations').update({ status: 'Ordered' }).eq('id', q.id)
+  await winOpportunityForCustomer(q.customer) // opportunity auto-Won
   await supabase.from('messages').insert({ customer_name: req.user.name, customer_email: req.user.email, sender: 'customer', body: `✅ I have ACCEPTED quotation ${q.number}.` })
   res.json({ ok: true, sales_order: so.number })
 }))
