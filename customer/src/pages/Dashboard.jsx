@@ -50,7 +50,7 @@ export default function Dashboard() {
           <div className="space-y-2">
             {quotations.slice(0, 2).map((q) => (
               <div key={q.id} className="flex items-center gap-3 rounded-xl border border-slate-100 p-2.5">
-                <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-ink">{q.id}</p><p className="text-xs text-muted">{sar(q.amount)}</p></div>
+                <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-ink">{q.ref}</p><p className="text-xs text-muted">{sar(q.amount)}</p></div>
                 <Badge tone={statusTone(q.status)}>{q.status}</Badge>
               </div>
             ))}

@@ -18,7 +18,19 @@ r.get('/customer/overview', authRequired, asyncWrap(async (req, res) => {
     supabase.from('projects').select('*').ilike('customer', name).order('created_at', { ascending: false }),
     supabase.from('service_tickets').select('*').ilike('customer', name).order('created_at', { ascending: false }),
   ])
-  res.json({ quotations: rows(q), invoices: rows(inv), projects: rows(pr), tickets: rows(tk) })
+  // enrich each project with live BOQ installation progress (real sync, not the static field)
+  const projects = rows(pr)
+  for (const p of projects) {
+    const { data: boq } = await supabase.from('project_boq').select('item_name, qty, status').eq('project_id', p.id)
+    const items = boq || []
+    const total = items.length
+    const done = items.filter((b) => ['Installed', 'Delivered'].includes(b.status)).length
+    p.boq_total = total
+    p.boq_done = done
+    p.progress = total ? Math.round((done / total) * 100) : (p.progress || 0)
+    p.boq = items
+  }
+  res.json({ quotations: rows(q), invoices: rows(inv), projects, tickets: rows(tk) })
 }))
 r.post('/customer/tickets', authRequired, asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('service_tickets').insert({ number: num('TKT'), customer: req.user.name, subject: req.body.subject, priority: req.body.priority || 'Medium' }).select().single()

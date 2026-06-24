@@ -29,7 +29,7 @@ export function CustomerProvider({ children }) {
         items: (q.quotation_items || []).map((it) => ({ name: it.item_name, qty: Number(it.qty) || 0, rate: Number(it.rate) || 0, amount: Number(it.amount) || (Number(it.qty) || 0) * (Number(it.rate) || 0) })),
       })))
       setInvoices((o.invoices || []).map((i) => ({ id: i.number || i.id, project: i.project_id || '—', total: Number(i.total) || 0, paid: Number(i.paid) || 0, due: i.due_date || '', status: i.status })))
-      setProjects((o.projects || []).map((p) => ({ id: p.number || p.id, name: p.name, value: Number(p.contract_value) || 0, progress: p.progress || 0, status: p.status, start: p.start_date || '', end: p.end_date || '', items: [] })))
+      setProjects((o.projects || []).map((p) => ({ id: p.number || p.id, name: p.name, value: Number(p.contract_value) || 0, progress: p.progress || 0, status: p.status, start: p.start_date || '', end: p.end_date || '', boqDone: p.boq_done || 0, boqTotal: p.boq_total || 0, items: (p.boq || []).map((b) => ({ item: b.item_name, status: b.status })) })))
       setTickets((o.tickets || []).map((t) => ({ id: t.number || t.id, subject: t.subject, priority: t.priority, status: t.status, date: d10(t) })))
     } catch { /* not authed */ }
   }, [])
