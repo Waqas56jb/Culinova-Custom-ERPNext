@@ -1,18 +1,21 @@
 import { useState, useEffect, useRef } from 'react'
-import { Send, Loader2, Mail, MessageSquare } from 'lucide-react'
+import { Send, Loader2, Mail, MessageSquare, FileText } from 'lucide-react'
 import { PageHeader } from '../components/ui.jsx'
 import { useCustomer } from '../store/CustomerContext.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
+import QuotationDoc from '../components/QuotationDoc.jsx'
 
 const initials = (n) => (n || '?').split(' ').map((x) => x[0]).join('').slice(0, 2).toUpperCase()
 const timeOf = (s) => (s ? new Date(s).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '')
 
 export default function Chat() {
-  const { messages, sendMessage, loadMessages } = useCustomer()
+  const { messages, sendMessage, loadMessages, quotations } = useCustomer()
   const { user } = useAuth()
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
+  const [doc, setDoc] = useState(null)
   const endRef = useRef(null)
+  const quoteFor = (body) => { const ref = (String(body).match(/QTN-\d{4}-\d+/) || [])[0]; return ref ? quotations.find((q) => q.ref === ref) : null }
 
   useEffect(() => { const t = setInterval(loadMessages, 8000); return () => clearInterval(t) }, [loadMessages])
   useEffect(() => { endRef.current?.scrollIntoView({ block: 'end' }) }, [messages.length])
@@ -50,6 +53,11 @@ export default function Chat() {
             <div key={m.id} className={`flex ${m.sender === 'customer' ? 'justify-end' : 'justify-start'}`}>
               <div className={`max-w-[78%] rounded-2xl px-3.5 py-2 text-sm shadow-soft ${m.sender === 'customer' ? 'bg-brand-500 text-white' : 'bg-white text-ink'}`}>
                 <p className="whitespace-pre-wrap break-words">{m.body}</p>
+                {m.sender === 'staff' && quoteFor(m.body) && (
+                  <button onClick={() => setDoc(quoteFor(m.body))} className="mt-1.5 inline-flex items-center gap-1.5 rounded-lg bg-brand-50 px-2.5 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-100">
+                    <FileText size={13} /> View Quotation PDF
+                  </button>
+                )}
                 <p className={`mt-1 text-[10px] ${m.sender === 'customer' ? 'text-white/70' : 'text-muted'}`}>{m.sender === 'customer' ? 'You' : (m.staff_name || 'Sales')} · {timeOf(m.created_at)}</p>
               </div>
             </div>
@@ -64,6 +72,8 @@ export default function Chat() {
           <button onClick={send} disabled={sending || !text.trim()} className="btn-primary shrink-0 disabled:opacity-60">{sending ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}<span className="hidden sm:inline">Send</span></button>
         </div>
       </div>
+
+      <QuotationDoc open={!!doc} onClose={() => setDoc(null)} quotation={doc} />
     </>
   )
 }

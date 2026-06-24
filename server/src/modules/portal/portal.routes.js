@@ -11,7 +11,7 @@ const rows = (x) => x?.data || []
 r.get('/customer/overview', authRequired, asyncWrap(async (req, res) => {
   const name = req.user.name
   const [q, inv, pr, tk] = await Promise.all([
-    supabase.from('quotations').select('*').ilike('customer', name).order('created_at', { ascending: false }),
+    supabase.from('quotations').select('*, quotation_items(*)').ilike('customer', name).order('created_at', { ascending: false }),
     supabase.from('invoices').select('*').ilike('customer', name).order('created_at', { ascending: false }),
     supabase.from('projects').select('*').ilike('customer', name).order('created_at', { ascending: false }),
     supabase.from('service_tickets').select('*').ilike('customer', name).order('created_at', { ascending: false }),
@@ -67,6 +67,15 @@ r.post('/customer/quotations/:id/reject', authRequired, asyncWrap(async (req, re
   await supabase.from('quotations').update({ status: 'Lost' }).eq('id', q.id)
   await supabase.from('quotation_revisions').insert({ quotation_id: q.id, revision: 9999, changed_by: req.user.id, changes: { action: 'customer-rejected', reason } })
   await supabase.from('messages').insert({ customer_name: req.user.name, customer_email: req.user.email, sender: 'customer', body: `❌ I have REJECTED quotation ${q.number}. Reason: ${reason}` })
+  res.json({ ok: true })
+}))
+
+r.delete('/customer/quotations/:id', authRequired, asyncWrap(async (req, res) => {
+  const { data: q } = await supabase.from('quotations').select('*').eq('id', req.params.id).single()
+  if (!ownsQuote(q, req.user)) return res.status(403).json({ error: 'Not your quotation' })
+  if (q.status === 'Ordered') return res.status(422).json({ error: 'An ordered quotation cannot be deleted' })
+  await supabase.from('quotations').delete().eq('id', q.id) // cascades items + revisions
+  await supabase.from('messages').insert({ customer_name: req.user.name, customer_email: req.user.email, sender: 'customer', body: `🗑️ I removed quotation ${q.number}.` })
   res.json({ ok: true })
 }))
 
