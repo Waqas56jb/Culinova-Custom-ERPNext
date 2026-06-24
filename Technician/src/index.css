@@ -1,0 +1,16 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html { -webkit-font-smoothing: antialiased; }
+  body { @apply bg-slate-200/60 text-ink font-sans antialiased; }
+  ::selection { @apply bg-brand-500/20; }
+}
+
+@layer components {
+  .chip { @apply inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold; }
+  .card { @apply bg-white rounded-2xl shadow-soft border border-slate-100; }
+}
+
+::-webkit-scrollbar { width: 0; }
