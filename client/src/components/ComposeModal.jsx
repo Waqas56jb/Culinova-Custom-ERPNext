@@ -1,13 +1,14 @@
 import { useState, useEffect } from 'react'
-import { X, Minus, Paperclip, Trash2, Send, FileText, Eye, Pencil } from 'lucide-react'
+import { X, Minus, Paperclip, Trash2, Send, FileText, Eye, Pencil, Loader2 } from 'lucide-react'
 import { useData } from '../store/DataContext.jsx'
 import QuotationPreview from './QuotationPreview.jsx'
 
 export default function ComposeModal() {
-  const { compose, closeCompose, sendEmail, saveDraft, openForm, deleteQuotation } = useData()
+  const { compose, closeCompose, sendEmail, saveDraft, openForm } = useData()
   const [v, setV] = useState({ to: '', subject: '', body: '', attachment: '', quotation: null })
   const [min, setMin] = useState(false)
   const [preview, setPreview] = useState(false)
+  const [sending, setSending] = useState(false)
 
   useEffect(() => {
     if (compose.open) {
@@ -20,15 +21,9 @@ export default function ComposeModal() {
   if (!compose.open) return null
   const on = (k) => (e) => setV((s) => ({ ...s, [k]: e.target.value }))
 
-  const send = () => { sendEmail(v); closeCompose() }
+  const send = async () => { setSending(true); await new Promise((r) => setTimeout(r, 600)); sendEmail(v); setSending(false); closeCompose() }
   const draft = () => { saveDraft(v); closeCompose() }
   const editQuote = () => { if (v.quotation) openForm('quotation', v.quotation) }
-  const deleteQuote = () => {
-    if (v.quotation && window.confirm(`Delete quotation ${v.quotation.id}? This cannot be undone.`)) {
-      deleteQuotation(v.quotation.id)
-      setV((s) => ({ ...s, attachment: '', quotation: null }))
-    }
-  }
 
   return (
     <div className="fixed bottom-0 right-2 z-[70] w-full max-w-[540px] sm:right-6">
@@ -65,7 +60,6 @@ export default function ComposeModal() {
                   <div className="ml-auto flex items-center gap-0.5">
                     <button onClick={() => setPreview(true)} title="Preview" className="rounded p-1.5 text-slate-400 hover:bg-white hover:text-brand-600"><Eye size={15} /></button>
                     <button onClick={editQuote} title="Edit quotation" className="rounded p-1.5 text-slate-400 hover:bg-white hover:text-blue-600"><Pencil size={15} /></button>
-                    <button onClick={deleteQuote} title="Delete quotation" className="rounded p-1.5 text-slate-400 hover:bg-white hover:text-rose-500"><Trash2 size={15} /></button>
                     <button onClick={() => setV((s) => ({ ...s, attachment: '' }))} title="Remove from email" className="rounded p-1.5 text-slate-400 hover:bg-white hover:text-ink"><X size={15} /></button>
                   </div>
                 </div>
@@ -73,7 +67,7 @@ export default function ComposeModal() {
             </div>
 
             <div className="flex items-center gap-2 border-t border-slate-100 px-4 py-3">
-              <button onClick={send} className="btn-primary !px-5"><Send size={15} /> Send</button>
+              <button onClick={send} disabled={sending} className="btn-primary !px-5 disabled:opacity-70">{sending ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />} {sending ? 'Sending…' : 'Send'}</button>
               <button onClick={draft} className="btn-ghost">Save Draft</button>
               <button className="ml-1 rounded-lg p-2 text-slate-500 hover:bg-slate-100" title="Attach"><Paperclip size={17} /></button>
               <button onClick={closeCompose} className="ml-auto rounded-lg p-2 text-slate-500 hover:bg-rose-50 hover:text-rose-500" title="Discard"><Trash2 size={17} /></button>

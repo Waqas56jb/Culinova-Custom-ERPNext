@@ -12,10 +12,15 @@ const me = () => { try { return JSON.parse(localStorage.getItem('culinova_user')
 const ownerName = (id) => { const u = me(); return u && id === u.id ? u.name : (id ? 'Other' : '—') }
 
 // ── DB row → UI shape mappers (snake_case → the fields the pages read) ──
-const mapCustomer = (r) => ({ ...r, business: r.business ?? 0, outstanding: Number(r.outstanding) || 0 })
+const mapCustomer = (r) => ({ ...r, group: r.category || '—', business: r.business ?? 0, outstanding: Number(r.outstanding) || 0 })
 const mapLead = (r) => ({ ...r, value: Number(r.est_value) || 0, owner: ownerName(r.owner_id), date: d10(r) })
 const mapOpp = (r) => ({ ...r, value: Number(r.value) || 0, prob: r.probability ?? 0, close: r.next_action_date || '', owner: ownerName(r.owner_id) })
-const mapQuote = (r) => ({ ...r, amount: Number(r.total_amount) || 0, gp: Number(r.gp_percent) || 0, validity: r.validity_days, owner: ownerName(r.owner_id), date: d10(r), ref: r.number })
+const mapQuote = (r) => ({
+  ...r, amount: Number(r.total_amount) || 0, gp: Number(r.gp_percent) || 0, discount: Number(r.discount_pct) || 0,
+  validity: r.validity_days, approval: r.approval_status, email: r.customer_email,
+  owner: ownerName(r.owner_id), date: d10(r), ref: r.number,
+  items: (r.quotation_items || []).map((it) => ({ name: it.item_name, qty: it.qty, rate: it.rate })),
+})
 const mapSO = (r) => ({ ...r, amount: Number(r.amount) || 0, delivery: r.delivery_status, billing: r.billing_status, project: r.project_id, date: d10(r), ref: r.number })
 const mapProject = (r) => ({ ...r, contractValue: Number(r.contract_value) || 0, actualCost: Number(r.actual_cost) || 0, committedCost: Number(r.committed_cost) || 0, billed: Number(r.billed) || 0, collected: Number(r.collected) || 0, progress: r.progress ?? 0, manager: r.manager || 'Unassigned', salesOrder: r.sales_order_id || '—', ref: r.number, boq: [], tasks: [], variations: [] })
 const mapSupplier = (r) => ({ ...r, onTime: r.on_time ?? 0, totalPOs: r.totalPOs ?? 0, rating: Number(r.rating) || 0 })
@@ -60,6 +65,7 @@ export function DataProvider({ children }) {
   const [contracts, setContracts] = useState([])
   const [employees, setEmployees] = useState([])
   const [leaves, setLeaves] = useState([])
+  const [interactions, setInteractions] = useState([])
   const [payrollStatus, setPayrollStatus] = useState('Pending')
 
   // resource registry: key → { ep, set, map, panel }
@@ -84,6 +90,7 @@ export function DataProvider({ children }) {
     contracts: { ep: 'service-contracts', set: setContracts, map: mapContract, panel: 'service' },
     employees: { ep: 'employees', set: setEmployees, map: mapEmployee, panel: 'hr' },
     leaves: { ep: 'leaves', set: setLeaves, map: mapLeave, panel: 'hr' },
+    interactions: { ep: 'interactions', set: setInteractions, map: (r) => ({ ...r, date: d10(r) }), panel: 'sales' },
   }
 
   const reload = useCallback(async (key) => {
@@ -138,16 +145,33 @@ export function DataProvider({ children }) {
 
   // ── SALES ──
   const addLead = async (d) => { await post('leads', { name: d.name || d.company, company: d.company, source: d.source, est_value: Number(d.value) || 0, owner_id: me()?.id }); await reload('leads') }
-  const addOpportunity = async (d) => { await post('opportunities', { customer: d.customer, stage: d.stage, value: Number(d.value) || 0, probability: Number(d.prob) || 30, next_action_date: d.close || today(), owner_id: me()?.id }); await reload('opportunities') }
+  const addOpportunity = async (d) => { await post('sales/opportunities', { customer: d.customer, stage: d.stage, value: Number(d.value) || 0, probability: Number(d.prob) || 30, next_action_date: d.close }); await reload('opportunities') }
+  const lostOpportunity = async (id, reason) => { await post(`sales/opportunities/${id}/lost`, { reason }); await reload('opportunities') }
+  const wonOpportunity = async (id) => { await post(`sales/opportunities/${id}/won`, {}); await reload('opportunities') }
+  // Customer interactions / meeting log (rule #12)
+  const addInteraction = async (d) => { await post('interactions', { customer: d.customer, type: d.type, notes: d.notes, next_action: d.nextAction, user_id: me()?.id }); await reload('interactions') }
   const addCustomer = async (d) => { await post('customers', { name: d.name, category: d.category, territory: d.territory, contact: d.contact, email: d.email, phone: d.phone }); await reload('customers') }
-  const convertLead = async (lead) => { await addOpportunity({ customer: lead.company, stage: 'Qualified', value: lead.value, prob: 30, close: today() }); await patch('leads', lead.id, { status: 'Opportunity' }); await reload('leads') }
-  const addQuotation = async (d) => {
-    const items = (d.items || []).map((it) => ({ item_name: it.name || it.item_name, qty: Number(it.qty) || 1, rate: Number(it.rate) || 0, cost: Number(it.cost) || 0 }))
-    await post('sales/quotations', { customer: d.customer, customer_email: d.email, project_name: d.projectName || d.project_name, project_location: d.location, contact_person: d.contact, payment_terms: d.paymentTerms, validity_days: Number(d.validity) || 30, items })
-    await loadQuotations()
+  const convertLead = async (lead) => {
+    // idempotent: a lead already converted/lost must NOT spawn another opportunity
+    if (['Opportunity', 'Converted', 'Lost'].includes(lead.status)) return
+    await patch('leads', lead.id, { status: 'Opportunity' })   // mark first to block rapid double-clicks
+    await addOpportunity({ customer: lead.company, stage: 'Prospecting', value: lead.value, prob: 30, close: today() })
+    await reload('leads')
   }
-  const updateQuotation = async (id, d) => { await patch('sales/quotations', id, d); await loadQuotations() }
-  const deleteQuotation = async (id) => { await del('sales/quotations', id).catch(() => {}); await loadQuotations() }
+  const quoteBody = (d) => ({
+    customer: d.customer, customer_email: d.email, project_name: d.projectName || d.project_name,
+    project_location: d.location, contact_person: d.contact, payment_terms: d.paymentTerms,
+    validity_days: Number(d.validity) || 30, discount_pct: Number(d.discount) || 0,
+    items: (d.items || []).map((it) => ({ item_name: it.name || it.item_name, qty: Number(it.qty) || 1, rate: Number(it.rate) || 0 })),
+  })
+  const addQuotation = async (d) => { const r = await post('sales/quotations', quoteBody(d)); await loadQuotations(); return r }
+  const updateQuotation = async (id, d) => { const r = await patch('sales/quotations', id, quoteBody(d)); await loadQuotations(); return r }
+  // CEO rule #10: quotations are NEVER deleted — only marked Lost (with a reason)
+  const approveQuotation = async (id) => { await post(`sales/quotations/${id}/approve`, {}); await loadQuotations() }
+  const rejectQuotation = async (id, reason) => { await post(`sales/quotations/${id}/reject`, { reason }); await loadQuotations() }
+  const sendQuotation = async (id) => { await post(`sales/quotations/${id}/send`, {}); await loadQuotations() }
+  const acceptQuotation = async (id) => { const r = await post(`sales/quotations/${id}/accept`, {}); await Promise.all([loadQuotations(), reload('salesOrders'), loadProjects()]); return r }
+  const lostQuotation = async (id, reason) => { await post(`sales/quotations/${id}/lost`, { reason }); await loadQuotations() }
   const addOrder = async (d) => {
     const items = d.items || []
     const net = items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0)
@@ -232,9 +256,10 @@ export function DataProvider({ children }) {
     leads, opportunities, quotations, salesOrders, customers, emails, projects,
     suppliers, rfqs, purchaseOrders, warehouses, stockItems, deliveryNotes,
     invoices, payables, payments,
-    snags, commissioning, tickets, visits, contracts, employees, leaves, payrollStatus,
+    snags, commissioning, tickets, visits, contracts, employees, leaves, interactions, payrollStatus,
     reload, loadAll,
-    addLead, addOpportunity, addQuotation, updateQuotation, deleteQuotation, addOrder, addCustomer, convertLead,
+    addLead, addOpportunity, lostOpportunity, wonOpportunity, addInteraction, addQuotation, updateQuotation, addOrder, addCustomer, convertLead,
+    approveQuotation, rejectQuotation, sendQuotation, acceptQuotation, lostQuotation,
     addProject, addTask, updateTask, deleteTask, addVariation, updateBoqItem, updateProject,
     addSupplier, addRFQ, awardPO, updatePOStatus, requestQuotes,
     submitSupplierQuote, acceptPO, setShipment,

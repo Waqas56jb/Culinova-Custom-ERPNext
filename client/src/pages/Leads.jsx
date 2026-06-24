@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, Search, Filter, ArrowRight } from 'lucide-react'
+import { Plus, Search, Filter, ArrowRight, Loader2 } from 'lucide-react'
 import { PageHeader, Badge, statusTone } from '../components/ui.jsx'
 import { sar } from '../data/mockData.js'
 import { useData } from '../store/DataContext.jsx'
@@ -10,6 +10,8 @@ export default function Leads() {
   const { leads, openForm, convertLead } = useData()
   const [f, setF] = useState('All')
   const [q, setQ] = useState('')
+  const [converting, setConverting] = useState(null)
+  const doConvert = async (l) => { setConverting(l.id); try { await convertLead(l) } catch (e) { alert(e.message) } finally { setConverting(null) } }
   const rows = leads.filter(
     (l) =>
       (f === 'All' || l.status === f) &&
@@ -87,9 +89,14 @@ export default function Leads() {
                   <td className="td text-slate-500">{l.owner}</td>
                   <td className="td"><Badge tone={statusTone(l.status)}>{l.status}</Badge></td>
                   <td className="td">
-                    <button onClick={() => convertLead(l)} className="flex items-center gap-1 text-xs font-semibold text-brand-600 opacity-0 transition group-hover:opacity-100">
-                      Convert <ArrowRight size={13} />
-                    </button>
+                    {['Open', 'Replied', 'Qualified'].includes(l.status) ? (
+                      <button onClick={() => doConvert(l)} disabled={converting === l.id}
+                        className="flex items-center gap-1 text-xs font-semibold text-brand-600 opacity-0 transition group-hover:opacity-100 disabled:opacity-100 disabled:text-slate-400">
+                        {converting === l.id ? <><Loader2 size={13} className="animate-spin" /> Converting…</> : <>Convert <ArrowRight size={13} /></>}
+                      </button>
+                    ) : (
+                      <span className="text-xs text-slate-400">{l.status === 'Opportunity' ? 'Converted ✓' : ''}</span>
+                    )}
                   </td>
                 </tr>
               ))}

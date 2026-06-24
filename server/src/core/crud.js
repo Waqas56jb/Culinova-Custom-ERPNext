@@ -21,7 +21,7 @@ export function crudRouter(name, cfg) {
 
   // LIST
   r.get('/', authRequired, authorize(cfg.panel, 'read'), asyncWrap(async (req, res) => {
-    let q = supabase.from(t).select('*').order('created_at', { ascending: false })
+    let q = supabase.from(t).select('*').order(cfg.orderBy || 'created_at', { ascending: false })
     // simple equality filters via querystring (?status=Open)
     Object.entries(req.query).forEach(([k, v]) => { if (!['limit', 'offset'].includes(k)) q = q.eq(k, v) })
     if (req.query.limit) q = q.limit(Number(req.query.limit))

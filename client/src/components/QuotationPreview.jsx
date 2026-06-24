@@ -11,9 +11,13 @@ export default function QuotationPreview({ open, onClose, quotation }) {
     idx: i + 1, name: it.name, qty: Number(it.qty) || 0, rate: Number(it.rate) || 0,
     amount: (Number(it.qty) || 0) * (Number(it.rate) || 0),
   }))
+  const ref = quotation.ref || quotation.number || 'Quotation'
+  const disc = Math.max(0, Number(quotation.discount) || 0)
   const net = items.reduce((s, it) => s + it.amount, 0)
-  const vat = net * 0.15
-  const total = net + vat
+  const discountAmount = (net * disc) / 100
+  const netAfter = net - discountAmount
+  const vat = netAfter * 0.15
+  const total = netAfter + vat
 
   return (
     <div className="fixed inset-0 z-[90] flex items-start justify-center overflow-y-auto bg-navy-900/60 backdrop-blur-sm p-3 sm:p-6">
@@ -21,7 +25,7 @@ export default function QuotationPreview({ open, onClose, quotation }) {
         {/* toolbar */}
         <div className="mb-3 flex items-center justify-between text-white">
           <span className="flex items-center gap-2 text-sm font-semibold">
-            <FileText size={16} /> {quotation.id}.pdf
+            <FileText size={16} /> {ref}.pdf
           </span>
           <div className="flex items-center gap-2">
             <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-xs font-semibold hover:bg-white/20"><Printer size={14} /> Print</button>
@@ -43,7 +47,7 @@ export default function QuotationPreview({ open, onClose, quotation }) {
             </div>
             <div className="text-right">
               <p className="font-display text-2xl font-extrabold tracking-wide">QUOTATION</p>
-              <p className="text-xs text-slate-300">{quotation.id}</p>
+              <p className="text-xs text-slate-300">{ref}</p>
             </div>
           </div>
 
@@ -58,8 +62,8 @@ export default function QuotationPreview({ open, onClose, quotation }) {
               </div>
               <div className="text-right text-xs text-slate-500">
                 <p><span className="font-semibold text-ink">Date:</span> {new Date().toISOString().slice(0, 10)}</p>
-                <p><span className="font-semibold text-ink">Valid Till:</span> {quotation.valid || '—'}</p>
-                <p><span className="font-semibold text-ink">Prepared By:</span> {quotation.owner || 'Ahmed'}</p>
+                <p><span className="font-semibold text-ink">Valid Till:</span> {quotation.valid_till || '—'}</p>
+                <p><span className="font-semibold text-ink">Prepared By:</span> {quotation.owner || '—'}</p>
                 <p><span className="font-semibold text-ink">VAT No:</span> 3001234567800003</p>
               </div>
             </div>
@@ -92,6 +96,7 @@ export default function QuotationPreview({ open, onClose, quotation }) {
             <div className="mt-5 flex justify-end">
               <div className="w-64 space-y-1.5 text-sm">
                 <div className="flex justify-between text-slate-600"><span>Subtotal (Net)</span><span>{sar(Math.round(net))}</span></div>
+                {disc > 0 && <div className="flex justify-between text-rose-600"><span>Discount ({disc}%)</span><span>− {sar(Math.round(discountAmount))}</span></div>}
                 <div className="flex justify-between text-slate-600"><span>VAT (15%)</span><span>{sar(Math.round(vat))}</span></div>
                 <div className="mt-1 flex justify-between rounded-lg bg-brand-50 px-3 py-2 text-base font-extrabold text-brand-700">
                   <span>Total</span><span>{sar(total)}</span>

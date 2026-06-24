@@ -9,9 +9,9 @@ export const resources = {
   interactions: { table: 'customer_interactions', panel: 'sales' },
   // projects
   projects: { table: 'projects', panel: 'projects' },
-  'project-boq': { table: 'project_boq', panel: 'projects' },
-  'project-tasks': { table: 'project_tasks', panel: 'projects' },
-  variations: { table: 'variation_orders', panel: 'projects' },
+  'project-boq': { table: 'project_boq', panel: 'projects', orderBy: 'id' },
+  'project-tasks': { table: 'project_tasks', panel: 'projects', orderBy: 'id' },
+  variations: { table: 'variation_orders', panel: 'projects', orderBy: 'id' },
   // procurement
   suppliers: { table: 'suppliers', panel: 'procurement' },
   rfqs: { table: 'rfqs', panel: 'procurement' },
@@ -19,7 +19,7 @@ export const resources = {
   // warehouse
   items: { table: 'items', panel: 'warehouse' },
   warehouses: { table: 'warehouses', panel: 'warehouse' },
-  stock: { table: 'stock_balances', panel: 'warehouse' },
+  stock: { table: 'stock_balances', panel: 'warehouse', orderBy: 'id' },
   'delivery-notes': { table: 'delivery_notes', panel: 'warehouse' },
   // finance
   invoices: { table: 'invoices', panel: 'finance' },

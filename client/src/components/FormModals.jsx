@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { X, Plus } from 'lucide-react'
+import { X, Plus, Loader2 } from 'lucide-react'
 import { useData } from '../store/DataContext.jsx'
 import { Modal, Field, Select, Row } from './Modal.jsx'
 import { emailTemplates } from '../data/mailData.js'
@@ -32,7 +32,31 @@ export default function FormModals() {
       <QuotationModal open={t === 'quotation'} d={d} />
       <OrderModal open={t === 'order'} d={d} />
       <CustomerModal open={t === 'customer'} d={d} />
+      <InteractionModal open={t === 'interaction'} d={d} />
     </>
+  )
+}
+
+function InteractionModal({ open, d }) {
+  const prefill = d.form.editing
+  const [v, setV] = useState({ customer: '', type: 'Call', notes: '', nextAction: '' })
+  useEffect(() => { if (open) setV({ customer: prefill?.customer || '', type: 'Call', notes: '', nextAction: '' }) }, [open, prefill])
+  const on = (k) => (e) => setV((s) => ({ ...s, [k]: e.target.value }))
+  const save = async () => {
+    if (!v.customer || !v.notes) { alert('Customer and notes are required'); return }
+    try { await d.addInteraction(v) } catch (e) { alert(e.message); return }
+    d.closeForm()
+  }
+  return (
+    <Modal open={open} onClose={d.closeForm} title="Log Activity" subtitle="Record a call, meeting or visit (interaction log)"
+      footer={<><button className="btn-ghost" onClick={d.closeForm}>Cancel</button><SaveButton onClick={save}>Save Activity</SaveButton></>}>
+      <Row>
+        <Field label="Customer" value={v.customer} onChange={on('customer')} placeholder="Customer name" />
+        <Select label="Type" value={v.type} onChange={on('type')} options={['Call', 'Meeting', 'Email', 'WhatsApp', 'Site Visit']} />
+      </Row>
+      <Field label="Notes" value={v.notes} onChange={on('notes')} placeholder="What was discussed?" />
+      <Field label="Next Action" value={v.nextAction} onChange={on('nextAction')} placeholder="e.g. Send revised quote by Sunday" />
+    </Modal>
   )
 }
 
@@ -44,12 +68,24 @@ function useFormState(init) {
 
 const Btn = ({ children, ...p }) => <button {...p}>{children}</button>
 
+// Button that shows a spinner while its async action runs (so the user sees progress)
+function SaveButton({ onClick, children, className = 'btn-primary' }) {
+  const [loading, setLoading] = useState(false)
+  const handle = async () => { setLoading(true); try { await onClick() } finally { setLoading(false) } }
+  return (
+    <button className={`${className} disabled:opacity-70`} onClick={handle} disabled={loading}>
+      {loading && <Loader2 size={15} className="animate-spin" />}
+      {loading ? 'Saving…' : children}
+    </button>
+  )
+}
+
 function LeadModal({ open, d }) {
   const [v, on, reset] = useFormState({ name: '', company: '', source: 'Website', value: '' })
   const save = async () => { try { await d.addLead(v) } catch (e) { alert(e.message); return } reset(); d.closeForm() }
   return (
     <Modal open={open} onClose={d.closeForm} title="New Lead" subtitle="Capture a new customer enquiry"
-      footer={<><button className="btn-ghost" onClick={d.closeForm}>Cancel</button><button className="btn-primary" onClick={save}>Create Lead</button></>}>
+      footer={<><button className="btn-ghost" onClick={d.closeForm}>Cancel</button><SaveButton onClick={save}>Create Lead</SaveButton></>}>
       <Field label="Contact Name" value={v.name} onChange={on('name')} placeholder="e.g. Mohammed Khalid" />
       <Field label="Company" value={v.company} onChange={on('company')} placeholder="e.g. Riyadh Grand Hotel" />
       <Row>
@@ -63,10 +99,15 @@ function LeadModal({ open, d }) {
 
 function OpportunityModal({ open, d }) {
   const [v, on, reset] = useFormState({ customer: '', stage: 'Prospecting', value: '', prob: 30, close: '' })
-  const save = async () => { try { await d.addOpportunity(v) } catch (e) { alert(e.message); return } reset(); d.closeForm() }
+  const save = async () => {
+    if (!v.customer) { alert('Customer is required'); return }
+    if (!v.close) { alert('Next action / expected close date is required (business rule).'); return }
+    try { await d.addOpportunity(v) } catch (e) { alert(e.message); return }
+    reset(); d.closeForm()
+  }
   return (
     <Modal open={open} onClose={d.closeForm} title="New Opportunity" subtitle="Create a qualified deal"
-      footer={<><button className="btn-ghost" onClick={d.closeForm}>Cancel</button><button className="btn-primary" onClick={save}>Create Opportunity</button></>}>
+      footer={<><button className="btn-ghost" onClick={d.closeForm}>Cancel</button><SaveButton onClick={save}>Create Opportunity</SaveButton></>}>
       <Field label="Customer" value={v.customer} onChange={on('customer')} placeholder="Customer name" />
       <Row>
         <Select label="Stage" value={v.stage} onChange={on('stage')} options={['Prospecting', 'Quotation', 'Negotiation', 'Won']} />
@@ -74,14 +115,14 @@ function OpportunityModal({ open, d }) {
       </Row>
       <Row>
         <Field label="Probability (%)" type="number" value={v.prob} onChange={on('prob')} />
-        <Field label="Expected Close" type="date" value={v.close} onChange={on('close')} />
+        <Field label="Next Action / Close Date *" type="date" value={v.close} onChange={on('close')} />
       </Row>
       <OwnerField />
     </Modal>
   )
 }
 
-const blankQuote = () => ({ customer: '', email: '', contact: '', projectName: '', location: '', paymentTerms: '50% advance, 50% on delivery', gp: '', valid: '', validity: '30', items: [{ name: '', qty: 1, rate: '' }] })
+const blankQuote = () => ({ customer: '', email: '', contact: '', projectName: '', location: '', paymentTerms: '50% advance, 50% on delivery', discount: '0', validity: '30', items: [{ name: '', qty: 1, rate: '' }] })
 const cell = 'w-full rounded-lg border border-slate-200 bg-slate-50/60 px-2.5 py-2 text-sm outline-none focus:border-brand-400 focus:bg-white'
 
 function QuotationModal({ open, d }) {
@@ -91,9 +132,11 @@ function QuotationModal({ open, d }) {
     if (open) {
       setV(editing
         ? {
-            customer: editing.customer || '', email: editing.email || '', gp: editing.gp || '',
-            valid: editing.valid || '', owner: editing.owner || 'Ahmed',
-            items: editing.items?.length ? editing.items.map((it) => ({ ...it })) : [{ name: '', qty: 1, rate: '' }],
+            customer: editing.customer || '', email: editing.email || '', contact: editing.contact_person || '',
+            projectName: editing.project_name || '', location: editing.project_location || '',
+            paymentTerms: editing.payment_terms || '', discount: String(editing.discount ?? 0),
+            validity: String(editing.validity || 30),
+            items: editing.items?.length ? editing.items.map((it) => ({ name: it.name, qty: it.qty, rate: it.rate })) : [{ name: '', qty: 1, rate: '' }],
           }
         : blankQuote())
     }
@@ -104,10 +147,14 @@ function QuotationModal({ open, d }) {
   const addItem = () => setV((s) => ({ ...s, items: [...s.items, { name: '', qty: 1, rate: '' }] }))
   const removeItem = (i) => setV((s) => ({ ...s, items: s.items.length > 1 ? s.items.filter((_, idx) => idx !== i) : s.items }))
 
+  const disc = Math.max(0, Number(v.discount) || 0)
   const net = v.items.reduce((sum, it) => sum + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0)
-  const vat = net * 0.15
-  const total = net + vat
-  const lowGp = v.gp !== '' && Number(v.gp) < 25
+  const discountAmount = (net * disc) / 100
+  const netAfter = net - discountAmount
+  const vat = netAfter * 0.15
+  const total = netAfter + vat
+  const needsApproval = disc > 20      // >20% → CEO/manager approval (rule #6)
+  const blocked = disc > 25            // >25% → not allowed at all
 
   const save = async (send) => {
     const payload = { ...v, amount: Math.round(total) }
@@ -117,24 +164,25 @@ function QuotationModal({ open, d }) {
     } catch (e) { alert(e.message); return }
     d.closeForm()
     if (send) {
-      const rec = { customer: v.customer, id: editing?.number || editing?.id || 'Quotation', amount: Math.round(total), email: v.email }
+      if (needsApproval) { alert('This quotation needs manager approval before it can be emailed to the customer.'); return }
+      const rec = { customer: v.customer, id: editing?.ref || editing?.number || 'Quotation', amount: Math.round(total), email: v.email }
       const tpl = emailTemplates.quotation(rec.customer, rec.id, sar(rec.amount))
       d.openCompose({ to: rec.email || '', toName: rec.customer, subject: tpl.subject, body: tpl.body, attachment: `${rec.id}.pdf`, quotation: rec })
     }
   }
 
   return (
-    <Modal open={open} onClose={d.closeForm} size="lg" title={editing ? `Edit Quotation · ${editing.id}` : 'New Quotation / Estimation'} subtitle={editing ? 'Changes save automatically as you edit' : 'Build the BOQ — total is calculated from the items'}
+    <Modal open={open} onClose={d.closeForm} size="lg" title={editing ? `Edit Quotation · ${editing.ref || ''}` : 'New Quotation / Estimation'} subtitle={editing ? 'Editing creates a new revision (history is kept)' : 'Build the BOQ — VAT & total are calculated automatically'}
       footer={editing ? (
         <>
           <button className="btn-ghost" onClick={d.closeForm}>Close</button>
-          <button className="btn-primary" onClick={() => save(true)}>Update &amp; Email</button>
+          <SaveButton onClick={() => save(true)}>Update &amp; Email</SaveButton>
         </>
       ) : (
         <>
           <button className="btn-ghost" onClick={d.closeForm}>Cancel</button>
-          <button className="btn-ghost" onClick={() => save(false)}>Save</button>
-          <button className="btn-primary" onClick={() => save(true)}>Save &amp; Email</button>
+          <SaveButton onClick={() => save(false)} className="btn-ghost">Save</SaveButton>
+          <SaveButton onClick={() => save(true)}>Save &amp; Email</SaveButton>
         </>
       )}>
       <Row>
@@ -173,23 +221,26 @@ function QuotationModal({ open, d }) {
         </div>
         {/* totals */}
         <div className="mt-3 flex justify-end">
-          <div className="w-56 space-y-1 text-sm">
+          <div className="w-60 space-y-1 text-sm">
             <div className="flex justify-between text-slate-600"><span>Subtotal (Net)</span><span>{sar(Math.round(net))}</span></div>
+            {disc > 0 && <div className="flex justify-between text-rose-600"><span>Discount ({disc}%)</span><span>− {sar(Math.round(discountAmount))}</span></div>}
             <div className="flex justify-between text-slate-600"><span>VAT (15%)</span><span>{sar(Math.round(vat))}</span></div>
             <div className="flex justify-between rounded-lg bg-brand-50 px-2.5 py-1.5 font-bold text-brand-700"><span>Total</span><span>{sar(Math.round(total))}</span></div>
           </div>
         </div>
       </div>
 
-      {lowGp && (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600">
-          ⚠ GP below 25% — this quotation will require manager approval before sending.
+      <Field label="Discount (%)" type="number" value={v.discount} onChange={on('discount')} placeholder="0" />
+      {blocked && (
+        <div className="rounded-xl border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
+          ⛔ Discount above 25% is not allowed — reduce the discount.
         </div>
       )}
-      <Row>
-        <Field label="Gross Profit (%)" type="number" value={v.gp} onChange={on('gp')} placeholder="28" />
-        <Field label="Valid Till" type="date" value={v.valid} onChange={on('valid')} />
-      </Row>
+      {!blocked && needsApproval && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
+          ⚠ Discount above 20% — this quotation will need manager approval before it can be sent.
+        </div>
+      )}
       <OwnerField />
     </Modal>
   )
@@ -207,7 +258,7 @@ function OrderModal({ open, d }) {
   const save = async () => { try { await d.addOrder(v) } catch (e) { alert(e.message); return } d.closeForm() }
   return (
     <Modal open={open} onClose={d.closeForm} size="lg" title="New Sales Order" subtitle="Capture full data — a linked Project + required items are created automatically"
-      footer={<><button className="btn-ghost" onClick={d.closeForm}>Cancel</button><button className="btn-primary" onClick={save}>Create Order &amp; Project</button></>}>
+      footer={<><button className="btn-ghost" onClick={d.closeForm}>Cancel</button><SaveButton onClick={save}>Create Order &amp; Project</SaveButton></>}>
       <Row>
         <Field label="Customer" value={v.customer} onChange={on('customer')} placeholder="e.g. Riyadh Grand Hotel" />
         <Field label="Project Name" value={v.projectName} onChange={on('projectName')} placeholder="e.g. Commercial Kitchen" />
@@ -253,7 +304,7 @@ function CustomerModal({ open, d }) {
   const save = async () => { try { await d.addCustomer({ name: v.name, category: v.group, territory: v.territory }) } catch (e) { alert(e.message); return } reset(); d.closeForm() }
   return (
     <Modal open={open} onClose={d.closeForm} title="New Customer" subtitle="Add a customer account"
-      footer={<><button className="btn-ghost" onClick={d.closeForm}>Cancel</button><button className="btn-primary" onClick={save}>Create Customer</button></>}>
+      footer={<><button className="btn-ghost" onClick={d.closeForm}>Cancel</button><SaveButton onClick={save}>Create Customer</SaveButton></>}>
       <Field label="Customer Name" value={v.name} onChange={on('name')} placeholder="e.g. Jeddah Hilton" />
       <Row>
         <Select label="Group" value={v.group} onChange={on('group')} options={['Hospitality', 'Catering', 'Restaurant', 'Retail']} />
