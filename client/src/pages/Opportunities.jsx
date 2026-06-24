@@ -1,5 +1,4 @@
-import { useState } from 'react'
-import { Plus, Trophy, XCircle, Loader2 } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import { PageHeader, Badge, statusTone } from '../components/ui.jsx'
 import { sar } from '../data/mockData.js'
 import { useData } from '../store/DataContext.jsx'
@@ -8,16 +7,12 @@ const stages = ['Prospecting', 'Quotation', 'Negotiation', 'Won']
 const stageColor = { Prospecting: '#94a3b8', Quotation: '#3b82f6', Negotiation: '#E0A82E', Won: '#0EA99A' }
 
 export default function Opportunities() {
-  const { opportunities, openForm, wonOpportunity, lostOpportunity } = useData()
-  const [busy, setBusy] = useState(null)
-  const run = async (id, fn) => { setBusy(id); try { await fn() } catch (e) { alert(e.message) } finally { setBusy(null) } }
-  const markLost = (o) => { const reason = window.prompt(`Mark ${o.customer} as Lost — reason is required:`); if (reason && reason.trim()) run(o.id, () => lostOpportunity(o.id, reason.trim())) }
-
+  const { opportunities, salesOrders, openForm } = useData()
   const lost = opportunities.filter((o) => o.stage === 'Lost')
 
   return (
     <>
-      <PageHeader title="Opportunities" subtitle="Track deals through the pipeline · every deal needs a next-action date">
+      <PageHeader title="Opportunities" subtitle="Auto pipeline: chat → Prospecting · quote sent → Quotation · concession → Negotiation · customer accepts → Won · rejects → Lost">
         <button className="btn-primary" onClick={() => openForm('opportunity')}><Plus size={16} /> New Opportunity</button>
       </PageHeader>
 
@@ -53,14 +48,17 @@ export default function Opportunities() {
                     <div className="mt-2 h-1.5 w-full rounded-full bg-slate-100">
                       <div className="h-1.5 rounded-full" style={{ width: `${o.prob}%`, background: stageColor[stage] }} />
                     </div>
-                    {stage !== 'Won' && (
-                      <div className="mt-2 flex gap-1.5 opacity-0 transition group-hover:opacity-100">
-                        <button onClick={() => run(o.id, () => wonOpportunity(o.id))} disabled={busy === o.id}
-                          className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg border border-emerald-200 py-1 text-xs font-semibold text-emerald-600 hover:bg-emerald-50 disabled:opacity-50">{busy === o.id ? <Loader2 size={12} className="animate-spin" /> : <Trophy size={12} />} Won</button>
-                        <button onClick={() => markLost(o)} disabled={busy === o.id}
-                          className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg border border-rose-200 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-50 disabled:opacity-50">{busy === o.id ? <Loader2 size={12} className="animate-spin" /> : <XCircle size={12} />} Lost</button>
-                      </div>
-                    )}
+                    {stage === 'Won' && (() => {
+                      const order = salesOrders.find((s) => s.customer === o.customer)
+                      if (!order || !order.boqTotal) return <p className="mt-2 text-[11px] font-semibold text-emerald-600">🏆 Won — project starting</p>
+                      const done = order.boqDone >= order.boqTotal
+                      return (
+                        <div className="mt-2 rounded-lg bg-emerald-50 p-2">
+                          <div className="flex items-center justify-between text-[11px] font-semibold"><span className="text-emerald-700">Installation · {order.projectNo}</span><span className={done ? 'text-emerald-700' : 'text-slate-500'}>{done ? 'Delivered ✓' : `${order.boqDone}/${order.boqTotal}`}</span></div>
+                          <div className="mt-1 h-1.5 w-full rounded-full bg-white"><div className="h-1.5 rounded-full bg-emerald-500 transition-all" style={{ width: `${order.progress}%` }} /></div>
+                        </div>
+                      )
+                    })()}
                   </div>
                 ))}
                 {items.length === 0 && <p className="rounded-xl border border-dashed border-slate-300 py-6 text-center text-xs text-slate-400">No deals</p>}

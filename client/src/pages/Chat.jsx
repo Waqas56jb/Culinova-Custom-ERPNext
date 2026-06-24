@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
-import { Send, FileText, UserPlus, Mail, MessageSquare, Loader2, ArrowLeft, Paperclip, X, Download, Search } from 'lucide-react'
+import { Send, FileText, UserPlus, Mail, MessageSquare, Loader2, ArrowLeft, Paperclip, X, Download, Search, FolderKanban, Package, Plus } from 'lucide-react'
 import { useData } from '../store/DataContext.jsx'
+import QuotationPreview from '../components/QuotationPreview.jsx'
 
 const initials = (n) => (n || '?').split(' ').map((x) => x[0]).join('').slice(0, 2).toUpperCase()
 const fileToDataUrl = (file) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file) })
@@ -30,12 +31,13 @@ function Attachment({ m, mine }) {
 }
 
 export default function Chat() {
-  const { chatMessages, sendChatReply, markChatRead, openForm } = useData()
+  const { chatMessages, sendChatReply, markChatRead, openForm, salesOrders, quotations } = useData()
   const [active, setActive] = useState(null)
   const [text, setText] = useState('')
   const [file, setFile] = useState(null)
   const [sending, setSending] = useState(false)
   const [q, setQ] = useState('')
+  const [preview, setPreview] = useState(null)
   const endRef = useRef(null); const fileRef = useRef(null); const taRef = useRef(null)
 
   const threads = useMemo(() => {
@@ -52,6 +54,9 @@ export default function Chat() {
   }, [chatMessages, q])
 
   const current = threads.find((t) => t.email === active) || (active ? { email: active, name: active, messages: [] } : null)
+  const custOrders = current ? salesOrders.filter((o) => o.customer === current.name) : []
+  const lockedProjects = [...new Set(custOrders.map((o) => o.projectNo).filter(Boolean))]
+  const latestQuote = current ? quotations.find((qq) => qq.customer === current.name) : null
   useEffect(() => { endRef.current?.scrollIntoView({ block: 'end' }) }, [current?.messages.length, active])
   useEffect(() => { const ta = taRef.current; if (ta) { ta.style.height = '0px'; ta.style.height = Math.min(ta.scrollHeight, 140) + 'px' } }, [text])
 
@@ -66,6 +71,7 @@ export default function Chat() {
   let lastDay = null
 
   return (
+    <>
     <div className="flex h-[calc(100vh-128px)] min-h-[460px] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-card">
       {/* thread list */}
       <div className={`${active ? 'hidden md:flex' : 'flex'} w-full flex-col border-r border-slate-100 md:w-[320px] md:shrink-0`}>
@@ -98,14 +104,22 @@ export default function Chat() {
       <div className={`${active ? 'flex' : 'hidden md:flex'} min-w-0 flex-1 flex-col bg-slate-50/40`}>
         {current ? (
           <>
-            <div className="flex shrink-0 items-center gap-3 border-b border-slate-100 bg-white px-3 py-2.5 sm:px-4">
+            <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-slate-100 bg-white px-3 py-2.5 sm:gap-3 sm:px-4">
               <button onClick={() => setActive(null)} className="grid h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-slate-100 md:hidden"><ArrowLeft size={18} /></button>
               <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-gradient-to-br from-navy-700 to-brand-600 text-xs font-bold text-white">{initials(current.name)}</span>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-bold text-ink">{current.name}</p>
-                <p className="flex items-center gap-1 truncate text-[11px] text-muted"><Mail size={11} /> {current.email}</p>
+                <div className="flex items-center gap-2">
+                  <p className="truncate text-sm font-bold text-ink">{current.name}</p>
+                  {custOrders.length > 0 && <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-600"><Package size={10} /> {custOrders.length} order{custOrders.length > 1 ? 's' : ''}</span>}
+                </div>
+                <p className="flex flex-wrap items-center gap-x-2 truncate text-[11px] text-muted">
+                  <span className="inline-flex items-center gap-1"><Mail size={11} /> {current.email}</span>
+                  {lockedProjects.length > 0 && <span className="inline-flex items-center gap-1 font-semibold text-violet-600"><FolderKanban size={11} /> {lockedProjects.join(', ')}</span>}
+                </p>
               </div>
-              <button onClick={() => openForm('quotation', { customer: current.name, email: current.email })} className="hidden items-center gap-1.5 rounded-lg border border-brand-200 px-3 py-1.5 text-xs font-semibold text-brand-600 hover:bg-brand-50 sm:inline-flex"><FileText size={14} /> Quotation</button>
+              {/* right side of profile: locked quotation PDF + actions */}
+              {latestQuote && <button onClick={() => setPreview(latestQuote)} title="View quotation PDF" className="inline-flex items-center gap-1.5 rounded-lg border border-brand-200 px-3 py-1.5 text-xs font-semibold text-brand-600 hover:bg-brand-50"><FileText size={14} /> PDF</button>}
+              <button onClick={() => openForm('quotation', { customer: current.name, email: current.email })} className="hidden items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 sm:inline-flex"><Plus size={14} /> Quote</button>
               <button onClick={() => openForm('lead', { company: current.name, email: current.email, name: current.name })} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"><UserPlus size={14} /><span className="hidden sm:inline">Lead</span></button>
             </div>
 
@@ -149,5 +163,7 @@ export default function Chat() {
         )}
       </div>
     </div>
+    <QuotationPreview open={!!preview} onClose={() => setPreview(null)} quotation={preview} />
+    </>
   )
 }

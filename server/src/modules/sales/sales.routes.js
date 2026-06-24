@@ -28,6 +28,26 @@ async function resolveItems(items = []) {
 }
 const validTillFrom = (days) => new Date(Date.now() + Number(days) * 86400000).toISOString().slice(0, 10)
 
+// ── SALES ORDERS enriched with linked project number + BOQ installation progress ──
+r.get('/orders', authRequired, authorize('sales', 'read'), asyncWrap(async (req, res) => {
+  const { data: orders, error } = await supabase.from('sales_orders').select('*').order('created_at', { ascending: false })
+  if (error) throw error
+  const out = []
+  for (const so of orders || []) {
+    let project_number = null, total = 0, done = 0, progress = 0
+    if (so.project_id) {
+      const { data: pr } = await supabase.from('projects').select('number, progress').eq('id', so.project_id).maybeSingle()
+      project_number = pr?.number || null
+      const { data: boq } = await supabase.from('project_boq').select('status').eq('project_id', so.project_id)
+      total = (boq || []).length
+      done = (boq || []).filter((b) => ['Installed', 'Delivered'].includes(b.status)).length
+      progress = total ? Math.round((done / total) * 100) : (pr?.progress || 0)
+    }
+    out.push({ ...so, project_number, boq_total: total, boq_done: done, progress })
+  }
+  res.json(out)
+}))
+
 // ── LIST (items embedded; cost/GP redacted for non-management) ──
 r.get('/quotations', authRequired, authorize('sales', 'read'), asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('quotations').select('*, quotation_items(*)').order('created_at', { ascending: false })

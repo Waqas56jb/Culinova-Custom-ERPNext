@@ -21,7 +21,7 @@ const mapQuote = (r) => ({
   owner: ownerName(r.owner_id), date: d10(r), ref: r.number,
   items: (r.quotation_items || []).map((it) => ({ name: it.item_name, qty: it.qty, rate: it.rate })),
 })
-const mapSO = (r) => ({ ...r, amount: Number(r.amount) || 0, delivery: r.delivery_status, billing: r.billing_status, project: r.project_id, date: d10(r), ref: r.number })
+const mapSO = (r) => ({ ...r, amount: Number(r.amount) || 0, delivery: r.delivery_status, billing: r.billing_status, project: r.project_number || r.project_id, projectNo: r.project_number, boqDone: r.boq_done ?? 0, boqTotal: r.boq_total ?? 0, progress: r.progress ?? 0, date: d10(r), ref: r.number })
 const mapProject = (r) => ({ ...r, contractValue: Number(r.contract_value) || 0, actualCost: Number(r.actual_cost) || 0, committedCost: Number(r.committed_cost) || 0, billed: Number(r.billed) || 0, collected: Number(r.collected) || 0, progress: r.progress ?? 0, manager: r.manager || 'Unassigned', salesOrder: r.sales_order_id || '—', ref: r.number, boq: [], tasks: [], variations: [] })
 const mapSupplier = (r) => ({ ...r, onTime: r.on_time ?? 0, totalPOs: r.totalPOs ?? 0, rating: Number(r.rating) || 0 })
 const mapRFQ = (r) => ({ ...r, item: r.item_name, project: r.project_id, suppliers: r.suppliers || [], awarded: r.awarded_supplier, date: d10(r), ref: r.number })
@@ -74,7 +74,7 @@ export function DataProvider({ children }) {
     customers: { ep: 'customers', set: setCustomers, map: mapCustomer, panel: 'sales' },
     leads: { ep: 'leads', set: setLeads, map: mapLead, panel: 'sales' },
     opportunities: { ep: 'opportunities', set: setOpportunities, map: mapOpp, panel: 'sales' },
-    salesOrders: { ep: 'sales-orders', set: setSalesOrders, map: mapSO, panel: 'sales' },
+    salesOrders: { ep: 'sales/orders', set: setSalesOrders, map: mapSO, panel: 'sales' },
     suppliers: { ep: 'suppliers', set: setSuppliers, map: mapSupplier, panel: 'procurement' },
     rfqs: { ep: 'rfqs', set: setRfqs, map: mapRFQ, panel: 'procurement' },
     purchaseOrders: { ep: 'purchase-orders', set: setPurchaseOrders, map: mapPO, panel: 'procurement' },
