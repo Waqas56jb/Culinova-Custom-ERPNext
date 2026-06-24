@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Users2, Target, FileText, ClipboardList, Building2,
   FolderKanban, ShoppingCart, Boxes, Wallet, HardHat, Wrench,
-  X, Sparkles, Mail, Truck, Receipt, BarChart3, Coins, Ticket, CalendarClock, UserCheck, Lock,
+  X, Sparkles, MessageSquare, Truck, Receipt, BarChart3, Coins, Ticket, CalendarClock, UserCheck, Lock,
 } from 'lucide-react'
 import { useData } from '../store/DataContext.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
@@ -15,7 +15,7 @@ const sections = [
     { to: '/sales/quotations', label: 'Quotations / Estimation', icon: FileText },
     { to: '/sales/orders', label: 'Sales Orders', icon: ClipboardList },
     { to: '/sales/customers', label: 'Customers', icon: Building2 },
-    { to: '/sales/mail', label: 'Mailbox', icon: Mail },
+    { to: '/sales/chat', label: 'Chat', icon: MessageSquare },
   ] },
   { title: 'Project Management', panel: 'projects', items: [
     { to: '/projects/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -63,9 +63,9 @@ const sections = [
 ]
 
 export default function Sidebar({ open, onClose }) {
-  const { emails } = useData()
+  const { chatMessages } = useData()
   const { canSee } = useAuth()
-  const unread = emails.filter((e) => e.folder === 'inbox' && !e.read).length
+  const unread = chatMessages.filter((m) => m.sender === 'customer' && !m.read).length
   const visible = sections.filter((s) => canSee(s.panel))
 
   return (
@@ -92,7 +92,7 @@ export default function Sidebar({ open, onClose }) {
                     <>
                       <Icon size={18} className={isActive ? 'text-brand-300' : 'text-slate-400 group-hover:text-brand-300'} />
                       <span className="flex-1">{label}</span>
-                      {to === '/sales/mail' && unread > 0 && (
+                      {to === '/sales/chat' && unread > 0 && (
                         <span className="rounded-full bg-brand-500/20 px-2 py-0.5 text-[11px] font-bold text-brand-300">{unread}</span>
                       )}
                     </>

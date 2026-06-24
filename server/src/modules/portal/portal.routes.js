@@ -24,6 +24,22 @@ r.post('/customer/tickets', authRequired, asyncWrap(async (req, res) => {
   res.status(201).json(data)
 }))
 
+// ── CUSTOMER ↔ SALES CHAT — customer's own thread (one recipient: the sales team) ──
+r.get('/customer/messages', authRequired, asyncWrap(async (req, res) => {
+  const { data, error } = await supabase.from('messages').select('*').eq('customer_email', req.user.email).order('created_at', { ascending: true })
+  if (error) throw error
+  res.json(data || [])
+}))
+r.post('/customer/messages', authRequired, asyncWrap(async (req, res) => {
+  const body = (req.body.body || '').trim()
+  if (!body) return res.status(422).json({ error: 'Message is required' })
+  const { data, error } = await supabase.from('messages').insert({
+    customer_name: req.user.name, customer_email: req.user.email, sender: 'customer', body,
+  }).select().single()
+  if (error) throw error
+  res.status(201).json(data)
+}))
+
 // ── SUPPLIER PORTAL — open RFQs to quote + this supplier's POs/deliveries ──
 r.get('/supplier/overview', authRequired, asyncWrap(async (req, res) => {
   const name = req.user.name

@@ -12,6 +12,11 @@ export function CustomerProvider({ children }) {
   const [quotations, setQuotations] = useState([])
   const [invoices, setInvoices] = useState([])
   const [tickets, setTickets] = useState([])
+  const [messages, setMessages] = useState([])
+
+  const loadMessages = useCallback(async () => {
+    try { const m = await api('/portal/customer/messages'); setMessages(m || []) } catch { /* not authed */ }
+  }, [])
 
   const load = useCallback(async () => {
     try {
@@ -22,13 +27,15 @@ export function CustomerProvider({ children }) {
       setTickets((o.tickets || []).map((t) => ({ id: t.number || t.id, subject: t.subject, priority: t.priority, status: t.status, date: d10(t) })))
     } catch { /* not authed */ }
   }, [])
-  useEffect(() => { if (user) load() }, [user, load])
+  useEffect(() => { if (user) { load(); loadMessages() } }, [user, load, loadMessages])
 
   // accept/decline/pay are buyer intents reflected on the real fetched records
   const acceptQuote = (id) => setQuotations((p) => p.map((q) => (q.id === id ? { ...q, status: 'Accepted' } : q)))
   const declineQuote = (id) => setQuotations((p) => p.map((q) => (q.id === id ? { ...q, status: 'Declined' } : q)))
   const payInvoice = (id) => setInvoices((p) => p.map((i) => (i.id === id ? { ...i, paid: i.total, status: 'Paid' } : i)))
   const raiseTicket = async (d) => { await api('/portal/customer/tickets', { method: 'POST', body: { subject: d.subject, priority: d.priority } }); await load() }
+  // chat — message goes to ONE recipient: the sales team
+  const sendMessage = async (body) => { await api('/portal/customer/messages', { method: 'POST', body: { body } }); await loadMessages() }
 
-  return <Ctx.Provider value={{ projects, quotations, invoices, tickets, acceptQuote, declineQuote, payInvoice, raiseTicket }}>{children}</Ctx.Provider>
+  return <Ctx.Provider value={{ projects, quotations, invoices, tickets, messages, acceptQuote, declineQuote, payInvoice, raiseTicket, sendMessage, loadMessages }}>{children}</Ctx.Provider>
 }

@@ -6,7 +6,7 @@ import Opportunities from './pages/Opportunities.jsx'
 import Quotations from './pages/Quotations.jsx'
 import SalesOrders from './pages/SalesOrders.jsx'
 import Customers from './pages/Customers.jsx'
-import Mail from './pages/Mail.jsx'
+import Chat from './pages/Chat.jsx'
 import ProjectDashboard from './pages/ProjectDashboard.jsx'
 import Projects from './pages/Projects.jsx'
 import ProjectDetail from './pages/ProjectDetail.jsx'
@@ -53,9 +53,6 @@ export default function App() {
   return (
     <>
       <Routes>
-        {/* standalone full-screen email app (own theme) */}
-        <Route path="/sales/mail" element={<Mail />} />
-
         {/* main ERP shell */}
         <Route element={<Layout />}>
           <Route path="/" element={<Navigate to="/sales/dashboard" replace />} />
@@ -65,6 +62,7 @@ export default function App() {
           <Route path="/sales/quotations" element={<Quotations />} />
           <Route path="/sales/orders" element={<SalesOrders />} />
           <Route path="/sales/customers" element={<Customers />} />
+          <Route path="/sales/chat" element={<Chat />} />
 
           {/* Project Management */}
           <Route path="/projects/dashboard" element={<ProjectDashboard />} />

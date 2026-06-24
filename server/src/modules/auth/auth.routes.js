@@ -7,7 +7,7 @@ import { authRequired } from '../../middleware/auth.js'
 import { asyncWrap } from '../../middleware/error.js'
 
 const r = Router()
-const sign = (u) => jwt.sign({ id: u.id, name: u.name, role: u.role, access_level: u.access_level }, env.jwtSecret, { expiresIn: env.jwtExpires })
+const sign = (u) => jwt.sign({ id: u.id, name: u.name, email: u.email, role: u.role, access_level: u.access_level }, env.jwtSecret, { expiresIn: env.jwtExpires })
 
 // First-run: create the single admin account if it doesn't exist.
 r.post('/seed', asyncWrap(async (req, res) => {
@@ -29,7 +29,7 @@ r.post('/login', asyncWrap(async (req, res) => {
   if (!user || user.status !== 'Active') return res.status(401).json({ error: 'Invalid credentials' })
   const ok = await bcrypt.compare(password || '', user.password_hash)
   if (!ok) return res.status(401).json({ error: 'Invalid credentials' })
-  res.json({ token: sign(user), user: { id: user.id, name: user.name, role: user.role, access_level: user.access_level, designation: user.designation } })
+  res.json({ token: sign(user), user: { id: user.id, name: user.name, email: user.email, role: user.role, access_level: user.access_level, designation: user.designation } })
 }))
 
 r.get('/me', authRequired, (req, res) => res.json(req.user))
@@ -46,7 +46,7 @@ r.post('/signup', asyncWrap(async (req, res) => {
     name, email, password_hash: hash, role, access_level: 'Create', department: role,
   }).select().single()
   if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: error.code === '23505' ? 'Email already registered' : error.message })
-  res.status(201).json({ token: sign(data), user: { id: data.id, name: data.name, role: data.role, access_level: data.access_level } })
+  res.status(201).json({ token: sign(data), user: { id: data.id, name: data.name, email: data.email, role: data.role, access_level: data.access_level } })
 }))
 
 // Password reset (simplified — production should email a one-time token).

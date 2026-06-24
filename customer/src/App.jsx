@@ -5,6 +5,7 @@ import Projects from './pages/Projects.jsx'
 import Quotations from './pages/Quotations.jsx'
 import Invoices from './pages/Invoices.jsx'
 import ServiceRequests from './pages/ServiceRequests.jsx'
+import Chat from './pages/Chat.jsx'
 import Auth from './pages/Auth.jsx'
 import { useAuth } from './auth/AuthContext.jsx'
 
@@ -21,6 +22,7 @@ export default function App() {
         <Route path="/quotations" element={<Quotations />} />
         <Route path="/invoices" element={<Invoices />} />
         <Route path="/service" element={<ServiceRequests />} />
+        <Route path="/chat" element={<Chat />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Route>
     </Routes>

@@ -66,6 +66,7 @@ export function DataProvider({ children }) {
   const [employees, setEmployees] = useState([])
   const [leaves, setLeaves] = useState([])
   const [interactions, setInteractions] = useState([])
+  const [chatMessages, setChatMessages] = useState([])
   const [payrollStatus, setPayrollStatus] = useState('Pending')
 
   // resource registry: key → { ep, set, map, panel }
@@ -123,10 +124,20 @@ export function DataProvider({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [panels])
 
-  const loadAll = useCallback(async () => {
-    await Promise.all([...Object.keys(SOURCES).map((k) => reload(k)), loadProjects(), loadQuotations()])
+  const loadChat = useCallback(async () => {
+    if (!allowed('sales')) { setChatMessages([]); return }
+    try { const rows = await api('/sales/messages'); setChatMessages(rows || []) } catch { setChatMessages([]) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reload, loadProjects, loadQuotations])
+  }, [panels])
+
+  const loadAll = useCallback(async () => {
+    await Promise.all([...Object.keys(SOURCES).map((k) => reload(k)), loadProjects(), loadQuotations(), loadChat()])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reload, loadProjects, loadQuotations, loadChat])
+
+  // ── SALES CHAT (replies to customers) ──
+  const sendChatReply = async (customer_email, customer_name, body) => { await post('sales/messages', { customer_email, customer_name, body }); await loadChat() }
+  const markChatRead = async (customer_email) => { await post('sales/messages/read', { customer_email }).catch(() => {}); await loadChat() }
 
   useEffect(() => { if (user) loadAll() }, [user, loadAll])
 
@@ -256,10 +267,11 @@ export function DataProvider({ children }) {
     leads, opportunities, quotations, salesOrders, customers, emails, projects,
     suppliers, rfqs, purchaseOrders, warehouses, stockItems, deliveryNotes,
     invoices, payables, payments,
-    snags, commissioning, tickets, visits, contracts, employees, leaves, interactions, payrollStatus,
+    snags, commissioning, tickets, visits, contracts, employees, leaves, interactions, chatMessages, payrollStatus,
     reload, loadAll,
     addLead, addOpportunity, lostOpportunity, wonOpportunity, addInteraction, addQuotation, updateQuotation, addOrder, addCustomer, convertLead,
     approveQuotation, rejectQuotation, sendQuotation, acceptQuotation, lostQuotation,
+    sendChatReply, markChatRead,
     addProject, addTask, updateTask, deleteTask, addVariation, updateBoqItem, updateProject,
     addSupplier, addRFQ, awardPO, updatePOStatus, requestQuotes,
     submitSupplierQuote, acceptPO, setShipment,

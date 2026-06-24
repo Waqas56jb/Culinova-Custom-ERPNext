@@ -226,5 +226,31 @@ r.post('/opportunities/:id/won', authRequired, authorize('sales', 'create'), asy
   res.json(data)
 }))
 
+// ============================================================
+// SALES CHAT — inbox of customer messages + staff replies
+// ============================================================
+r.get('/messages', authRequired, authorize('sales', 'read'), asyncWrap(async (req, res) => {
+  const { data, error } = await supabase.from('messages').select('*').order('created_at', { ascending: true })
+  if (error) throw error
+  res.json(data || [])
+}))
+
+r.post('/messages', authRequired, authorize('sales', 'create'), asyncWrap(async (req, res) => {
+  const { customer_email, customer_name, body } = req.body
+  if (!customer_email || !(body || '').trim()) return res.status(422).json({ error: 'customer_email and message body are required' })
+  const { data, error } = await supabase.from('messages').insert({
+    customer_name: customer_name || customer_email, customer_email, sender: 'staff', staff_name: req.user.name, body: body.trim(),
+  }).select().single()
+  if (error) throw error
+  res.status(201).json(data)
+}))
+
+r.post('/messages/read', authRequired, authorize('sales', 'create'), asyncWrap(async (req, res) => {
+  if (req.body.customer_email) {
+    await supabase.from('messages').update({ read: true }).eq('customer_email', req.body.customer_email).eq('sender', 'customer')
+  }
+  res.json({ ok: true })
+}))
+
 export { RULES }
 export default r

@@ -81,7 +81,11 @@ function SaveButton({ onClick, children, className = 'btn-primary' }) {
 }
 
 function LeadModal({ open, d }) {
-  const [v, on, reset] = useFormState({ name: '', company: '', source: 'Website', value: '' })
+  const prefill = d.form.editing
+  const [v, setV] = useState({ name: '', company: '', source: 'Website', value: '' })
+  useEffect(() => { if (open) setV({ name: prefill?.name || '', company: prefill?.company || '', source: 'Website', value: '' }) }, [open, prefill])
+  const on = (k) => (e) => setV((s) => ({ ...s, [k]: e.target.value }))
+  const reset = () => setV({ name: '', company: '', source: 'Website', value: '' })
   const save = async () => { try { await d.addLead(v) } catch (e) { alert(e.message); return } reset(); d.closeForm() }
   return (
     <Modal open={open} onClose={d.closeForm} title="New Lead" subtitle="Capture a new customer enquiry"
@@ -127,20 +131,22 @@ const cell = 'w-full rounded-lg border border-slate-200 bg-slate-50/60 px-2.5 py
 
 function QuotationModal({ open, d }) {
   const editing = d.form.editing
+  const isEdit = !!(editing && editing.id)   // editing with id = real edit; without id = prefill for a NEW quote
   const [v, setV] = useState(blankQuote())
   useEffect(() => {
-    if (open) {
-      setV(editing
-        ? {
-            customer: editing.customer || '', email: editing.email || '', contact: editing.contact_person || '',
-            projectName: editing.project_name || '', location: editing.project_location || '',
-            paymentTerms: editing.payment_terms || '', discount: String(editing.discount ?? 0),
-            validity: String(editing.validity || 30),
-            items: editing.items?.length ? editing.items.map((it) => ({ name: it.name, qty: it.qty, rate: it.rate })) : [{ name: '', qty: 1, rate: '' }],
-          }
-        : blankQuote())
+    if (!open) return
+    if (isEdit) {
+      setV({
+        customer: editing.customer || '', email: editing.email || '', contact: editing.contact_person || '',
+        projectName: editing.project_name || '', location: editing.project_location || '',
+        paymentTerms: editing.payment_terms || '', discount: String(editing.discount ?? 0),
+        validity: String(editing.validity || 30),
+        items: editing.items?.length ? editing.items.map((it) => ({ name: it.name, qty: it.qty, rate: it.rate })) : [{ name: '', qty: 1, rate: '' }],
+      })
+    } else {
+      setV({ ...blankQuote(), customer: editing?.customer || '', email: editing?.email || '' })
     }
-  }, [open, editing])
+  }, [open, editing, isEdit])
 
   const on = (k) => (e) => setV((s) => ({ ...s, [k]: e.target.value }))
   const setItem = (i, k, val) => setV((s) => ({ ...s, items: s.items.map((it, idx) => (idx === i ? { ...it, [k]: val } : it)) }))
@@ -159,7 +165,7 @@ function QuotationModal({ open, d }) {
   const save = async (send) => {
     const payload = { ...v, amount: Math.round(total) }
     try {
-      if (editing) await d.updateQuotation(editing.id, payload)
+      if (isEdit) await d.updateQuotation(editing.id, payload)
       else await d.addQuotation(payload)
     } catch (e) { alert(e.message); return }
     d.closeForm()
@@ -172,8 +178,8 @@ function QuotationModal({ open, d }) {
   }
 
   return (
-    <Modal open={open} onClose={d.closeForm} size="lg" title={editing ? `Edit Quotation · ${editing.ref || ''}` : 'New Quotation / Estimation'} subtitle={editing ? 'Editing creates a new revision (history is kept)' : 'Build the BOQ — VAT & total are calculated automatically'}
-      footer={editing ? (
+    <Modal open={open} onClose={d.closeForm} size="lg" title={isEdit ? `Edit Quotation · ${editing.ref || ''}` : 'New Quotation / Estimation'} subtitle={isEdit ? 'Editing creates a new revision (history is kept)' : 'Build the BOQ — VAT & total are calculated automatically'}
+      footer={isEdit ? (
         <>
           <button className="btn-ghost" onClick={d.closeForm}>Close</button>
           <SaveButton onClick={() => save(true)}>Update &amp; Email</SaveButton>
