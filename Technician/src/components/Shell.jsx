@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { Home, ClipboardList, AlertTriangle, CalendarClock, LogOut } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext.jsx'
+import NotificationBell from './NotificationBell.jsx'
 
 const tabs = [
   { to: '/home', label: 'Home', icon: Home },
@@ -23,6 +24,7 @@ export default function Shell() {
             <p className="font-display text-[15px] font-extrabold">{user?.name}</p>
           </div>
           <div className="ml-auto grid h-10 w-10 place-items-center rounded-full bg-white/15 text-sm font-bold">{initials}</div>
+          <NotificationBell />
           <button onClick={logout} title="Log out" className="grid h-10 w-10 place-items-center rounded-full bg-white/10 text-white/80 hover:bg-white/20"><LogOut size={18} /></button>
         </header>
 

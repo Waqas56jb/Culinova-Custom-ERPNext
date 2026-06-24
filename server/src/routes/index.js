@@ -3,6 +3,7 @@ import authRoutes from '../modules/auth/auth.routes.js'
 import usersRoutes from '../modules/users/users.routes.js'
 import portalRoutes from '../modules/portal/portal.routes.js'
 import salesRoutes from '../modules/sales/sales.routes.js'
+import notificationsRoutes from '../modules/notifications/notifications.routes.js'
 import { resources } from '../core/resources.js'
 import { crudRouter } from '../core/crud.js'
 import { rolePanels } from '../rbac/permissions.js'
@@ -22,6 +23,7 @@ api.get('/my-access', authRequired, (req, res) => {
 api.use('/users', usersRoutes)
 api.use('/portal', portalRoutes)
 api.use('/sales', salesRoutes)
+api.use('/notifications', notificationsRoutes)
 
 // Generic config-driven REST for every resource/panel
 for (const [name, cfg] of Object.entries(resources)) {

@@ -1,10 +1,11 @@
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, Users2, ShieldCheck, FolderKanban, LayoutGrid, Settings, X, ShieldAlert } from 'lucide-react'
+import { LayoutDashboard, Users2, ShieldCheck, FolderKanban, LayoutGrid, Settings, X, ShieldAlert, Megaphone } from 'lucide-react'
 
 const nav = [
   { to: '/dashboard', label: 'Executive Dashboard', icon: LayoutDashboard },
   { to: '/users', label: 'User Management', icon: Users2 },
   { to: '/roles', label: 'Roles & Access', icon: ShieldCheck },
+  { to: '/notifications', label: 'Notifications', icon: Megaphone },
   { to: '/projects', label: 'All Projects', icon: FolderKanban },
   { to: '/modules', label: 'All Modules', icon: LayoutGrid },
   { to: '/settings', label: 'Settings', icon: Settings },

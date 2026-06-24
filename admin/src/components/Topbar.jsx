@@ -1,5 +1,6 @@
-import { Menu, Search, Bell, ShieldCheck, LogOut } from 'lucide-react'
+import { Menu, Search, ShieldCheck, LogOut } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext.jsx'
+import NotificationBell from './NotificationBell.jsx'
 
 export default function Topbar({ onMenu }) {
   const { user, logout } = useAuth()
@@ -13,7 +14,7 @@ export default function Topbar({ onMenu }) {
       </div>
       <div className="ml-auto flex items-center gap-2 sm:gap-3">
         <span className="hidden items-center gap-1.5 rounded-full bg-gold-50 px-3 py-1.5 text-xs font-semibold text-gold-600 sm:inline-flex"><ShieldCheck size={13} /> Full Admin</span>
-        <button className="relative grid h-10 w-10 place-items-center rounded-xl border border-slate-200 bg-white text-slate-500 hover:text-ink"><Bell size={18} /><span className="absolute right-2.5 top-2.5 h-2 w-2 rounded-full bg-gold-500 ring-2 ring-white" /></button>
+        <NotificationBell />
         <div className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-white py-1.5 pl-1.5 pr-2.5">
           <div className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-navy-800 to-gold-600 text-xs font-bold text-white">{initials}</div>
           <div className="hidden text-left leading-tight sm:block"><p className="text-[13px] font-semibold text-ink">{user?.name}</p><p className="text-[11px] text-muted">{user?.designation || 'Administrator'}</p></div>

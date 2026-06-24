@@ -1,5 +1,6 @@
-import { Menu, Search, Bell, LogOut } from 'lucide-react'
+import { Menu, Search, LogOut } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext.jsx'
+import NotificationBell from './NotificationBell.jsx'
 
 export default function Topbar({ onMenu }) {
   const { user, logout } = useAuth()
@@ -15,9 +16,7 @@ export default function Topbar({ onMenu }) {
       </div>
 
       <div className="ml-auto flex items-center gap-2 sm:gap-3">
-        <button className="relative grid h-10 w-10 place-items-center rounded-xl border border-slate-200 bg-white text-slate-500 hover:text-ink">
-          <Bell size={18} /><span className="absolute right-2.5 top-2.5 h-2 w-2 rounded-full bg-gold-500 ring-2 ring-white" />
-        </button>
+        <NotificationBell />
 
         <div className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-white py-1.5 pl-1.5 pr-2.5">
           <div className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-navy-800 to-brand-600 text-xs font-bold text-white">{initials}</div>
