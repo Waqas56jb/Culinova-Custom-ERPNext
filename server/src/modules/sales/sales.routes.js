@@ -204,7 +204,7 @@ r.post('/quotations/:id/accept', authRequired, authorize('sales', 'create'), asy
   // 4) link + mark ordered
   await supabase.from('sales_orders').update({ project_id: proj.id }).eq('id', so.id)
   await supabase.from('quotations').update({ status: 'Ordered' }).eq('id', q.id)
-  await winOpportunityForCustomer(q.customer) // opportunity auto-Won
+  await winOpportunityForCustomer(q.customer, q.total_amount) // opportunity auto-Won
   await logAudit(req.user, 'quotation', q.id, 'accepted', { sales_order: so.number, project: proj.number })
   res.status(201).json({ ok: true, sales_order: so, project: proj })
 }))

@@ -63,7 +63,7 @@ r.post('/customer/quotations/:id/accept', authRequired, asyncWrap(async (req, re
   if (items.length) await supabase.from('project_boq').insert(items.map((it) => ({ project_id: proj.id, item_name: it.item_name, qty: it.qty, status: 'Waiting' })))
   await supabase.from('sales_orders').update({ project_id: proj.id }).eq('id', so.id)
   await supabase.from('quotations').update({ status: 'Ordered' }).eq('id', q.id)
-  await winOpportunityForCustomer(q.customer) // opportunity auto-Won
+  await winOpportunityForCustomer(q.customer, q.total_amount) // opportunity auto-Won
   await supabase.from('messages').insert({ customer_name: req.user.name, customer_email: req.user.email, sender: 'customer', body: `✅ I have ACCEPTED quotation ${q.number}.` })
   res.json({ ok: true, sales_order: so.number })
 }))

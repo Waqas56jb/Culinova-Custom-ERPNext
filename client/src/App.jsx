@@ -5,7 +5,6 @@ import Leads from './pages/Leads.jsx'
 import Opportunities from './pages/Opportunities.jsx'
 import Quotations from './pages/Quotations.jsx'
 import SalesOrders from './pages/SalesOrders.jsx'
-import Customers from './pages/Customers.jsx'
 import Chat from './pages/Chat.jsx'
 import ProjectDashboard from './pages/ProjectDashboard.jsx'
 import Projects from './pages/Projects.jsx'
@@ -60,7 +59,6 @@ export default function App() {
           <Route path="/sales/opportunities" element={<Opportunities />} />
           <Route path="/sales/quotations" element={<Quotations />} />
           <Route path="/sales/orders" element={<SalesOrders />} />
-          <Route path="/sales/customers" element={<Customers />} />
           <Route path="/sales/chat" element={<Chat />} />
 
           {/* Project Management */}

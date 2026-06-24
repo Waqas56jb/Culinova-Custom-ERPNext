@@ -14,7 +14,6 @@ const sections = [
     { to: '/sales/opportunities', label: 'Opportunities', icon: Target },
     { to: '/sales/quotations', label: 'Quotations / Estimation', icon: FileText },
     { to: '/sales/orders', label: 'Sales Orders', icon: ClipboardList },
-    { to: '/sales/customers', label: 'Customers', icon: Building2 },
     { to: '/sales/chat', label: 'Chat', icon: MessageSquare },
   ] },
   { title: 'Project Management', panel: 'projects', items: [
