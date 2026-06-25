@@ -26,6 +26,7 @@ export function CustomerProvider({ children }) {
         amount: Number(q.total_amount) || 0, net: Number(q.net_amount) || 0, discount_pct: Number(q.discount_pct) || 0,
         discount_amount: Number(q.discount_amount) || 0, vat: Number(q.vat_amount) || 0, total: Number(q.total_amount) || 0,
         date: d10(q), valid: q.valid_till || '', valid_till: q.valid_till || '', payment_terms: q.payment_terms || '', status: q.status,
+        delivery_date: q.delivery_date || '', notes: q.notes || '', location: q.project_location || '', contact_person: q.contact_person || '',
         items: (q.quotation_items || []).map((it) => ({ name: it.item_name, qty: Number(it.qty) || 0, rate: Number(it.rate) || 0, amount: Number(it.amount) || (Number(it.qty) || 0) * (Number(it.rate) || 0) })),
       })))
       setInvoices((o.invoices || []).map((i) => ({ id: i.number || i.id, project: i.project_id || '—', total: Number(i.total) || 0, paid: Number(i.paid) || 0, due: i.due_date || '', status: i.status })))

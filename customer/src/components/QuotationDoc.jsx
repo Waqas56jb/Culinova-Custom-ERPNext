@@ -42,12 +42,15 @@ export default function QuotationDoc({ open, onClose, quotation }) {
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">Bill To</p>
                 <p className="mt-1 text-sm font-bold text-ink">{q.customer}</p>
+                {q.contact_person && <p className="text-xs text-slate-500">Attn: {q.contact_person}</p>}
                 {q.project && q.project !== '—' && <p className="text-xs text-slate-500">Project: {q.project}</p>}
+                {q.location && <p className="text-xs text-slate-500">{q.location}</p>}
                 <p className="text-xs text-slate-500">Kingdom of Saudi Arabia</p>
               </div>
               <div className="text-right text-xs text-slate-500">
                 <p><span className="font-semibold text-ink">Date:</span> {q.date}</p>
                 <p><span className="font-semibold text-ink">Valid Till:</span> {q.valid_till || '—'}</p>
+                {q.delivery_date && <p><span className="font-semibold text-ink">Delivery By:</span> {q.delivery_date}</p>}
                 <p><span className="font-semibold text-ink">Status:</span> {q.status}</p>
                 <p><span className="font-semibold text-ink">VAT No:</span> 3001234567800003</p>
               </div>
@@ -83,9 +86,16 @@ export default function QuotationDoc({ open, onClose, quotation }) {
               </div>
             </div>
 
+            {q.notes && (
+              <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+                <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">Special Requirements / Notes</p>
+                <p className="whitespace-pre-wrap text-xs text-slate-600">{q.notes}</p>
+              </div>
+            )}
+
             <div className="mt-7 border-t border-slate-100 pt-4 text-[11px] leading-relaxed text-slate-500">
               <p className="mb-1 font-semibold text-ink">Terms &amp; Conditions</p>
-              <p>• Prices are in SAR and inclusive of 15% VAT. • Payment: {q.payment_terms || '50% advance, 50% on delivery'}. • Delivery &amp; installation as per agreed schedule. • Warranty: 12 months on supplied equipment.</p>
+              <p>• Prices are in SAR and inclusive of 15% VAT. • Payment: {q.payment_terms || '50% advance, 50% on delivery'}. {q.delivery_date ? `• Required delivery by ${q.delivery_date}.` : '• Delivery & installation as per agreed schedule.'} • Warranty: 12 months on supplied equipment.</p>
               <p className="mt-3 text-slate-400">A ZATCA-compliant tax invoice will be issued on order confirmation.</p>
             </div>
           </div>
