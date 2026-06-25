@@ -8,6 +8,7 @@ import { uploadAttachment, signAttachments } from '../../core/chatfiles.js'
 import { ensureLeadAndOpportunity, advanceOpportunity, winOpportunityForCustomer } from '../../core/crmflow.js'
 import { projectFieldsFromQuote } from '../../core/handover.js'
 import { notifyManagementApproval } from '../../core/notify.js'
+import { recomputeProject } from '../../core/projectcost.js'
 import { validateRequiredFields, computeFinancials, evaluateApproval, discountSource, RULES } from './quotation.rules.js'
 
 const r = Router()
@@ -202,16 +203,19 @@ r.post('/quotations/:id/accept', authRequired, authorize('sales', 'create'), asy
   }).select().single()
   if (pErr) throw pErr
 
-  // 3) BOQ (required items) from the quotation lines
+  // 3) BOQ (required items) from the quotation lines — budget cost auto-seeded from the
+  //    sales Item-Master cost so the PM starts with a ready budget (can adjust later)
   const items = q.quotation_items || []
   if (items.length) {
     await supabase.from('project_boq').insert(items.map((it) => ({
       project_id: proj.id, item_name: it.item_name, qty: it.qty, status: 'Waiting',
+      budget_cost: (Number(it.cost) || 0) * (Number(it.qty) || 0),
     })))
   }
   // 4) link + mark ordered
   await supabase.from('sales_orders').update({ project_id: proj.id }).eq('id', so.id)
   await supabase.from('quotations').update({ status: 'Ordered' }).eq('id', q.id)
+  await recomputeProject(proj.id) // set committed cost / GP from the seeded budget
   await winOpportunityForCustomer(q.customer, q.total_amount) // opportunity auto-Won
   await logAudit(req.user, 'quotation', q.id, 'accepted', { sales_order: so.number, project: proj.number })
   res.status(201).json({ ok: true, sales_order: so, project: proj })

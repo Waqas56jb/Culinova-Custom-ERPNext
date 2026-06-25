@@ -5,6 +5,7 @@ import { asyncWrap } from '../../middleware/error.js'
 import { uploadAttachment, signAttachments } from '../../core/chatfiles.js'
 import { ensureLeadAndOpportunity, advanceOpportunity, winOpportunityForCustomer, loseOpportunityForCustomer } from '../../core/crmflow.js'
 import { projectFieldsFromQuote } from '../../core/handover.js'
+import { recomputeProject } from '../../core/projectcost.js'
 
 const r = Router()
 const num = (p) => `${p}-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`
@@ -74,9 +75,10 @@ r.post('/customer/quotations/:id/accept', authRequired, asyncWrap(async (req, re
   const { data: proj, error: e2 } = await supabase.from('projects').insert({ number: num('PRJ'), name: `${q.customer} — ${q.project_name || 'Project'}`, customer: q.customer, sales_order_id: so.id, contract_value: q.total_amount, status: 'On Track', ...handover }).select().single()
   if (e2) throw e2
   const items = q.quotation_items || []
-  if (items.length) await supabase.from('project_boq').insert(items.map((it) => ({ project_id: proj.id, item_name: it.item_name, qty: it.qty, status: 'Waiting' })))
+  if (items.length) await supabase.from('project_boq').insert(items.map((it) => ({ project_id: proj.id, item_name: it.item_name, qty: it.qty, status: 'Waiting', budget_cost: (Number(it.cost) || 0) * (Number(it.qty) || 0) })))
   await supabase.from('sales_orders').update({ project_id: proj.id }).eq('id', so.id)
   await supabase.from('quotations').update({ status: 'Ordered' }).eq('id', q.id)
+  await recomputeProject(proj.id) // committed cost / GP from the seeded budget
   await winOpportunityForCustomer(q.customer, q.total_amount) // opportunity auto-Won
   await supabase.from('messages').insert({ customer_name: req.user.name, customer_email: req.user.email, sender: 'customer', body: `✅ I have ACCEPTED quotation ${q.number}.` })
   res.json({ ok: true, sales_order: so.number })
@@ -140,16 +142,25 @@ r.patch('/supplier/po/:id', authRequired, asyncWrap(async (req, res) => {
 
 // ── TECHNICIAN PORTAL — tasks/visits assigned to this technician + snags ──
 r.get('/technician/overview', authRequired, asyncWrap(async (req, res) => {
-  const [tasks, snags, visits] = await Promise.all([
+  const [tasks, snags, visits, boq] = await Promise.all([
     supabase.from('project_tasks').select('*').eq('assignee_id', req.user.id).order('id', { ascending: false }),
     supabase.from('snags').select('*').order('created_at', { ascending: false }),
     supabase.from('maintenance_visits').select('*').ilike('technician', req.user.name).order('id', { ascending: false }),
+    supabase.from('project_boq').select('*, projects(number, name, customer, location)').eq('assignee_id', req.user.id),
   ])
-  res.json({ tasks: rows(tasks), snags: rows(snags), visits: rows(visits) })
+  res.json({ tasks: rows(tasks), snags: rows(snags), visits: rows(visits), boq: rows(boq) })
 }))
 r.patch('/technician/task/:id', authRequired, asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('project_tasks').update({ status: req.body.status, progress: req.body.progress }).eq('id', req.params.id).select().single()
   if (error) throw error
+  res.json(data)
+}))
+// technician updates an assigned BOQ item's status → project progress/cost auto roll up
+r.patch('/technician/boq/:id', authRequired, asyncWrap(async (req, res) => {
+  const { data, error } = await supabase.from('project_boq').update({ status: req.body.status }).eq('id', req.params.id).eq('assignee_id', req.user.id).select().single()
+  if (error) throw error
+  if (!data) return res.status(404).json({ error: 'Not your item' })
+  await recomputeProject(data.project_id)
   res.json(data)
 }))
 r.post('/technician/snag', authRequired, asyncWrap(async (req, res) => {

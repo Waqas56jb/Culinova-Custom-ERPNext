@@ -68,6 +68,7 @@ export function DataProvider({ children }) {
   const [interactions, setInteractions] = useState([])
   const [chatMessages, setChatMessages] = useState([])
   const [customerDir, setCustomerDir] = useState([])
+  const [team, setTeam] = useState([])
   const [payrollStatus, setPayrollStatus] = useState('Pending')
 
   // resource registry: key → { ep, set, map, panel }
@@ -103,11 +104,12 @@ export function DataProvider({ children }) {
   }, [panels])
 
   const loadProjects = useCallback(async () => {
-    if (!allowed('projects')) { setProjects([]); return }
+    if (!allowed('projects')) { setProjects([]); setTeam([]); return }
     try {
-      const [ps, boq, tasks, vars] = await Promise.all([
-        api('/projects'), api('/project-boq').catch(() => []), api('/project-tasks').catch(() => []), api('/variations').catch(() => []),
+      const [ps, boq, tasks, vars, tm] = await Promise.all([
+        api('/projects'), api('/project-boq').catch(() => []), api('/project-tasks').catch(() => []), api('/variations').catch(() => []), api('/pm/team').catch(() => []),
       ])
+      setTeam(tm || [])
       const mapped = (ps || []).map((p) => ({
         ...mapProject(p),
         boq: (boq || []).filter((b) => b.project_id === p.id).map((b) => ({ ...b, item: b.item_name })),
@@ -212,7 +214,7 @@ export function DataProvider({ children }) {
   const addTask = async (pid, t) => { await post('project-tasks', { project_id: pid, name: t.name, status: t.status || 'Open', due_date: t.due || null }); await loadProjects() }
   const updateTask = async (pid, tid, p) => { await patch('project-tasks', tid, p); await loadProjects() }
   const deleteTask = async (pid, tid) => { await del('project-tasks', tid); await loadProjects() }
-  const updateBoqItem = async (pid, idx, p) => { const proj = projects.find((x) => x.id === pid); const b = proj?.boq?.[idx]; if (b?.id) { await patch('project-boq', b.id, p); await loadProjects() } }
+  const updateBoqItem = async (pid, idx, p) => { const proj = projects.find((x) => x.id === pid); const b = proj?.boq?.[idx]; if (b?.id) { await patch('pm/boq', b.id, p); await loadProjects() } }
   const updateProject = async (pid, p) => { const body = {}; if (p.progress != null) body.progress = p.progress; if (p.status) body.status = p.status; await patch('projects', pid, body); await loadProjects() }
   const addVariation = async (pid, vo) => { await post('variations', { project_id: pid, description: vo.desc || vo.description, amount: Number(vo.amount) || 0 }); await loadProjects() }
 
@@ -281,7 +283,7 @@ export function DataProvider({ children }) {
     leads, opportunities, quotations, salesOrders, customers, emails, projects,
     suppliers, rfqs, purchaseOrders, warehouses, stockItems, deliveryNotes,
     invoices, payables, payments,
-    snags, commissioning, tickets, visits, contracts, employees, leaves, interactions, chatMessages, customerDir, payrollStatus,
+    snags, commissioning, tickets, visits, contracts, employees, leaves, interactions, chatMessages, customerDir, team, payrollStatus,
     reload, loadAll,
     addLead, addOpportunity, lostOpportunity, wonOpportunity, addInteraction, addQuotation, updateQuotation, addOrder, addCustomer, convertLead,
     approveQuotation, rejectQuotation, sendQuotation, acceptQuotation, lostQuotation,

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, Wallet, TrendingUp, Coins, Activity, ShoppingCart, Plus, FileText,
@@ -10,19 +10,12 @@ import { sar } from '../data/mockData.js'
 import { gpOf, gpPctOf, collectionPctOf, procurementPctOf } from '../data/projectData.js'
 import { useData } from '../store/DataContext.jsx'
 
-const assignees = [
-  { value: 'Khalid', label: 'Khalid — Procurement Officer' },
-  { value: 'Yusuf', label: 'Yusuf — Storekeeper' },
-  { value: 'Hassan', label: 'Hassan — Technician' },
-  { value: 'Faisal', label: 'Faisal — Site Engineer' },
-  { value: 'Omar', label: 'Omar — Project Manager' },
-  { value: 'Bilal', label: 'Bilal — Estimator' },
-]
+const BOQ_STATUSES = ['Waiting', 'Assigned', 'In Progress', 'Installed']
 
 export default function ProjectDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { projects, addVariation, updateBoqItem, updateProject } = useData()
+  const { projects, team, addVariation, updateBoqItem, updateProject } = useData()
   const p = projects.find((x) => x.id === id)
   const [voModal, setVoModal] = useState(false)
   const [vo, setVo] = useState({ desc: '', amount: '', status: 'Pending' })
@@ -31,20 +24,25 @@ export default function ProjectDetail() {
 
   if (!p) return <div className="card card-pad">Project not found. <button className="text-brand-600" onClick={() => navigate('/projects/all')}>Back</button></div>
 
-  const gp = gpOf(p)
+  const budgetCost = p.committedCost || 0
+  const actualCost = p.actualCost || 0
+  const estGp = (p.contractValue || 0) - budgetCost
+  const actGp = (p.contractValue || 0) - actualCost
+  const estGpPct = p.contractValue ? Math.round((estGp / p.contractValue) * 100) : 0
+  const actGpPct = p.contractValue ? Math.round((actGp / p.contractValue) * 100) : 0
   const cards = [
     { label: 'Contract Value', value: sar(p.contractValue), icon: Wallet, accent: 'from-brand-500 to-brand-600' },
-    { label: 'Actual Cost', value: sar(p.actualCost), icon: Coins, accent: 'from-gold-500 to-gold-600' },
-    { label: `Gross Profit (${gpPctOf(p)}%)`, value: sar(gp), icon: TrendingUp, accent: 'from-emerald-500 to-teal-600' },
-    { label: 'Progress', value: `${p.progress}%`, icon: Activity, accent: 'from-violet-500 to-indigo-600' },
+    { label: 'Budgeted Cost', value: sar(budgetCost), icon: Coins, accent: 'from-gold-500 to-gold-600' },
+    { label: 'Actual Cost', value: sar(actualCost), icon: Coins, accent: 'from-violet-500 to-indigo-600' },
+    { label: 'Progress', value: `${p.progress}%`, icon: Activity, accent: 'from-emerald-500 to-teal-600' },
   ]
   const saveVo = () => { addVariation(p.id, vo); setVo({ desc: '', amount: '', status: 'Pending' }); setVoModal(false) }
 
   const boq = p.boq || []
-  const installed = boq.filter((b) => b.status === 'Installed').length
+  const installed = boq.filter((b) => ['Installed', 'Delivered'].includes(b.status)).length
   const allDone = boq.length > 0 && installed === boq.length
   const pending = boq.filter((b) => b.status === 'Waiting').length
-  const gpPct = gpPctOf(p)
+  const gpPct = estGpPct
   const lowMargin = gpPct < 20
 
   const openEdit = () => { setEdit({ name: p.name, contractValue: p.contractValue, start: p.start, end: p.end, status: p.status }); setEditModal(true) }
@@ -84,6 +82,17 @@ export default function ProjectDetail() {
         <Meter label="Overall Progress" pct={p.progress} color="#0EA99A" />
         <Meter label="Collection %" pct={collectionPctOf(p)} color="#3b82f6" sub={`${sar(p.collected)} of ${sar(p.billed)}`} />
         <Meter label="Procurement %" pct={procurementPctOf(p)} color="#E0A82E" sub={`${sar(p.committedCost)} committed`} />
+      </div>
+
+      {/* budget & profitability — auto-calculated live from the BOQ item costs */}
+      <div className="mt-4 card card-pad">
+        <div className="mb-3 flex items-center gap-2"><TrendingUp size={18} className="text-brand-600" /><h3 className="font-bold text-ink">Budget &amp; Profitability</h3><span className="ml-auto text-xs text-muted">auto-calculated from item costs</span></div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Stat label="Budgeted Cost" value={sar(budgetCost)} />
+          <Stat label="Est. Gross Profit" value={sar(estGp)} sub={`${estGpPct}% margin`} tone={estGpPct < 20 ? 'rose' : 'emerald'} />
+          <Stat label="Actual Cost" value={sar(actualCost)} />
+          <Stat label="Actual Gross Profit" value={sar(actGp)} sub={`${actGpPct}% margin`} tone={actGpPct < 20 ? 'rose' : 'emerald'} />
+        </div>
       </div>
 
       {/* profitability alert */}
@@ -138,29 +147,37 @@ export default function ProjectDetail() {
           <span className="chip bg-emerald-50 text-emerald-600">{installed}/{boq.length} completed</span>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px]">
+          <table className="w-full min-w-[940px]">
             <thead><tr className="bg-slate-50/60">
               <th className="th">#</th><th className="th">Required Item</th><th className="th">Qty</th>
-              <th className="th">Assigned To (role)</th><th className="th">Status (live)</th>
+              <th className="th">Budget Cost</th><th className="th">Actual Cost</th>
+              <th className="th">Assigned To</th><th className="th">Status</th>
             </tr></thead>
             <tbody>
               {boq.map((b, i) => (
-                <tr key={i} className="hover:bg-slate-50/60">
+                <tr key={b.id || i} className="hover:bg-slate-50/60">
                   <td className="td text-slate-400">{i + 1}</td>
                   <td className="td font-medium text-ink">{b.item}</td>
                   <td className="td text-slate-600">{b.qty}</td>
+                  <td className="td"><CostCell value={b.budget_cost} onCommit={(v) => updateBoqItem(p.id, i, { budget_cost: v })} /></td>
+                  <td className="td"><CostCell value={b.actual_cost} onCommit={(v) => updateBoqItem(p.id, i, { actual_cost: v })} /></td>
                   <td className="td">
-                    <select value={b.assignee || ''}
-                      onChange={(e) => { const name = e.target.value; updateBoqItem(p.id, i, { assignee: name, status: name && b.status === 'Waiting' ? 'Assigned' : b.status }) }}
-                      className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium outline-none focus:border-brand-400 focus:bg-white">
+                    <select value={b.assignee_id || ''}
+                      onChange={(e) => { const aid = e.target.value; updateBoqItem(p.id, i, { assignee_id: aid, status: aid && b.status === 'Waiting' ? 'Assigned' : b.status }) }}
+                      className="w-full min-w-[150px] rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium outline-none focus:border-brand-400 focus:bg-white">
                       <option value="">— Assign —</option>
-                      {assignees.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
+                      {team.map((m) => <option key={m.id} value={m.id}>{m.name}{m.designation ? ` — ${m.designation}` : ''}</option>)}
                     </select>
                   </td>
-                  <td className="td"><Badge tone={statusTone(b.status)}>{b.status}</Badge></td>
+                  <td className="td">
+                    <select value={b.status || 'Waiting'} onChange={(e) => updateBoqItem(p.id, i, { status: e.target.value })}
+                      className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-semibold outline-none focus:border-brand-400 focus:bg-white">
+                      {BOQ_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </td>
                 </tr>
               ))}
-              {boq.length === 0 && <tr><td className="td text-slate-400" colSpan={5}>No items linked from the Sales Order.</td></tr>}
+              {boq.length === 0 && <tr><td className="td text-slate-400" colSpan={7}>No items linked from the Sales Order.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -245,6 +262,27 @@ function Meter({ label, pct, color, sub }) {
       <div className="flex items-center justify-between"><p className="text-sm font-medium text-slate-600">{label}</p><span className="text-lg font-extrabold text-ink">{pct}%</span></div>
       <div className="mt-2 h-2.5 w-full rounded-full bg-slate-100"><div className="h-2.5 rounded-full" style={{ width: `${Math.min(pct, 100)}%`, background: color }} /></div>
       {sub && <p className="mt-1.5 text-xs text-muted">{sub}</p>}
+    </div>
+  )
+}
+
+function CostCell({ value, onCommit }) {
+  const [v, setV] = useState(value ?? 0)
+  useEffect(() => { setV(value ?? 0) }, [value])
+  return (
+    <input type="number" value={v} onChange={(e) => setV(e.target.value)}
+      onBlur={() => { if (Number(v) !== Number(value || 0)) onCommit(Number(v) || 0) }}
+      onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
+      className="w-24 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-right text-xs outline-none focus:border-brand-400 focus:bg-white" />
+  )
+}
+
+function Stat({ label, value, sub, tone }) {
+  return (
+    <div className="rounded-xl border border-slate-100 bg-slate-50/40 p-3">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</p>
+      <p className="mt-0.5 text-lg font-extrabold text-ink">{value}</p>
+      {sub && <p className={`text-xs font-semibold ${tone === 'rose' ? 'text-rose-600' : tone === 'emerald' ? 'text-emerald-600' : 'text-muted'}`}>{sub}</p>}
     </div>
   )
 }
