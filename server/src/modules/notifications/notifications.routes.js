@@ -3,6 +3,7 @@ import { supabase } from '../../config/supabase.js'
 import { authRequired } from '../../middleware/auth.js'
 import { authorize } from '../../middleware/rbac.js'
 import { asyncWrap } from '../../middleware/error.js'
+import { notifyOwnerDecision } from '../../core/notify.js'
 
 const r = Router()
 
@@ -23,6 +24,35 @@ r.post('/read-all', authRequired, asyncWrap(async (req, res) => {
 r.post('/:id/read', authRequired, asyncWrap(async (req, res) => {
   await supabase.from('notifications').update({ read: true }).eq('id', req.params.id).eq('user_id', req.user.id)
   res.json({ ok: true })
+}))
+
+// ── approval notifications: fetch the referenced quotation (for the PDF) ──
+r.get('/:id/quotation', authRequired, asyncWrap(async (req, res) => {
+  const { data: n } = await supabase.from('notifications').select('*').eq('id', req.params.id).eq('user_id', req.user.id).maybeSingle()
+  if (!n || n.ref_type !== 'quotation' || !n.ref_id) return res.status(404).json({ error: 'Not found' })
+  const { data: q, error } = await supabase.from('quotations').select('*, quotation_items(*)').eq('id', n.ref_id).single()
+  if (error) throw error
+  res.json(q)
+}))
+
+// ── approval notifications: Approve / Reject the referenced quotation ──
+r.post('/:id/act', authRequired, asyncWrap(async (req, res) => {
+  const decision = req.body.decision // 'approved' | 'rejected'
+  if (!['approved', 'rejected'].includes(decision)) return res.status(422).json({ error: 'decision must be approved or rejected' })
+  if (req.user.role !== 'Management') return res.status(403).json({ error: 'Only Management can approve or reject' })
+  const { data: n } = await supabase.from('notifications').select('*').eq('id', req.params.id).eq('user_id', req.user.id).maybeSingle()
+  if (!n || n.type !== 'approval' || n.ref_type !== 'quotation') return res.status(404).json({ error: 'Not an approval notification' })
+  if (n.action_status !== 'pending') return res.status(422).json({ error: 'This request was already actioned' })
+
+  const patch = decision === 'approved'
+    ? { approval_status: 'Approved', status: 'Open', approved_by: req.user.id }
+    : { approval_status: 'Rejected', status: 'Draft' }
+  const { data: q, error } = await supabase.from('quotations').update(patch).eq('id', n.ref_id).select('number, customer, owner_id').single()
+  if (error) throw error
+  // mark every approver's copy of this request as actioned (so it disappears for all)
+  await supabase.from('notifications').update({ action_status: decision, read: true }).eq('ref_id', n.ref_id).eq('type', 'approval')
+  await notifyOwnerDecision(q, decision, req.user.name) // tell the salesperson
+  res.json({ ok: true, decision })
 }))
 
 // ── admin: audience metadata (designations + live counts) for the compose form ──

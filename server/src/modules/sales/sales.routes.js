@@ -7,6 +7,7 @@ import { logAudit } from '../../core/audit.js'
 import { uploadAttachment, signAttachments } from '../../core/chatfiles.js'
 import { ensureLeadAndOpportunity, advanceOpportunity, winOpportunityForCustomer } from '../../core/crmflow.js'
 import { projectFieldsFromQuote } from '../../core/handover.js'
+import { notifyManagementApproval } from '../../core/notify.js'
 import { validateRequiredFields, computeFinancials, evaluateApproval, discountSource, RULES } from './quotation.rules.js'
 
 const r = Router()
@@ -97,6 +98,7 @@ r.post('/quotations', authRequired, authorize('sales', 'create'), asyncWrap(asyn
   // CRM automation: ensure the customer has an opportunity, then move it to the Quotation stage
   await ensureLeadAndOpportunity({ name: q.customer, email: q.customer_email })
   await advanceOpportunity(q.customer, 'Quotation')
+  if (decision.needsApproval) await notifyManagementApproval(q, req.user.name) // high discount → admin notification
   await logAudit(req.user, 'quotation', q.id, 'created', { number: q.number, status, gp: fin.gp_percent })
   res.status(201).json({ ...redactFinancials(req.user.role, q), _approval: decision })
 }))
@@ -147,6 +149,7 @@ r.patch('/quotations/:id', authRequired, authorize('sales', 'update'), asyncWrap
   if (error) throw error
   // #10 — revision history is NEVER deleted, every edit is appended
   await supabase.from('quotation_revisions').insert({ quotation_id: existing.id, revision: patch.revision, changed_by: req.user.id, changes: { action: 'edited', ...(fin || {}) } })
+  if (decision?.needsApproval) await notifyManagementApproval(updated, req.user.name) // edit pushed it >20% → admin notification
   await logAudit(req.user, 'quotation', existing.id, 'edited', { revision: patch.revision })
   res.json({ ...redactFinancials(req.user.role, updated), _approval: decision })
 }))
