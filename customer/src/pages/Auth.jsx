@@ -7,7 +7,7 @@ const inp = 'w-full rounded-xl border border-slate-200 bg-slate-50/60 px-3.5 py-
 export default function Auth() {
   const { login, signup, reset } = useAuth()
   const [mode, setMode] = useState('login') // login | signup | reset
-  const [f, setF] = useState({ name: '', email: '', password: '' })
+  const [f, setF] = useState({ name: '', email: '', phone: '', password: '' })
   const [msg, setMsg] = useState(''); const [err, setErr] = useState(''); const [busy, setBusy] = useState(false)
   const on = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }))
 
@@ -15,7 +15,7 @@ export default function Auth() {
     e.preventDefault(); setErr(''); setMsg(''); setBusy(true)
     try {
       if (mode === 'login') await login(f.email.trim(), f.password)
-      else if (mode === 'signup') await signup(f.name.trim(), f.email.trim(), f.password)
+      else if (mode === 'signup') await signup(f.name.trim(), f.email.trim(), f.password, f.phone.trim())
       else { await reset(f.email.trim(), f.password); setMsg('Password updated. Please sign in.'); setMode('login') }
     } catch (e) { setErr(e.message) } finally { setBusy(false) }
   }
@@ -31,6 +31,7 @@ export default function Auth() {
           <h2 className="font-display text-lg font-bold text-ink">{mode === 'login' ? 'Sign In' : mode === 'signup' ? 'Create Account' : 'Reset Password'}</h2>
           {mode === 'signup' && <input required value={f.name} onChange={on('name')} placeholder="Full name / Company" className={inp} />}
           <input type="email" required value={f.email} onChange={on('email')} placeholder="Email" className={inp} />
+          {mode === 'signup' && <input type="tel" required value={f.phone} onChange={on('phone')} placeholder="Phone number (e.g. +966 5X XXX XXXX)" className={inp} />}
           <input type="password" required value={f.password} onChange={on('password')} placeholder={mode === 'reset' ? 'New password' : 'Password'} className={inp} />
           {err && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600">{err}</p>}
           {msg && <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-600">{msg}</p>}

@@ -17,7 +17,7 @@ export function AuthProvider({ children }) {
 
   const persist = (token, u) => { localStorage.setItem('culinova_token', token); localStorage.setItem('culinova_user', JSON.stringify(u)); setUser(u) }
   async function login(email, password) { const { token, user: u } = await api('/auth/login', { method: 'POST', auth: false, body: { email, password } }); if (u.role !== PORTAL_ROLE) throw new Error('This portal is for customers only.'); persist(token, u) }
-  async function signup(name, email, password) { const { token, user: u } = await api('/auth/signup', { method: 'POST', auth: false, body: { name, email, password, role: PORTAL_ROLE } }); persist(token, u) }
+  async function signup(name, email, password, phone) { const { token, user: u } = await api('/auth/signup', { method: 'POST', auth: false, body: { name, email, password, phone, role: PORTAL_ROLE } }); persist(token, u) }
   async function reset(email, newPassword) { await api('/auth/reset-password', { method: 'POST', auth: false, body: { email, newPassword } }) }
   function logout() { localStorage.removeItem('culinova_token'); localStorage.removeItem('culinova_user'); setUser(null) }
 

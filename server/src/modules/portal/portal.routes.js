@@ -4,6 +4,7 @@ import { authRequired } from '../../middleware/auth.js'
 import { asyncWrap } from '../../middleware/error.js'
 import { uploadAttachment, signAttachments } from '../../core/chatfiles.js'
 import { ensureLeadAndOpportunity, advanceOpportunity, winOpportunityForCustomer, loseOpportunityForCustomer } from '../../core/crmflow.js'
+import { projectFieldsFromQuote } from '../../core/handover.js'
 
 const r = Router()
 const num = (p) => `${p}-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`
@@ -69,7 +70,8 @@ r.post('/customer/quotations/:id/accept', authRequired, asyncWrap(async (req, re
   if (q.status === 'Ordered') return res.status(422).json({ error: 'Already accepted' })
   const { data: so, error: e1 } = await supabase.from('sales_orders').insert({ number: num('SO'), quotation_id: q.id, customer: q.customer, amount: q.total_amount }).select().single()
   if (e1) throw e1
-  const { data: proj, error: e2 } = await supabase.from('projects').insert({ number: num('PRJ'), name: `${q.customer} — ${q.project_name || 'Project'}`, customer: q.customer, sales_order_id: so.id, contract_value: q.total_amount, status: 'On Track' }).select().single()
+  const handover = await projectFieldsFromQuote(q)
+  const { data: proj, error: e2 } = await supabase.from('projects').insert({ number: num('PRJ'), name: `${q.customer} — ${q.project_name || 'Project'}`, customer: q.customer, sales_order_id: so.id, contract_value: q.total_amount, status: 'On Track', ...handover }).select().single()
   if (e2) throw e2
   const items = q.quotation_items || []
   if (items.length) await supabase.from('project_boq').insert(items.map((it) => ({ project_id: proj.id, item_name: it.item_name, qty: it.qty, status: 'Waiting' })))

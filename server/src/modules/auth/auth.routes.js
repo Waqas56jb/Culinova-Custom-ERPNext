@@ -38,12 +38,12 @@ r.get('/me', authRequired, (req, res) => res.json(req.user))
 // Internal staff are created by the admin in the management panel.
 const PORTAL_ROLES = ['Customer', 'Supplier', 'Technician']
 r.post('/signup', asyncWrap(async (req, res) => {
-  const { name, email, password, role } = req.body
+  const { name, email, password, role, phone } = req.body
   if (!name || !email || !password) return res.status(422).json({ error: 'name, email, password required' })
   if (!PORTAL_ROLES.includes(role)) return res.status(403).json({ error: 'Self-signup allowed only for portal roles' })
   const hash = await bcrypt.hash(password, 10)
   const { data, error } = await supabase.from('users').insert({
-    name, email, password_hash: hash, role, access_level: 'Create', department: role,
+    name, email, password_hash: hash, role, access_level: 'Create', department: role, phone: phone || null,
   }).select().single()
   if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: error.code === '23505' ? 'Email already registered' : error.message })
   res.status(201).json({ token: sign(data), user: { id: data.id, name: data.name, email: data.email, role: data.role, access_level: data.access_level } })

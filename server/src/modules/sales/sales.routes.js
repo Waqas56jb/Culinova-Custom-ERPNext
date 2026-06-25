@@ -6,6 +6,7 @@ import { asyncWrap } from '../../middleware/error.js'
 import { logAudit } from '../../core/audit.js'
 import { uploadAttachment, signAttachments } from '../../core/chatfiles.js'
 import { ensureLeadAndOpportunity, advanceOpportunity, winOpportunityForCustomer } from '../../core/crmflow.js'
+import { projectFieldsFromQuote } from '../../core/handover.js'
 import { validateRequiredFields, computeFinancials, evaluateApproval, discountSource, RULES } from './quotation.rules.js'
 
 const r = Router()
@@ -79,6 +80,7 @@ r.post('/quotations', authRequired, authorize('sales', 'create'), asyncWrap(asyn
     number: num('QTN'), customer: p.customer, contact_person: p.contact_person,
     project_name: p.project_name, project_location: p.project_location, customer_email: p.customer_email,
     validity_days: Number(p.validity_days), valid_till: validTillFrom(p.validity_days), payment_terms: p.payment_terms,
+    delivery_date: p.delivery_date || null, notes: p.notes || null,
     ...fin, discount_source: discountSource(req.user.role),
     status, approval_status, revision: 0, owner_id: req.user.id, created_by: req.user.id,
   }
@@ -116,6 +118,8 @@ r.patch('/quotations/:id', authRequired, authorize('sales', 'update'), asyncWrap
     patch.validity_days = Number(p.validity_days)
     patch.valid_till = validTillFrom(p.validity_days)
   }
+  if (p.delivery_date !== undefined) patch.delivery_date = p.delivery_date || null
+  if (p.notes !== undefined) patch.notes = p.notes || null
 
   let fin = null, decision = null
   const itemsChanged = Array.isArray(p.items)
@@ -187,10 +191,11 @@ r.post('/quotations/:id/accept', authRequired, authorize('sales', 'create'), asy
   }).select().single()
   if (soErr) throw soErr
 
-  // 2) Project (auto)
+  // 2) Project (auto) — with the full Sales → PM handover details
+  const handover = await projectFieldsFromQuote(q)
   const { data: proj, error: pErr } = await supabase.from('projects').insert({
     number: num('PRJ'), name: `${q.customer} — ${q.project_name || 'Project'}`, customer: q.customer,
-    sales_order_id: so.id, contract_value: q.total_amount, manager_id: req.user.id, status: 'On Track',
+    sales_order_id: so.id, contract_value: q.total_amount, manager_id: req.user.id, status: 'On Track', ...handover,
   }).select().single()
   if (pErr) throw pErr
 
@@ -259,6 +264,13 @@ r.get('/messages', authRequired, authorize('sales', 'read'), asyncWrap(async (re
   const { data, error } = await supabase.from('messages').select('*').order('created_at', { ascending: true })
   if (error) throw error
   res.json(await signAttachments(data))
+}))
+
+// directory of registered customers (name/email/phone) so Sales can see contact details in chat
+r.get('/customers-directory', authRequired, authorize('sales', 'read'), asyncWrap(async (req, res) => {
+  const { data, error } = await supabase.from('users').select('name, email, phone').eq('role', 'Customer')
+  if (error) throw error
+  res.json(data || [])
 }))
 
 r.post('/messages', authRequired, authorize('sales', 'create'), asyncWrap(async (req, res) => {

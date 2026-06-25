@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { X, Plus, Loader2 } from 'lucide-react'
 import { useData } from '../store/DataContext.jsx'
-import { Modal, Field, Select, Row } from './Modal.jsx'
+import { Modal, Field, Select, Row, TextArea } from './Modal.jsx'
 import { sar } from '../data/mockData.js'
 import { useAuth } from '../auth/AuthContext.jsx'
 
@@ -125,7 +125,7 @@ function OpportunityModal({ open, d }) {
   )
 }
 
-const blankQuote = () => ({ customer: '', email: '', contact: '', projectName: '', location: '', paymentTerms: '50% advance, 50% on delivery', discount: '0', validity: '30', items: [{ name: '', qty: 1, rate: '' }] })
+const blankQuote = () => ({ customer: '', email: '', contact: '', projectName: '', location: '', paymentTerms: '50% advance, 50% on delivery', deliveryDate: '', notes: '', discount: '0', validity: '30', items: [{ name: '', qty: 1, rate: '' }] })
 const cell = 'w-full rounded-lg border border-slate-200 bg-slate-50/60 px-2.5 py-2 text-sm outline-none focus:border-brand-400 focus:bg-white'
 
 function QuotationModal({ open, d }) {
@@ -139,6 +139,7 @@ function QuotationModal({ open, d }) {
         customer: editing.customer || '', email: editing.email || '', contact: editing.contact_person || '',
         projectName: editing.project_name || '', location: editing.project_location || '',
         paymentTerms: editing.payment_terms || '', discount: String(editing.discount ?? 0),
+        deliveryDate: editing.delivery_date || '', notes: editing.notes || '',
         validity: String(editing.validity || 30),
         items: editing.items?.length ? editing.items.map((it) => ({ name: it.name, qty: it.qty, rate: it.rate })) : [{ name: '', qty: 1, rate: '' }],
       })
@@ -205,7 +206,11 @@ function QuotationModal({ open, d }) {
         <Field label="Project Location" value={v.location} onChange={on('location')} placeholder="e.g. Riyadh" />
         <Select label="Validity (days)" value={v.validity} onChange={on('validity')} options={['15', '30', '60']} />
       </Row>
-      <Field label="Payment Terms" value={v.paymentTerms} onChange={on('paymentTerms')} placeholder="e.g. 50% advance, 50% on delivery" />
+      <Row>
+        <Field label="Payment Terms" value={v.paymentTerms} onChange={on('paymentTerms')} placeholder="e.g. 50% advance, 50% on delivery" />
+        <Field label="Required Delivery Date" type="date" value={v.deliveryDate} onChange={on('deliveryDate')} hint="Committed completion deadline — passed to the Project Manager" />
+      </Row>
+      <TextArea label="Special Requirements / Notes" rows={3} value={v.notes} onChange={on('notes')} placeholder="Site conditions, special equipment specs, access instructions… (handed to the project team)" />
 
       {/* BOQ items editor */}
       <div>

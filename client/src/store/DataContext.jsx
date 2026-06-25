@@ -67,6 +67,7 @@ export function DataProvider({ children }) {
   const [leaves, setLeaves] = useState([])
   const [interactions, setInteractions] = useState([])
   const [chatMessages, setChatMessages] = useState([])
+  const [customerDir, setCustomerDir] = useState([])
   const [payrollStatus, setPayrollStatus] = useState('Pending')
 
   // resource registry: key → { ep, set, map, panel }
@@ -125,8 +126,9 @@ export function DataProvider({ children }) {
   }, [panels])
 
   const loadChat = useCallback(async () => {
-    if (!allowed('sales')) { setChatMessages([]); return }
+    if (!allowed('sales')) { setChatMessages([]); setCustomerDir([]); return }
     try { const rows = await api('/sales/messages'); setChatMessages(rows || []) } catch { setChatMessages([]) }
+    try { const dir = await api('/sales/customers-directory'); setCustomerDir(dir || []) } catch { setCustomerDir([]) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [panels])
 
@@ -183,6 +185,7 @@ export function DataProvider({ children }) {
   const quoteBody = (d) => ({
     customer: d.customer, customer_email: d.email, project_name: d.projectName || d.project_name,
     project_location: d.location, contact_person: d.contact, payment_terms: d.paymentTerms,
+    delivery_date: d.deliveryDate || null, notes: d.notes || null,
     validity_days: Number(d.validity) || 30, discount_pct: Number(d.discount) || 0,
     items: (d.items || []).map((it) => ({ item_name: it.name || it.item_name, qty: Number(it.qty) || 1, rate: Number(it.rate) || 0 })),
   })
@@ -278,7 +281,7 @@ export function DataProvider({ children }) {
     leads, opportunities, quotations, salesOrders, customers, emails, projects,
     suppliers, rfqs, purchaseOrders, warehouses, stockItems, deliveryNotes,
     invoices, payables, payments,
-    snags, commissioning, tickets, visits, contracts, employees, leaves, interactions, chatMessages, payrollStatus,
+    snags, commissioning, tickets, visits, contracts, employees, leaves, interactions, chatMessages, customerDir, payrollStatus,
     reload, loadAll,
     addLead, addOpportunity, lostOpportunity, wonOpportunity, addInteraction, addQuotation, updateQuotation, addOrder, addCustomer, convertLead,
     approveQuotation, rejectQuotation, sendQuotation, acceptQuotation, lostQuotation,

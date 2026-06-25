@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
-import { Send, FileText, UserPlus, Mail, MessageSquare, Loader2, ArrowLeft, Paperclip, X, Download, Search, FolderKanban, Package, Plus } from 'lucide-react'
+import { Send, FileText, UserPlus, Mail, Phone, MessageSquare, Loader2, ArrowLeft, Paperclip, X, Download, Search, FolderKanban, Package, Plus } from 'lucide-react'
 import { useData } from '../store/DataContext.jsx'
 import QuotationPreview from '../components/QuotationPreview.jsx'
 
@@ -31,7 +31,7 @@ function Attachment({ m, mine }) {
 }
 
 export default function Chat() {
-  const { chatMessages, sendChatReply, markChatRead, openForm, salesOrders, quotations } = useData()
+  const { chatMessages, sendChatReply, markChatRead, openForm, salesOrders, quotations, customerDir } = useData()
   const [active, setActive] = useState(null)
   const [text, setText] = useState('')
   const [file, setFile] = useState(null)
@@ -57,6 +57,7 @@ export default function Chat() {
   const custOrders = current ? salesOrders.filter((o) => o.customer === current.name) : []
   const lockedProjects = [...new Set(custOrders.map((o) => o.projectNo).filter(Boolean))]
   const latestQuote = current ? quotations.find((qq) => qq.customer === current.name) : null
+  const custPhone = current ? (customerDir.find((c) => (c.email || '').toLowerCase() === (current.email || '').toLowerCase())?.phone) : null
   useEffect(() => { endRef.current?.scrollIntoView({ block: 'end' }) }, [current?.messages.length, active])
   useEffect(() => { const ta = taRef.current; if (ta) { ta.style.height = '0px'; ta.style.height = Math.min(ta.scrollHeight, 140) + 'px' } }, [text])
 
@@ -112,8 +113,9 @@ export default function Chat() {
                   <p className="truncate text-sm font-bold text-ink">{current.name}</p>
                   {custOrders.length > 0 && <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-600"><Package size={10} /> {custOrders.length} order{custOrders.length > 1 ? 's' : ''}</span>}
                 </div>
-                <p className="flex flex-wrap items-center gap-x-2 truncate text-[11px] text-muted">
+                <p className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] text-muted">
                   <span className="inline-flex items-center gap-1"><Mail size={11} /> {current.email}</span>
+                  {custPhone && <a href={`tel:${custPhone}`} className="inline-flex items-center gap-1 font-semibold text-brand-600 hover:underline"><Phone size={11} /> {custPhone}</a>}
                   {lockedProjects.length > 0 && <span className="inline-flex items-center gap-1 font-semibold text-violet-600"><FolderKanban size={11} /> {lockedProjects.join(', ')}</span>}
                 </p>
               </div>

@@ -57,12 +57,15 @@ export default function QuotationPreview({ open, onClose, quotation }) {
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">Bill To</p>
                 <p className="mt-1 text-sm font-bold text-ink">{quotation.customer}</p>
+                {quotation.contact_person && <p className="text-xs text-slate-500">Attn: {quotation.contact_person}</p>}
                 {quotation.email && <p className="text-xs text-slate-500">{quotation.email}</p>}
+                {quotation.project_location && <p className="text-xs text-slate-500">{quotation.project_location}</p>}
                 <p className="text-xs text-slate-500">Kingdom of Saudi Arabia</p>
               </div>
               <div className="text-right text-xs text-slate-500">
                 <p><span className="font-semibold text-ink">Date:</span> {new Date().toISOString().slice(0, 10)}</p>
                 <p><span className="font-semibold text-ink">Valid Till:</span> {quotation.valid_till || '—'}</p>
+                {quotation.delivery_date && <p><span className="font-semibold text-ink">Delivery By:</span> {quotation.delivery_date}</p>}
                 <p><span className="font-semibold text-ink">Prepared By:</span> {quotation.owner || '—'}</p>
                 <p><span className="font-semibold text-ink">VAT No:</span> 3001234567800003</p>
               </div>
@@ -104,10 +107,18 @@ export default function QuotationPreview({ open, onClose, quotation }) {
               </div>
             </div>
 
+            {/* special requirements / notes */}
+            {quotation.notes && (
+              <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+                <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">Special Requirements / Notes</p>
+                <p className="whitespace-pre-wrap text-xs text-slate-600">{quotation.notes}</p>
+              </div>
+            )}
+
             {/* terms */}
             <div className="mt-7 border-t border-slate-100 pt-4 text-[11px] leading-relaxed text-slate-500">
               <p className="mb-1 font-semibold text-ink">Terms &amp; Conditions</p>
-              <p>• Prices are in SAR and inclusive of 15% VAT. • Validity: 30 days from quotation date. • Payment: 50% advance, 50% on delivery. • Delivery &amp; installation as per agreed schedule. • Warranty: 12 months on supplied equipment.</p>
+              <p>• Prices are in SAR and inclusive of 15% VAT. • Validity: {quotation.validity_days || 30} days from quotation date. • Payment: {quotation.payment_terms || '50% advance, 50% on delivery'}. {quotation.delivery_date ? `• Required delivery by ${quotation.delivery_date}.` : '• Delivery & installation as per agreed schedule.'} • Warranty: 12 months on supplied equipment.</p>
               <p className="mt-3 text-slate-400">This is a system-generated quotation by CULINOVA ERP. ZATCA-compliant tax invoice will be issued on order confirmation.</p>
             </div>
           </div>

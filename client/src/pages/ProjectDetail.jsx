@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, Wallet, TrendingUp, Coins, Activity, ShoppingCart, Plus, FileText,
-  Pencil, Send, AlertTriangle, CheckCircle2,
+  Pencil, Send, AlertTriangle, CheckCircle2, ClipboardList,
 } from 'lucide-react'
 import { Badge, statusTone } from '../components/ui.jsx'
 import { Modal, Field, Select, Row } from '../components/Modal.jsx'
@@ -101,6 +101,32 @@ export default function ProjectDetail() {
           <span><b>Project completed &amp; handed over.</b> Finance (ZATCA invoice) and Service (warranty) have been notified.</span>
         </div>
       )}
+
+      {/* Sales → PM handover details (from the accepted quotation) */}
+      <div className="mt-6 card overflow-hidden">
+        <div className="flex items-center gap-2 border-b border-slate-100 p-4">
+          <ClipboardList size={18} className="text-brand-600" />
+          <h2 className="font-display text-lg font-bold text-ink">Sales Handover</h2>
+          <span className="ml-auto text-xs text-muted">From the accepted quotation</span>
+        </div>
+        <div className="grid grid-cols-1 gap-px bg-slate-100 sm:grid-cols-2 lg:grid-cols-3">
+          <Info label="Customer" value={p.customer} />
+          <Info label="Contact Person" value={p.contact_person} />
+          <Info label="Phone" value={p.customer_phone} href={p.customer_phone ? `tel:${p.customer_phone}` : null} />
+          <Info label="Email" value={p.customer_email} href={p.customer_email ? `mailto:${p.customer_email}` : null} />
+          <Info label="Site / Location" value={p.location} />
+          <Info label="Sales Order" value={p.salesOrder} />
+          <Info label="Payment Terms" value={p.payment_terms} />
+          <Info label="Required Delivery" value={p.delivery_date} />
+          <Info label="Contract Value" value={sar(p.contractValue)} />
+        </div>
+        {p.notes && (
+          <div className="border-t border-slate-100 p-4">
+            <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">Special Requirements / Notes</p>
+            <p className="whitespace-pre-wrap text-sm text-slate-600">{p.notes}</p>
+          </div>
+        )}
+      </div>
 
       {/* Required Items — PM assigns; status flows automatically from each assignee's panel */}
       <div className="mt-6 card overflow-hidden">
@@ -219,6 +245,17 @@ function Meter({ label, pct, color, sub }) {
       <div className="flex items-center justify-between"><p className="text-sm font-medium text-slate-600">{label}</p><span className="text-lg font-extrabold text-ink">{pct}%</span></div>
       <div className="mt-2 h-2.5 w-full rounded-full bg-slate-100"><div className="h-2.5 rounded-full" style={{ width: `${Math.min(pct, 100)}%`, background: color }} /></div>
       {sub && <p className="mt-1.5 text-xs text-muted">{sub}</p>}
+    </div>
+  )
+}
+
+function Info({ label, value, href }) {
+  return (
+    <div className="bg-white p-3.5">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</p>
+      {href && value
+        ? <a href={href} className="mt-0.5 block truncate text-sm font-semibold text-brand-600 hover:underline">{value}</a>
+        : <p className="mt-0.5 truncate text-sm font-semibold text-ink">{value || '—'}</p>}
     </div>
   )
 }
