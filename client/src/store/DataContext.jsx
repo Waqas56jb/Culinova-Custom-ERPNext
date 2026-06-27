@@ -27,6 +27,8 @@ const mapSupplier = (r) => ({ ...r, onTime: r.on_time ?? 0, totalPOs: r.totalPOs
 const mapRFQ = (r) => ({ ...r, item: r.item_name, project: r.project_id, suppliers: r.suppliers || [], awarded: r.awarded_supplier, date: d10(r), ref: r.number })
 const mapPO = (r) => ({ ...r, item: r.item_name, project: r.project_id, amount: Number(r.amount) || 0, qty: Number(r.qty) || 1, date: d10(r), ref: r.number })
 const mapItem = (r) => ({ ...r, group: r.item_group, rate: Number(r.selling_rate) || 0, qty: r.qty ?? 0, reorder: Number(r.reorder_level) || 0 })
+// enriched stock (physical/reserved/available/incoming/aging) from /inventory/stock
+const mapStock = (r) => ({ code: r.code, name: r.item, group: r.group, warehouse: r.warehouse, uom: r.uom || 'Nos', qty: r.physical ?? 0, physical: r.physical ?? 0, reserved: r.reserved ?? 0, available: r.available ?? 0, incoming: r.incoming ?? 0, aging: r.aging_days ?? 0, reorder: r.reorder_level ?? 0, rate: Number(r.rate) || 0 })
 const mapDN = (r) => ({ ...r, item: r.item_name, project: r.project_id, value: Number(r.value) || 0, date: d10(r), ref: r.number })
 const mapInvoice = (r) => ({ ...r, total: Number(r.total) || 0, paid: Number(r.paid) || 0, project: r.project_id || '—', due: r.due_date || d10(r), date: d10(r), ref: r.number })
 const mapPayment = (r) => ({ ...r, ref: r.reference, amount: Number(r.amount) || 0, date: d10(r) })
@@ -81,7 +83,7 @@ export function DataProvider({ children }) {
     rfqs: { ep: 'rfqs', set: setRfqs, map: mapRFQ, panel: 'procurement' },
     purchaseOrders: { ep: 'purchase-orders', set: setPurchaseOrders, map: mapPO, panel: 'procurement' },
     warehouses: { ep: 'warehouses', set: setWarehouses, map: (r) => r, panel: 'warehouse' },
-    stockItems: { ep: 'items', set: setStockItems, map: mapItem, panel: 'warehouse' },
+    stockItems: { ep: 'inventory/stock', set: setStockItems, map: mapStock, panel: 'warehouse' },
     deliveryNotes: { ep: 'delivery-notes', set: setDeliveryNotes, map: mapDN, panel: 'warehouse' },
     invoices: { ep: 'invoices', set: setInvoices, map: mapInvoice, panel: 'finance' },
     payments: { ep: 'payments', set: setPayments, map: mapPayment, panel: 'finance' },
@@ -191,6 +193,7 @@ export function DataProvider({ children }) {
     validity_days: Number(d.validity) || 30, discount_pct: Number(d.discount) || 0,
     items: (d.items || []).map((it) => ({ item_name: it.name || it.item_name, qty: Number(it.qty) || 1, rate: Number(it.rate) || 0 })),
   })
+  const checkAvailability = async (name) => { if (!name) return null; try { return await api('/inventory/availability?name=' + encodeURIComponent(name)) } catch { return null } }
   const addQuotation = async (d) => { const r = await post('sales/quotations', quoteBody(d)); await loadQuotations(); return r }
   const updateQuotation = async (id, d) => { const r = await patch('sales/quotations', id, quoteBody(d)); await loadQuotations(); return r }
   // CEO rule #10: quotations are NEVER deleted — only marked Lost (with a reason)
@@ -285,7 +288,7 @@ export function DataProvider({ children }) {
     invoices, payables, payments,
     snags, commissioning, tickets, visits, contracts, employees, leaves, interactions, chatMessages, customerDir, team, payrollStatus,
     reload, loadAll,
-    addLead, addOpportunity, lostOpportunity, wonOpportunity, addInteraction, addQuotation, updateQuotation, addOrder, addCustomer, convertLead,
+    addLead, addOpportunity, lostOpportunity, wonOpportunity, addInteraction, addQuotation, updateQuotation, addOrder, addCustomer, convertLead, checkAvailability,
     approveQuotation, rejectQuotation, sendQuotation, acceptQuotation, lostQuotation,
     sendChatReply, markChatRead,
     addProject, addTask, updateTask, deleteTask, addVariation, updateBoqItem, updateProject,

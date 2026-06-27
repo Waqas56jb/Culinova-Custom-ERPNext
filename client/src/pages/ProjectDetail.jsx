@@ -47,7 +47,7 @@ export default function ProjectDetail() {
 
   const openEdit = () => { setEdit({ name: p.name, contractValue: p.contractValue, start: p.start, end: p.end, status: p.status }); setEditModal(true) }
   const saveEdit = () => { updateProject(p.id, { ...edit, contractValue: Number(edit.contractValue) || p.contractValue }); setEditModal(false) }
-  const sendToProcurement = () => { boq.forEach((b, i) => { if (b.status === 'Waiting') updateBoqItem(p.id, i, { status: 'In Progress', assignee: b.assignee || 'Khalid' }) }) }
+  const sendToProcurement = () => { boq.forEach((b, i) => { if (b.status === 'Waiting') updateBoqItem(p.id, i, { status: 'In Progress' }) }) }
 
   return (
     <div>

@@ -5,6 +5,7 @@ import portalRoutes from '../modules/portal/portal.routes.js'
 import salesRoutes from '../modules/sales/sales.routes.js'
 import notificationsRoutes from '../modules/notifications/notifications.routes.js'
 import pmRoutes from '../modules/pm/pm.routes.js'
+import inventoryRoutes from '../modules/inventory/inventory.routes.js'
 import { resources } from '../core/resources.js'
 import { crudRouter } from '../core/crud.js'
 import { rolePanels } from '../rbac/permissions.js'
@@ -26,6 +27,7 @@ api.use('/portal', portalRoutes)
 api.use('/sales', salesRoutes)
 api.use('/notifications', notificationsRoutes)
 api.use('/pm', pmRoutes)
+api.use('/inventory', inventoryRoutes)
 
 // Generic config-driven REST for every resource/panel
 for (const [name, cfg] of Object.entries(resources)) {

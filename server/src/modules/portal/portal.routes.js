@@ -6,6 +6,7 @@ import { uploadAttachment, signAttachments } from '../../core/chatfiles.js'
 import { ensureLeadAndOpportunity, advanceOpportunity, winOpportunityForCustomer, loseOpportunityForCustomer } from '../../core/crmflow.js'
 import { projectFieldsFromQuote } from '../../core/handover.js'
 import { recomputeProject } from '../../core/projectcost.js'
+import { reserveForSalesOrder } from '../../core/inventory.js'
 
 const r = Router()
 const num = (p) => `${p}-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`
@@ -79,6 +80,7 @@ r.post('/customer/quotations/:id/accept', authRequired, asyncWrap(async (req, re
   await supabase.from('sales_orders').update({ project_id: proj.id }).eq('id', so.id)
   await supabase.from('quotations').update({ status: 'Ordered' }).eq('id', q.id)
   await recomputeProject(proj.id) // committed cost / GP from the seeded budget
+  await reserveForSalesOrder({ items, sales_order_id: so.id, project_id: proj.id, userId: req.user.id }) // INV-006 auto-reserve
   await winOpportunityForCustomer(q.customer, q.total_amount) // opportunity auto-Won
   await supabase.from('messages').insert({ customer_name: req.user.name, customer_email: req.user.email, sender: 'customer', body: `✅ I have ACCEPTED quotation ${q.number}.` })
   res.json({ ok: true, sales_order: so.number })

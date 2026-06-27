@@ -4,7 +4,7 @@ import { PageHeader, Badge } from '../components/ui.jsx'
 import { sar } from '../data/mockData.js'
 import { useData } from '../store/DataContext.jsx'
 
-const statusOf = (it) => (it.qty === 0 ? { t: 'Out of Stock', tone: 'red' } : it.qty <= it.reorder ? { t: 'Low Stock', tone: 'amber' } : { t: 'In Stock', tone: 'green' })
+const statusOf = (it) => (it.available <= 0 ? { t: 'Out of Stock', tone: 'red' } : it.available <= it.reorder ? { t: 'Low Stock', tone: 'amber' } : { t: 'In Stock', tone: 'green' })
 
 export default function StockItems() {
   const { stockItems } = useData()
@@ -19,10 +19,10 @@ export default function StockItems() {
       <PageHeader title="Stock / Items" subtitle="Live inventory balance & valuation" />
 
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat label="Items" value={rows.length} tone="text-ink" />
         <Stat label="Stock Value" value={sar(totalValue)} tone="text-brand-600" />
-        <Stat label="Low Stock" value={stockItems.filter((it) => it.qty > 0 && it.qty <= it.reorder).length} tone="text-amber-600" />
-        <Stat label="Out of Stock" value={stockItems.filter((it) => it.qty === 0).length} tone="text-rose-600" />
+        <Stat label="Reserved (units)" value={stockItems.reduce((s, it) => s + (it.reserved || 0), 0)} tone="text-violet-600" />
+        <Stat label="Available (units)" value={stockItems.reduce((s, it) => s + (it.available || 0), 0)} tone="text-emerald-600" />
+        <Stat label="Low / Out" value={stockItems.filter((it) => it.available <= it.reorder).length} tone="text-amber-600" />
       </div>
 
       <div className="card overflow-hidden">
@@ -38,10 +38,11 @@ export default function StockItems() {
           </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[920px]">
+          <table className="w-full min-w-[1080px]">
             <thead><tr className="bg-slate-50/60">
-              <th className="th">Code</th><th className="th">Item</th><th className="th">Group</th><th className="th">Warehouse</th>
-              <th className="th">On Hand</th><th className="th">Rate</th><th className="th">Value</th><th className="th">Status</th>
+              <th className="th">Code</th><th className="th">Item</th><th className="th">Warehouse</th>
+              <th className="th">Physical</th><th className="th">Reserved</th><th className="th">Available</th><th className="th">Incoming</th>
+              <th className="th">Aging</th><th className="th">Value</th><th className="th">Status</th>
             </tr></thead>
             <tbody>
               {rows.map((it) => {
@@ -49,16 +50,19 @@ export default function StockItems() {
                 return (
                   <tr key={it.code} className="hover:bg-slate-50/60">
                     <td className="td font-semibold text-brand-600">{it.code}</td>
-                    <td className="td font-medium text-ink">{it.name}</td>
-                    <td className="td text-slate-500">{it.group}</td>
+                    <td className="td font-medium text-ink">{it.name}<span className="block text-[11px] text-muted">{it.group}</span></td>
                     <td className="td text-slate-500">{it.warehouse}</td>
-                    <td className="td font-semibold">{it.qty} {it.uom}</td>
-                    <td className="td text-slate-600">{sar(it.rate)}</td>
-                    <td className="td font-semibold">{sar(it.qty * it.rate)}</td>
+                    <td className="td font-semibold">{it.physical} {it.uom}</td>
+                    <td className="td font-semibold text-violet-600">{it.reserved}</td>
+                    <td className="td font-bold text-emerald-600">{it.available}</td>
+                    <td className="td text-blue-600">{it.incoming}</td>
+                    <td className="td text-slate-500">{it.aging}d</td>
+                    <td className="td font-semibold">{sar(it.physical * it.rate)}</td>
                     <td className="td"><Badge tone={st.tone}>{st.t}</Badge></td>
                   </tr>
                 )
               })}
+              {rows.length === 0 && <tr><td className="td text-slate-400" colSpan={10}>No stock balances yet. Add items + stock to see live availability.</td></tr>}
             </tbody>
           </table>
         </div>

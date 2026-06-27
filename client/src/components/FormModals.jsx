@@ -21,6 +21,26 @@ function OwnerField() {
   )
 }
 
+// INV-008/009 — live stock availability while building a quotation / BOQ
+function AvailabilityHint({ name, qty, check }) {
+  const [a, setA] = useState(null)
+  useEffect(() => {
+    const nm = (name || '').trim()
+    if (nm.length < 2 || !check) { setA(null); return }
+    let alive = true
+    const t = setTimeout(async () => { const r = await check(nm); if (alive) setA(r) }, 400)
+    return () => { alive = false; clearTimeout(t) }
+  }, [name, check])
+  if (!a || !a.matched) return null
+  const need = Number(qty) || 0
+  const short = need > a.available
+  return (
+    <p className={`pl-1 pt-0.5 text-[10px] font-semibold ${short ? 'text-amber-600' : 'text-emerald-600'}`}>
+      Stock: {a.available} available{a.incoming ? ` · ${a.incoming} incoming` : ''}{short ? ` · short by ${need - a.available}` : ''}
+    </p>
+  )
+}
+
 export default function FormModals() {
   const d = useData()
   const t = d.form.type
@@ -223,12 +243,15 @@ function QuotationModal({ open, d }) {
         </div>
         <div className="space-y-2">
           {v.items.map((it, i) => (
-            <div key={i} className="grid grid-cols-[1fr_50px_84px_92px_22px] items-center gap-2">
-              <input className={cell} placeholder="Item description" value={it.name} onChange={(e) => setItem(i, 'name', e.target.value)} />
-              <input className={`${cell} text-center`} type="number" value={it.qty} onChange={(e) => setItem(i, 'qty', e.target.value)} />
-              <input className={`${cell} text-right`} type="number" placeholder="0" value={it.rate} onChange={(e) => setItem(i, 'rate', e.target.value)} />
-              <span className="text-right text-sm font-semibold text-ink">{sar(Math.round((Number(it.qty) || 0) * (Number(it.rate) || 0)))}</span>
-              <button onClick={() => removeItem(i)} className="text-slate-300 hover:text-rose-500"><X size={15} /></button>
+            <div key={i}>
+              <div className="grid grid-cols-[1fr_50px_84px_92px_22px] items-center gap-2">
+                <input className={cell} placeholder="Item description" value={it.name} onChange={(e) => setItem(i, 'name', e.target.value)} />
+                <input className={`${cell} text-center`} type="number" value={it.qty} onChange={(e) => setItem(i, 'qty', e.target.value)} />
+                <input className={`${cell} text-right`} type="number" placeholder="0" value={it.rate} onChange={(e) => setItem(i, 'rate', e.target.value)} />
+                <span className="text-right text-sm font-semibold text-ink">{sar(Math.round((Number(it.qty) || 0) * (Number(it.rate) || 0)))}</span>
+                <button onClick={() => removeItem(i)} className="text-slate-300 hover:text-rose-500"><X size={15} /></button>
+              </div>
+              <AvailabilityHint name={it.name} qty={it.qty} check={d.checkAvailability} />
             </div>
           ))}
         </div>

@@ -9,6 +9,7 @@ import { ensureLeadAndOpportunity, advanceOpportunity, winOpportunityForCustomer
 import { projectFieldsFromQuote } from '../../core/handover.js'
 import { notifyManagementApproval } from '../../core/notify.js'
 import { recomputeProject } from '../../core/projectcost.js'
+import { reserveForSalesOrder } from '../../core/inventory.js'
 import { validateRequiredFields, computeFinancials, evaluateApproval, discountSource, RULES } from './quotation.rules.js'
 
 const r = Router()
@@ -216,6 +217,7 @@ r.post('/quotations/:id/accept', authRequired, authorize('sales', 'create'), asy
   await supabase.from('sales_orders').update({ project_id: proj.id }).eq('id', so.id)
   await supabase.from('quotations').update({ status: 'Ordered' }).eq('id', q.id)
   await recomputeProject(proj.id) // set committed cost / GP from the seeded budget
+  await reserveForSalesOrder({ items, sales_order_id: so.id, project_id: proj.id, userId: req.user.id }) // INV-006 auto-reserve
   await winOpportunityForCustomer(q.customer, q.total_amount) // opportunity auto-Won
   await logAudit(req.user, 'quotation', q.id, 'accepted', { sales_order: so.number, project: proj.number })
   res.status(201).json({ ok: true, sales_order: so, project: proj })
