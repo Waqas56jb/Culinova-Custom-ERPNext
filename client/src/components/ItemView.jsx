@@ -29,14 +29,16 @@ export default function ItemView({ open, itemId, onClose, onEdit, canEdit }) {
       footer={<>{canEdit && <button className="btn-ghost" onClick={onEdit}><Pencil size={14} /> Edit</button>}<button className="btn-primary" onClick={onClose}>Close</button></>}>
       {!it ? <p className="py-8 text-center text-sm text-slate-400">Loading…</p> : (
         <div className="space-y-4">
-          <div className="flex gap-4">
-            {it.image_url
-              ? <img src={it.image_url} alt={it.item_name} onClick={() => setBig(it.image_url)} title="Click to enlarge" className="h-24 w-24 cursor-zoom-in rounded-xl border border-slate-200 object-cover transition hover:ring-2 hover:ring-brand-400" />
-              : <div className="grid h-24 w-24 place-items-center rounded-xl border border-dashed border-slate-300 text-xs text-slate-400">No image</div>}
-            <div className="flex-1 space-y-0.5 text-sm">
-              <Info k="Brand" v={it.brand} /><Info k="Model" v={it.model} />
-              <Info k="Category" v={it.category} /><Info k="Sub Category" v={it.sub_category} />
-            </div>
+          {/* large product image (click to enlarge) */}
+          {it.image_url
+            ? <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+                <img src={it.image_url} alt={it.item_name} onClick={() => setBig(it.image_url)} title="Click to enlarge"
+                  className="mx-auto h-64 w-full cursor-zoom-in object-contain transition hover:opacity-90" />
+              </div>
+            : <div className="grid h-40 w-full place-items-center rounded-xl border border-dashed border-slate-300 text-sm text-slate-400">No image</div>}
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+            <Info k="Brand" v={it.brand} /><Info k="Model" v={it.model} />
+            <Info k="Category" v={it.category} /><Info k="Sub Category" v={it.sub_category} />
           </div>
 
           {/* pricing — cost/GP/supplier only show if the role is allowed (server-redacted) */}

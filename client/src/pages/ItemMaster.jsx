@@ -68,7 +68,7 @@ export default function ItemMaster() {
                   <td className="td font-semibold text-brand-600">{i.item_code}</td>
                   <td className="td font-medium text-ink">
                     <div className="flex items-center gap-2">
-                      {i.image_url ? <img src={i.image_url} alt="" onClick={(e) => { e.stopPropagation(); setLightbox(i.image_url) }} className="h-8 w-8 shrink-0 cursor-zoom-in rounded border border-slate-200 object-cover transition hover:ring-2 hover:ring-brand-400" /> : <span className="grid h-8 w-8 shrink-0 place-items-center rounded border border-dashed border-slate-200 text-[8px] text-slate-300">IMG</span>}
+                      {i.image_url ? <img src={i.image_url} alt="" onClick={(e) => { e.stopPropagation(); setLightbox(i.image_url) }} className="h-12 w-12 shrink-0 cursor-zoom-in rounded-lg border border-slate-200 object-cover transition hover:ring-2 hover:ring-brand-400" /> : <span className="grid h-12 w-12 shrink-0 place-items-center rounded-lg border border-dashed border-slate-200 text-[9px] text-slate-300">IMG</span>}
                       <span>{i.item_name}{i.variant_of && <span className="ml-1 text-[10px] text-violet-500">variant</span>}</span>
                     </div>
                   </td>
