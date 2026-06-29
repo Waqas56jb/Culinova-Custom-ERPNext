@@ -3,6 +3,7 @@ import { FileText, Package, Pencil } from 'lucide-react'
 import { Modal } from './Modal.jsx'
 import { useData } from '../store/DataContext.jsx'
 import { sar } from '../data/mockData.js'
+import ImageLightbox from './ImageLightbox.jsx'
 
 const Info = ({ k, v }) => <p className="text-slate-600"><span className="text-muted">{k}:</span> <span className="font-medium text-ink">{v || '—'}</span></p>
 const Box = ({ label, v, tone }) => <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-2.5 text-center"><p className={`text-lg font-extrabold ${tone}`}>{v}</p><p className="text-[11px] text-muted">{label}</p></div>
@@ -12,6 +13,7 @@ export default function ItemView({ open, itemId, onClose, onEdit, canEdit }) {
   const [it, setIt] = useState(null)
   const [avail, setAvail] = useState(null)
   const [alts, setAlts] = useState([])
+  const [big, setBig] = useState(null)
 
   useEffect(() => {
     if (!open || !itemId) return
@@ -29,7 +31,7 @@ export default function ItemView({ open, itemId, onClose, onEdit, canEdit }) {
         <div className="space-y-4">
           <div className="flex gap-4">
             {it.image_url
-              ? <img src={it.image_url} alt={it.item_name} className="h-24 w-24 rounded-xl border border-slate-200 object-cover" />
+              ? <img src={it.image_url} alt={it.item_name} onClick={() => setBig(it.image_url)} title="Click to enlarge" className="h-24 w-24 cursor-zoom-in rounded-xl border border-slate-200 object-cover transition hover:ring-2 hover:ring-brand-400" />
               : <div className="grid h-24 w-24 place-items-center rounded-xl border border-dashed border-slate-300 text-xs text-slate-400">No image</div>}
             <div className="flex-1 space-y-0.5 text-sm">
               <Info k="Brand" v={it.brand} /><Info k="Model" v={it.model} />
@@ -71,6 +73,7 @@ export default function ItemView({ open, itemId, onClose, onEdit, canEdit }) {
           )}
         </div>
       )}
+      <ImageLightbox src={big} onClose={() => setBig(null)} />
     </Modal>
   )
 }

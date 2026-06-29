@@ -8,6 +8,7 @@ import { useAuth } from '../auth/AuthContext.jsx'
 import ItemForm from '../components/ItemForm.jsx'
 import QuickItemForm from '../components/QuickItemForm.jsx'
 import ItemView from '../components/ItemView.jsx'
+import ImageLightbox from '../components/ImageLightbox.jsx'
 
 export default function ItemMaster() {
   const d = useData()
@@ -20,6 +21,7 @@ export default function ItemMaster() {
   const [view, setView] = useState(null)
   const [quick, setQuick] = useState(false)
   const [masters, setMasters] = useState(false)
+  const [lightbox, setLightbox] = useState(null)
 
   const groups = ['All', ...new Set(items.map((i) => i.category).filter(Boolean))]
   const rows = items.filter((i) => (g === 'All' || i.category === g) && `${i.item_code} ${i.item_name} ${i.brand || ''} ${i.product_family || ''}`.toLowerCase().includes(q.toLowerCase()))
@@ -66,7 +68,7 @@ export default function ItemMaster() {
                   <td className="td font-semibold text-brand-600">{i.item_code}</td>
                   <td className="td font-medium text-ink">
                     <div className="flex items-center gap-2">
-                      {i.image_url ? <img src={i.image_url} alt="" className="h-8 w-8 shrink-0 rounded border border-slate-200 object-cover" /> : <span className="grid h-8 w-8 shrink-0 place-items-center rounded border border-dashed border-slate-200 text-[8px] text-slate-300">IMG</span>}
+                      {i.image_url ? <img src={i.image_url} alt="" onClick={(e) => { e.stopPropagation(); setLightbox(i.image_url) }} className="h-8 w-8 shrink-0 cursor-zoom-in rounded border border-slate-200 object-cover transition hover:ring-2 hover:ring-brand-400" /> : <span className="grid h-8 w-8 shrink-0 place-items-center rounded border border-dashed border-slate-200 text-[8px] text-slate-300">IMG</span>}
                       <span>{i.item_name}{i.variant_of && <span className="ml-1 text-[10px] text-violet-500">variant</span>}</span>
                     </div>
                   </td>
@@ -94,6 +96,7 @@ export default function ItemMaster() {
       <ItemForm open={form.open} itemId={form.id} onClose={() => setForm({ open: false, id: null })} />
       <QuickItemForm open={quick} onClose={() => setQuick(false)} />
       <MastersModal open={masters} onClose={() => setMasters(false)} />
+      <ImageLightbox src={lightbox} onClose={() => setLightbox(null)} />
     </>
   )
 }
