@@ -116,6 +116,44 @@ r.post('/customer/quotations/:id/concession', authRequired, asyncWrap(async (req
   res.json({ ok: true })
 }))
 
+// ── CUSTOMER DELIVERIES — view + Accept / Reject / request Return (DEL-003/004/005) ──
+const ownsDN = (dn, user) => dn && (dn.customer || '').toLowerCase() === (user.name || '').toLowerCase()
+
+r.get('/customer/deliveries', authRequired, asyncWrap(async (req, res) => {
+  const { data, error } = await supabase.from('delivery_notes').select('*').ilike('customer', req.user.name).order('created_at', { ascending: false })
+  if (error) throw error
+  res.json(data || [])
+}))
+
+r.post('/customer/deliveries/:id/accept', authRequired, asyncWrap(async (req, res) => {
+  const { data: dn } = await supabase.from('delivery_notes').select('*').eq('id', req.params.id).single()
+  if (!ownsDN(dn, req.user)) return res.status(403).json({ error: 'Not your delivery' })
+  await supabase.from('delivery_notes').update({ status: 'Accepted', accepted_at: new Date().toISOString(), signature_name: (req.body.signature_name || req.user.name) }).eq('id', dn.id)
+  // DEL-003 → delivered item marks the BOQ line Delivered → operational completion updates
+  if (dn.project_id && dn.item_name) {
+    await supabase.from('project_boq').update({ status: 'Delivered' }).eq('project_id', dn.project_id).ilike('item_name', dn.item_name)
+    await recomputeProject(dn.project_id)
+  }
+  res.json({ ok: true })
+}))
+
+r.post('/customer/deliveries/:id/reject', authRequired, asyncWrap(async (req, res) => {
+  const reason = (req.body.reason || '').trim()
+  if (!reason) return res.status(422).json({ error: 'Please tell us why (reason is required)' })
+  const { data: dn } = await supabase.from('delivery_notes').select('*').eq('id', req.params.id).single()
+  if (!ownsDN(dn, req.user)) return res.status(403).json({ error: 'Not your delivery' })
+  await supabase.from('delivery_notes').update({ status: 'Rejected', rejection_reason: reason }).eq('id', dn.id) // DEL-004
+  res.json({ ok: true })
+}))
+
+r.post('/customer/deliveries/:id/return', authRequired, asyncWrap(async (req, res) => {
+  const reason = (req.body.reason || '').trim()
+  const { data: dn } = await supabase.from('delivery_notes').select('*').eq('id', req.params.id).single()
+  if (!ownsDN(dn, req.user)) return res.status(403).json({ error: 'Not your delivery' })
+  await supabase.from('delivery_notes').update({ status: 'Return Requested', return_reason: reason || 'Return requested' }).eq('id', dn.id) // DEL-005 (staff authorizes)
+  res.json({ ok: true })
+}))
+
 // ── SUPPLIER PORTAL — open RFQs to quote + this supplier's POs/deliveries ──
 r.get('/supplier/overview', authRequired, asyncWrap(async (req, res) => {
   const name = req.user.name

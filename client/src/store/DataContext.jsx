@@ -213,10 +213,11 @@ export function DataProvider({ children }) {
     customer: d.customer, customer_email: d.email, project_name: d.projectName || d.project_name,
     project_location: d.location, contact_person: d.contact, payment_terms: d.paymentTerms,
     delivery_date: d.deliveryDate || null, notes: d.notes || null,
-    validity_days: Number(d.validity) || 30, discount_pct: Number(d.discount) || 0,
+    validity_days: Number(d.validity) || 30, discount_pct: Number(d.discount) || 0, discount_fixed: Number(d.discountFixed) || 0,
     items: (d.items || []).map((it) => ({ item_name: it.name || it.item_name, qty: Number(it.qty) || 1, rate: Number(it.rate) || 0 })),
   })
   const checkAvailability = async (name) => { if (!name) return null; try { return await api('/inventory/availability?name=' + encodeURIComponent(name)) } catch { return null } }
+  const getOrderItems = (id) => api(`/sales/orders/${id}/items`) // SO-007 item-level status
   const addQuotation = async (d) => { const r = await post('sales/quotations', quoteBody(d)); await loadQuotations(); return r }
   const updateQuotation = async (id, d) => { const r = await patch('sales/quotations', id, quoteBody(d)); await loadQuotations(); return r }
   // CEO rule #10: quotations are NEVER deleted — only marked Lost (with a reason)
@@ -263,7 +264,8 @@ export function DataProvider({ children }) {
   // ── WAREHOUSE ──
   const addWarehouse = async (d) => { await post('warehouses', { name: d.name, location: d.location, type: d.type || 'Storage' }); await reload('warehouses') }
   const receivePO = async (poId) => { await patch('purchase-orders', poId, { status: 'Received' }); await reload('purchaseOrders') }
-  const createDeliveryNote = async (d) => { await post('delivery-notes', { project_id: d.project, customer: d.customer, item_name: d.item, qty: Number(d.qty) || 1, value: Number(d.value) || 0 }); await reload('deliveryNotes') }
+  const createDeliveryNote = async (d) => { await post('delivery-notes', { project_id: d.project, customer: d.customer, item_name: d.item, qty: Number(d.qty) || 1, value: Number(d.value) || 0, area: d.area || null, position: d.position || null, status: 'Delivered' }); await reload('deliveryNotes') }
+  const authorizeReturn = async (id) => { await patch('delivery-notes', id, { status: 'Returned' }); await reload('deliveryNotes') } // DEL-005
 
   // ── FINANCE ──
   const createInvoice = async (d) => { const total = Number(d.total) || 0; await post('invoices', { customer: d.customer, project_id: d.project && d.project !== '—' ? d.project : null, total, net_amount: Math.round(total / 1.15), vat_amount: Math.round(total - total / 1.15), due_date: d.due || today() }); await reload('invoices') }
@@ -313,13 +315,13 @@ export function DataProvider({ children }) {
     items, itemGroups, brands, itemAttributes,
     getItem, createItem, updateItem, deleteItem, generateVariants, addItemPrice, deleteItemPrice, addItemGroup, addBrand, addItemAttribute,
     reload, loadAll,
-    addLead, addOpportunity, lostOpportunity, wonOpportunity, addInteraction, addQuotation, updateQuotation, addOrder, addCustomer, convertLead, checkAvailability,
+    addLead, addOpportunity, lostOpportunity, wonOpportunity, addInteraction, addQuotation, updateQuotation, addOrder, addCustomer, convertLead, checkAvailability, getOrderItems,
     approveQuotation, rejectQuotation, sendQuotation, acceptQuotation, lostQuotation,
     sendChatReply, markChatRead,
     addProject, addTask, updateTask, deleteTask, addVariation, updateBoqItem, updateProject,
     addSupplier, addRFQ, awardPO, updatePOStatus, requestQuotes,
     submitSupplierQuote, acceptPO, setShipment,
-    addWarehouse, receivePO, createDeliveryNote,
+    addWarehouse, receivePO, createDeliveryNote, authorizeReturn,
     createInvoice, recordPayment, paySupplier,
     addSnag, resolveSnag, updateTest,
     addTicket, resolveTicket, completeVisit,

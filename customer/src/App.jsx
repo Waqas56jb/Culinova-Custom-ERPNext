@@ -3,6 +3,7 @@ import Layout from './components/Layout.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import Projects from './pages/Projects.jsx'
 import Quotations from './pages/Quotations.jsx'
+import Deliveries from './pages/Deliveries.jsx'
 import Invoices from './pages/Invoices.jsx'
 import ServiceRequests from './pages/ServiceRequests.jsx'
 import Chat from './pages/Chat.jsx'
@@ -20,6 +21,7 @@ export default function App() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/projects" element={<Projects />} />
         <Route path="/quotations" element={<Quotations />} />
+        <Route path="/deliveries" element={<Deliveries />} />
         <Route path="/invoices" element={<Invoices />} />
         <Route path="/service" element={<ServiceRequests />} />
         <Route path="/chat" element={<Chat />} />

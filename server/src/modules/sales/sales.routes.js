@@ -36,20 +36,64 @@ const validTillFrom = (days) => new Date(Date.now() + Number(days) * 86400000).t
 r.get('/orders', authRequired, authorize('sales', 'read'), asyncWrap(async (req, res) => {
   const { data: orders, error } = await supabase.from('sales_orders').select('*').order('created_at', { ascending: false })
   if (error) throw error
+  const pct = (a, b) => (b > 0 ? Math.round((a / b) * 100) : 0)
   const out = []
   for (const so of orders || []) {
-    let project_number = null, total = 0, done = 0, progress = 0
+    let project_number = null, total = 0, done = 0, progress = 0, contract = Number(so.amount) || 0, billed = 0, collected = 0, delivered_value = 0
     if (so.project_id) {
-      const { data: pr } = await supabase.from('projects').select('number, progress').eq('id', so.project_id).maybeSingle()
+      const { data: pr } = await supabase.from('projects').select('number, progress, contract_value, billed, collected').eq('id', so.project_id).maybeSingle()
       project_number = pr?.number || null
+      contract = Number(pr?.contract_value) || contract
+      billed = Number(pr?.billed) || 0
+      collected = Number(pr?.collected) || 0
       const { data: boq } = await supabase.from('project_boq').select('status').eq('project_id', so.project_id)
       total = (boq || []).length
       done = (boq || []).filter((b) => ['Installed', 'Delivered'].includes(b.status)).length
       progress = total ? Math.round((done / total) * 100) : (pr?.progress || 0)
+      const { data: dns } = await supabase.from('delivery_notes').select('value, status').eq('project_id', so.project_id)
+      delivered_value = (dns || []).filter((d) => ['Accepted', 'Delivered'].includes(d.status)).reduce((s, d) => s + (Number(d.value) || 0), 0)
     }
-    out.push({ ...so, project_number, boq_total: total, boq_done: done, progress })
+    out.push({
+      ...so, project_number, boq_total: total, boq_done: done, progress,
+      // DEL-008..011 completion metrics
+      op_completion: progress, delivered_value, delivered_pct: pct(delivered_value, contract),
+      fin_completion: pct(collected, contract), collection_pct: pct(collected, billed),
+      contract_value: contract, billed, collected,
+    })
   }
   res.json(out)
+}))
+
+// ── SO-007: item-level Procurement / Inventory / Delivery / Installation status ──
+r.get('/orders/:id/items', authRequired, authorize('sales', 'read'), asyncWrap(async (req, res) => {
+  const { data: so } = await supabase.from('sales_orders').select('*').eq('id', req.params.id).single()
+  if (!so || !so.project_id) return res.json([])
+  const { data: boq } = await supabase.from('project_boq').select('*').eq('project_id', so.project_id)
+  const lines = []
+  for (const b of boq || []) {
+    const name = b.item_name
+    // Procurement
+    const { data: pos } = await supabase.from('purchase_orders').select('status').ilike('item_name', name)
+    let procurement = 'Not ordered'
+    if (pos?.length) procurement = pos.some((p) => ['Received', 'Closed', 'Delivered'].includes(p.status)) ? 'Received' : 'Ordered'
+    // Inventory
+    const { data: item } = await supabase.from('items').select('id').ilike('name', name).limit(1).maybeSingle()
+    let inventory = 'No master'
+    if (item) {
+      const { data: bal } = await supabase.from('stock_balances').select('qty, reserved').eq('item_id', item.id)
+      const phys = (bal || []).reduce((s, x) => s + (Number(x.qty) || 0), 0)
+      const resv = (bal || []).reduce((s, x) => s + (Number(x.reserved) || 0), 0)
+      const avail = phys - resv
+      inventory = avail > 0 ? `${avail} available` : (resv > 0 ? `${resv} reserved` : 'Out of stock')
+    }
+    // Delivery
+    const { data: dns } = await supabase.from('delivery_notes').select('qty').ilike('item_name', name).eq('project_id', so.project_id)
+    const delivered = (dns || []).reduce((s, x) => s + (Number(x.qty) || 0), 0)
+    const need = Number(b.qty) || 0
+    const delivery = delivered > 0 ? (delivered >= need ? 'Delivered' : `Partial (${delivered}/${need})`) : 'Pending'
+    lines.push({ id: b.id, item: name, qty: b.qty, installation: b.status, procurement, inventory, delivery })
+  }
+  res.json(lines)
 }))
 
 // ── LIST (items embedded; cost/GP redacted for non-management) ──
@@ -72,8 +116,8 @@ r.post('/quotations', authRequired, authorize('sales', 'create'), asyncWrap(asyn
   if (missing.length) return res.status(422).json({ error: 'Missing required fields', fields: missing })
 
   const items = await resolveItems(p.items || [])         // cost from Item Master
-  const fin = computeFinancials(items, p.discount_pct || 0)
-  const decision = evaluateApproval(fin)                  // #5 / #6 / #11
+  const fin = computeFinancials(items, p.discount_pct || 0, p.discount_fixed || 0)
+  const decision = evaluateApproval(fin, req.user.role)   // #5 / #6 / #11 / SEC-002 per-role
   if (decision.blocked) return res.status(422).json({ error: decision.reason }) // #6 >25% blocked
 
   const status = decision.needsApproval ? 'Pending Approval' : 'Open'
@@ -127,12 +171,12 @@ r.patch('/quotations/:id', authRequired, authorize('sales', 'update'), asyncWrap
 
   let fin = null, decision = null
   const itemsChanged = Array.isArray(p.items)
-  const discountChanged = p.discount_pct != null
+  const discountChanged = p.discount_pct != null || p.discount_fixed != null
   if (itemsChanged || discountChanged) {
     const srcItems = itemsChanged ? p.items : (existing.quotation_items || [])
     const items = await resolveItems(srcItems)
-    fin = computeFinancials(items, discountChanged ? p.discount_pct : existing.discount_pct)
-    decision = evaluateApproval(fin)
+    fin = computeFinancials(items, p.discount_pct != null ? p.discount_pct : existing.discount_pct, p.discount_fixed != null ? p.discount_fixed : existing.discount_fixed)
+    decision = evaluateApproval(fin, req.user.role)
     if (decision.blocked) return res.status(422).json({ error: decision.reason })
     Object.assign(patch, fin)
     patch.status = decision.needsApproval ? 'Pending Approval' : 'Open'

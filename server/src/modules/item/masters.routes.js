@@ -31,9 +31,57 @@ r.get('/brands', authRequired, asyncWrap(async (req, res) => {
   if (error) throw error; res.json(data || [])
 }))
 r.post('/brands', authRequired, authorize('warehouse', 'create'), asyncWrap(async (req, res) => {
-  const { data, error } = await supabase.from('brands').insert({ brand: req.body.brand, description: req.body.description || null }).select().single()
+  const b = req.body
+  const { data, error } = await supabase.from('brands').insert({ brand: b.brand, description: b.description || null, currency: b.currency || 'SAR', exchange_factor: Number(b.exchange_factor) || 1, price_factor: Number(b.price_factor) || 1 }).select().single()
   if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: error.message })
   res.status(201).json(data)
+}))
+r.patch('/brands/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async (req, res) => {
+  const patch = {}
+  for (const f of ['description', 'currency', 'exchange_factor', 'price_factor']) if (req.body[f] != null) patch[f] = req.body[f]
+  const { data, error } = await supabase.from('brands').update(patch).eq('id', req.params.id).select().single()
+  if (error) throw error; res.json(data)
+}))
+
+// ── (2) PRODUCT FAMILIES ──
+r.get('/product-families', authRequired, asyncWrap(async (req, res) => {
+  const { data, error } = await supabase.from('product_families').select('*').order('name')
+  if (error) throw error; res.json(data || [])
+}))
+r.post('/product-families', authRequired, authorize('warehouse', 'create'), asyncWrap(async (req, res) => {
+  const b = req.body
+  const { data, error } = await supabase.from('product_families').insert({ name: b.name, category: b.category || null, sub_category: b.sub_category || null, datasheet_url: b.datasheet_url || null, image_url: b.image_url || null, specs: b.specs || null }).select().single()
+  if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: error.message })
+  res.status(201).json(data)
+}))
+r.patch('/product-families/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async (req, res) => {
+  const { data, error } = await supabase.from('product_families').update(req.body).eq('id', req.params.id).select().single()
+  if (error) throw error; res.json(data)
+}))
+r.delete('/product-families/:id', authRequired, authorize('warehouse', 'delete'), asyncWrap(async (req, res) => {
+  await supabase.from('product_families').delete().eq('id', req.params.id); res.json({ ok: true })
+}))
+
+// ── (5) SUPPLIER PRICE LISTS (separate from Item Master, Excel import) ──
+r.get('/price-lists', authRequired, authorize('warehouse', 'read'), asyncWrap(async (req, res) => {
+  const { data, error } = await supabase.from('supplier_price_lists').select('*').order('created_at', { ascending: false })
+  if (error) throw error
+  const out = []
+  for (const l of data || []) { const { count } = await supabase.from('price_list_items').select('id', { count: 'exact', head: true }).eq('list_id', l.id); out.push({ ...l, items: count || 0 }) }
+  res.json(out)
+}))
+r.post('/price-lists', authRequired, authorize('warehouse', 'create'), asyncWrap(async (req, res) => {
+  const b = req.body
+  const { data: list, error } = await supabase.from('supplier_price_lists').insert({ name: b.name, brand: b.brand || null, currency: b.currency || null, year: b.year || null }).select().single()
+  if (error) throw error
+  // bulk import rows: [{ model, supplier_price }]  (brand defaults to the list brand)
+  const rows = (b.items || []).filter((r) => r.model).map((r) => ({ list_id: list.id, brand: r.brand || b.brand || null, model: r.model, supplier_price: Number(r.supplier_price) || 0 }))
+  if (rows.length) await supabase.from('price_list_items').insert(rows)
+  res.status(201).json({ ...list, imported: rows.length })
+}))
+r.get('/price-lists/:id/items', authRequired, authorize('warehouse', 'read'), asyncWrap(async (req, res) => {
+  const { data, error } = await supabase.from('price_list_items').select('*').eq('list_id', req.params.id)
+  if (error) throw error; res.json(data || [])
 }))
 
 // ── ITEM ATTRIBUTES (+ values) for variants ──

@@ -13,6 +13,11 @@ export function CustomerProvider({ children }) {
   const [invoices, setInvoices] = useState([])
   const [tickets, setTickets] = useState([])
   const [messages, setMessages] = useState([])
+  const [deliveries, setDeliveries] = useState([])
+
+  const loadDeliveries = useCallback(async () => {
+    try { setDeliveries(await api('/portal/customer/deliveries') || []) } catch { /* not authed */ }
+  }, [])
 
   const loadMessages = useCallback(async () => {
     try { const m = await api('/portal/customer/messages'); setMessages(m || []) } catch { /* not authed */ }
@@ -34,14 +39,18 @@ export function CustomerProvider({ children }) {
       setTickets((o.tickets || []).map((t) => ({ id: t.number || t.id, subject: t.subject, priority: t.priority, status: t.status, date: d10(t) })))
     } catch { /* not authed */ }
   }, [])
-  useEffect(() => { if (user) { load(); loadMessages() } }, [user, load, loadMessages])
+  useEffect(() => { if (user) { load(); loadMessages(); loadDeliveries() } }, [user, load, loadMessages, loadDeliveries])
 
-  // real-time sync — keep quotations/projects/invoices + chat fresh (e.g. quote → Ordered)
+  // real-time sync — keep quotations/projects/invoices + chat + deliveries fresh
   useEffect(() => {
     if (!user) return
-    const id = setInterval(() => { load(); loadMessages() }, 12000)
+    const id = setInterval(() => { load(); loadMessages(); loadDeliveries() }, 12000)
     return () => clearInterval(id)
-  }, [user, load, loadMessages])
+  }, [user, load, loadMessages, loadDeliveries])
+
+  const acceptDelivery = async (id, signature_name) => { await api(`/portal/customer/deliveries/${id}/accept`, { method: 'POST', body: { signature_name } }); await loadDeliveries(); await load() }
+  const rejectDelivery = async (id, reason) => { await api(`/portal/customer/deliveries/${id}/reject`, { method: 'POST', body: { reason } }); await loadDeliveries() }
+  const returnDelivery = async (id, reason) => { await api(`/portal/customer/deliveries/${id}/return`, { method: 'POST', body: { reason } }); await loadDeliveries() }
 
   // quotation actions — REAL (accept creates order+project; reject/concession notify sales)
   const acceptQuote = async (id) => { await api(`/portal/customer/quotations/${id}/accept`, { method: 'POST' }); await load(); await loadMessages() }
@@ -53,5 +62,5 @@ export function CustomerProvider({ children }) {
   // chat — message goes to ONE recipient: the sales team
   const sendMessage = async (body, attachment) => { await api('/portal/customer/messages', { method: 'POST', body: { body, attachment } }); await loadMessages() }
 
-  return <Ctx.Provider value={{ projects, quotations, invoices, tickets, messages, acceptQuote, rejectQuote, requestConcession, deleteQuote, payInvoice, raiseTicket, sendMessage, loadMessages }}>{children}</Ctx.Provider>
+  return <Ctx.Provider value={{ projects, quotations, invoices, tickets, messages, deliveries, acceptQuote, rejectQuote, requestConcession, deleteQuote, payInvoice, raiseTicket, sendMessage, loadMessages, acceptDelivery, rejectDelivery, returnDelivery }}>{children}</Ctx.Provider>
 }

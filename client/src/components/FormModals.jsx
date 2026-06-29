@@ -145,10 +145,14 @@ function OpportunityModal({ open, d }) {
   )
 }
 
-const blankQuote = () => ({ customer: '', email: '', contact: '', projectName: '', location: '', paymentTerms: '50% advance, 50% on delivery', deliveryDate: '', notes: '', discount: '0', validity: '30', items: [{ name: '', qty: 1, rate: '' }] })
+const ROLE_DISCOUNT = { 'Sales User': 10, 'Sales Manager': 20, 'Management': 25, 'System Admin': 25 } // SEC-002 mirror of backend
+const blankQuote = () => ({ customer: '', email: '', contact: '', projectName: '', location: '', paymentTerms: '50% advance, 50% on delivery', deliveryDate: '', notes: '', discount: '0', discountFixed: '0', validity: '30', items: [{ name: '', qty: 1, rate: '' }] })
 const cell = 'w-full rounded-lg border border-slate-200 bg-slate-50/60 px-2.5 py-2 text-sm outline-none focus:border-brand-400 focus:bg-white'
 
 function QuotationModal({ open, d }) {
+  const { user } = useAuth()
+  const directLimit = ROLE_DISCOUNT[user?.role] ?? 5
+  const isApprover = ['Management', 'System Admin'].includes(user?.role)
   const editing = d.form.editing
   const isEdit = !!(editing && editing.id)   // editing with id = real edit; without id = prefill for a NEW quote
   const [v, setV] = useState(blankQuote())
@@ -158,7 +162,7 @@ function QuotationModal({ open, d }) {
       setV({
         customer: editing.customer || '', email: editing.email || '', contact: editing.contact_person || '',
         projectName: editing.project_name || '', location: editing.project_location || '',
-        paymentTerms: editing.payment_terms || '', discount: String(editing.discount ?? 0),
+        paymentTerms: editing.payment_terms || '', discount: String(editing.discount ?? 0), discountFixed: String(editing.discount_fixed ?? 0),
         deliveryDate: editing.delivery_date || '', notes: editing.notes || '',
         validity: String(editing.validity || 30),
         items: editing.items?.length ? editing.items.map((it) => ({ name: it.name, qty: it.qty, rate: it.rate })) : [{ name: '', qty: 1, rate: '' }],
@@ -182,13 +186,15 @@ function QuotationModal({ open, d }) {
   }) }))
 
   const disc = Math.max(0, Number(v.discount) || 0)
+  const fixedDisc = Math.max(0, Number(v.discountFixed) || 0)
   const net = v.items.reduce((sum, it) => sum + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0)
-  const discountAmount = (net * disc) / 100
+  const discountAmount = Math.min(net, (net * disc) / 100 + fixedDisc)   // SO-003 dual discount
   const netAfter = net - discountAmount
   const vat = netAfter * 0.15
   const total = netAfter + vat
-  const needsApproval = disc > 20      // >20% → CEO/manager approval (rule #6)
-  const blocked = disc > 25            // >25% → not allowed at all
+  const effectivePct = net > 0 ? (discountAmount / net) * 100 : 0
+  const needsApproval = !isApprover && effectivePct > directLimit  // SEC-002 per-role limit on combined discount
+  const blocked = effectivePct > 25                                 // >25% → not allowed at all
 
   const save = async (send) => {
     const payload = { ...v, amount: Math.round(total) }
@@ -268,14 +274,17 @@ function QuotationModal({ open, d }) {
         <div className="mt-3 flex justify-end">
           <div className="w-60 space-y-1 text-sm">
             <div className="flex justify-between text-slate-600"><span>Subtotal (Net)</span><span>{sar(Math.round(net))}</span></div>
-            {disc > 0 && <div className="flex justify-between text-rose-600"><span>Discount ({disc}%)</span><span>− {sar(Math.round(discountAmount))}</span></div>}
+            {discountAmount > 0 && <div className="flex justify-between text-rose-600"><span>Discount ({Math.round(effectivePct)}%{fixedDisc > 0 ? ` incl. ${sar(fixedDisc)}` : ''})</span><span>− {sar(Math.round(discountAmount))}</span></div>}
             <div className="flex justify-between text-slate-600"><span>VAT (15%)</span><span>{sar(Math.round(vat))}</span></div>
             <div className="flex justify-between rounded-lg bg-brand-50 px-2.5 py-1.5 font-bold text-brand-700"><span>Total</span><span>{sar(Math.round(total))}</span></div>
           </div>
         </div>
       </div>
 
-      <Field label="Discount (%)" type="number" value={v.discount} onChange={on('discount')} placeholder="0" />
+      <Row>
+        <Field label="Discount (%)" type="number" value={v.discount} onChange={on('discount')} placeholder="0" />
+        <Field label="Fixed Discount (SAR)" type="number" value={v.discountFixed} onChange={on('discountFixed')} placeholder="0" hint={discountAmount > 0 ? `Combined ≈ ${Math.round(effectivePct)}% (${sar(Math.round(discountAmount))})` : ''} />
+      </Row>
       {blocked && (
         <div className="rounded-xl border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
           ⛔ Discount above 25% is not allowed — reduce the discount.
@@ -283,7 +292,7 @@ function QuotationModal({ open, d }) {
       )}
       {!blocked && needsApproval && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
-          ⚠ Discount above 20% — this quotation will need manager approval before it can be sent.
+          ⚠ Discount above your {directLimit}% limit — this quotation needs manager/CEO approval before it can be sent.
         </div>
       )}
       <OwnerField />

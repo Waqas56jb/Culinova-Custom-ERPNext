@@ -1,10 +1,11 @@
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, FolderKanban, FileText, Receipt, Wrench, X, Headphones, MessageSquare } from 'lucide-react'
+import { LayoutDashboard, FolderKanban, FileText, Receipt, Wrench, X, Headphones, MessageSquare, Truck } from 'lucide-react'
 
 const nav = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/projects', label: 'My Projects', icon: FolderKanban },
   { to: '/quotations', label: 'Quotations', icon: FileText },
+  { to: '/deliveries', label: 'Deliveries', icon: Truck },
   { to: '/invoices', label: 'Invoices & Payments', icon: Receipt },
   { to: '/service', label: 'Service Requests', icon: Wrench },
   { to: '/chat', label: 'Chat with Sales', icon: MessageSquare },

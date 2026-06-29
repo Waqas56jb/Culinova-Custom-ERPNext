@@ -5,6 +5,7 @@ import { authorize } from '../../middleware/rbac.js'
 import { asyncWrap } from '../../middleware/error.js'
 import { canAccessPanel, isManagement } from '../../rbac/permissions.js'
 import { logAudit } from '../../core/audit.js'
+import { resolveItemAuto } from '../../core/itempricing.js'
 
 const r = Router()
 
@@ -15,9 +16,11 @@ const CHILD = {
   item_defaults: 'item_defaults', attributes: 'item_variant_attributes',
   manufacturers: 'item_manufacturers', alternatives: 'item_alternatives',
 }
-// cost is confidential — visible only to Management / Warehouse / Procurement (SEC-004)
-const canSeeCost = (u) => isManagement(u.role) || canAccessPanel(u.role, 'warehouse') || canAccessPanel(u.role, 'procurement')
-const COST_FIELDS = ['cost', 'valuation_rate', 'last_purchase_rate']
+// (#10) financials visible ONLY to Management / Operations / Finance / Warehouse / Procurement.
+// Sales & Engineering see selling price + availability + datasheets — never cost/supplier/margin.
+const FIN_ROLES = ['Management', 'System Admin', 'Operations', 'Finance', 'Operations Manager', 'Finance Manager']
+const canSeeCost = (u) => isManagement(u.role) || FIN_ROLES.includes(u.role) || canAccessPanel(u.role, 'warehouse') || canAccessPanel(u.role, 'procurement') || canAccessPanel(u.role, 'finance')
+const COST_FIELDS = ['cost', 'supplier_price', 'landed_cost', 'gp_percent', 'valuation_rate', 'last_purchase_rate']
 const redact = (u, item) => { if (canSeeCost(u) || !item) return item; const x = { ...item }; COST_FIELDS.forEach((f) => delete x[f]); return x }
 
 async function loadChildren(itemId) {
@@ -63,12 +66,34 @@ r.get('/:id', authRequired, asyncWrap(async (req, res) => {
   res.json({ ...redact(req.user, item), ...children })
 }))
 
+// (8) Product comparison — alternatives = other items in the same Product Family
+r.get('/:id/alternatives', authRequired, asyncWrap(async (req, res) => {
+  const { data: it } = await supabase.from('items').select('product_family').eq('id', req.params.id).single()
+  if (!it?.product_family) return res.json([])
+  const { data } = await supabase.from('items').select('*').ilike('product_family', it.product_family).neq('id', req.params.id)
+  res.json((data || []).map((x) => redact(req.user, x)))
+}))
+
+// (7) pricing history (financial — restricted)
+r.get('/:id/pricing-history', authRequired, asyncWrap(async (req, res) => {
+  if (!canSeeCost(req.user)) return res.status(403).json({ error: 'Not allowed' })
+  const { data } = await supabase.from('item_pricing_history').select('*').eq('item_id', req.params.id).order('created_at', { ascending: false })
+  res.json(data || [])
+}))
+
 // ── CREATE (Item Manager / Warehouse) — naming, default UOM, auto Item Price ──
 r.post('/', authRequired, authorize('warehouse', 'create'), asyncWrap(async (req, res) => {
   const p = req.body
   const item_code = (p.item_code || p.code || '').trim() || num()
-  if (!p.item_name && !p.name) return res.status(422).json({ error: 'Item name is required' })
-  if (!p.item_group) return res.status(422).json({ error: 'Item Group is required' })
+  // (13) duplicate prevention by Brand + Model
+  if (p.brand && p.model) {
+    const { data: dup } = await supabase.from('items').select('id').ilike('brand', p.brand).ilike('model', p.model).limit(1).maybeSingle()
+    if (dup) return res.status(409).json({ error: `An item with brand "${p.brand}" + model "${p.model}" already exists.` })
+  }
+  // (3)(4)(6) auto Item Name + pricing from brand factors + supplier price list
+  const auto = await resolveItemAuto(p)
+  const name = (p.item_name || p.name || auto.name || '').trim()
+  if (!name) return res.status(422).json({ error: 'Provide Brand + Model + Product Family (or an Item Name).' })
   // barcode uniqueness (global)
   for (const b of p.barcodes || []) {
     if (!b.barcode) continue
@@ -76,9 +101,18 @@ r.post('/', authRequired, authorize('warehouse', 'create'), asyncWrap(async (req
     if (dup) return res.status(409).json({ error: `Barcode ${b.barcode} already used by another item` })
   }
   const { ...cols } = stripChildren(p)
-  const row = { ...cols, item_code, code: item_code, name: p.item_name || p.name, item_name: p.item_name || p.name }
+  // when a supplier price exists → auto cost/selling/GP; else keep user-entered (manual) values
+  const pricing = auto.supplier_price != null
+    ? { supplier_price: auto.supplier_price, landed_cost: auto.landed_cost, cost: auto.landed_cost, selling_price: auto.selling_price, standard_rate: auto.selling_price, gp_percent: auto.gp_percent }
+    : {}
+  const row = { ...cols, ...pricing, item_code, code: item_code, name, item_name: name }
   const { data: item, error } = await supabase.from('items').insert(row).select().single()
   if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: error.message })
+
+  // (7) pricing history — keep every cost/selling value; quotations suggest the last
+  if (row.cost != null || row.standard_rate != null) {
+    await supabase.from('item_pricing_history').insert({ item_id: item.id, brand: p.brand || null, model: p.model || null, cost: row.cost ?? null, selling_price: row.standard_rate ?? null, source: auto.supplier_price != null ? 'price-list' : 'manual', created_by: req.user.id })
+  }
 
   // ensure stock UOM present in conversion table (factor 1)
   const uoms = Array.isArray(p.uoms) ? [...p.uoms] : []
@@ -86,9 +120,9 @@ r.post('/', authRequired, authorize('warehouse', 'create'), asyncWrap(async (req
   if (su && !uoms.some((u) => (u.uom || '').toLowerCase() === su.toLowerCase())) uoms.push({ uom: su, conversion_factor: 1 })
   await replaceChildren(item.id, { ...p, uoms })
 
-  // auto Item Price (ERPNext after_insert) when a selling rate is given
-  if (Number(p.standard_rate) > 0 && (p.is_sales_item ?? true)) {
-    await supabase.from('item_prices').insert({ item_id: item.id, item_code, uom: su, price_list: 'Standard Selling', selling: true, price_list_rate: Number(p.standard_rate), currency: 'SAR' })
+  // auto Item Price (ERPNext after_insert) when a selling rate is resolved
+  if (Number(item.standard_rate) > 0 && (p.is_sales_item ?? true)) {
+    await supabase.from('item_prices').insert({ item_id: item.id, item_code, uom: su, price_list: 'Standard Selling', selling: true, price_list_rate: Number(item.standard_rate), currency: 'SAR' })
   }
   await logAudit(req.user, 'item', item.id, 'created', { item_code })
   res.status(201).json({ ...item, ...(await loadChildren(item.id)) })

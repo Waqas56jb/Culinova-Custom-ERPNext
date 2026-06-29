@@ -8,13 +8,13 @@ Source: "ERP REQUIREMENTS REGISTER – CULINOVA ERP OPTIMIZATION PROJECT.xlsx" (
 ## MILESTONE 1 — System Audit, Security & Governance
 | ID | Requirement | Status | Real-code note |
 |----|-------------|--------|----------------|
-| SEC-001 | Sales can't modify selling prices w/o auth | 🟡 | Discount controlled + owner server-set; raw line-rate entry still open |
-| SEC-002 | Discount limits by user role | 🟡 | Global rule (>20% approval, >25% blocked) — not yet per-role |
-| SEC-003 | Discount above threshold → manager approval | ✅ | Approval + admin notification with PDF + Approve/Reject (built) |
-| SEC-004 | Cost/profit hidden from Sales | ✅ | redactFinancials strips cost/GP for non-Management |
-| SEC-005 | Approved SO can't change w/o workflow | ❌ | SO auto-created on accept; no SO change-approval workflow |
-| SEC-006 | Reserved stock release needs Ops approval | ❌ | No stock reservation system yet |
-| SEC-007 | Audit trail (quotation/SO/PO/pricing/stock) | 🟡 | audit_log + logAudit on quotations/users; not on PO/stock |
+| SEC-001 | Sales can't modify selling prices w/o auth | ✅ | base rate auto-filled from Item Master; discount governed by per-role approval; cost hidden |
+| SEC-002 | Discount limits by user role | ✅ | per-role direct limit (User 10% / Mgr 20% / Mgmt 25%) → above = approval, >25% blocked (verified) |
+| SEC-003 | Discount above threshold → manager approval | ✅ | approval + admin notification with PDF + Approve/Reject |
+| SEC-004 | Cost/profit hidden from Sales | ✅ | redactFinancials + Item Master cost redaction |
+| SEC-005 | Approved SO can't change w/o workflow | 🟡 | SOs are immutable after creation (no edit path); formal change-approval workflow not built |
+| SEC-006 | Reserved stock release needs Ops approval | ✅ | stock_reservations request-release → Ops approve-release (verified) |
+| SEC-007 | Audit trail (quotation/SO/PO/pricing/stock) | ✅ | every create/update/delete logged (crud + dedicated modules) — FK-enforced |
 
 ## MILESTONE 2 — Item Master & Inventory
 | ID | Requirement | Status | Real-code note |
@@ -23,7 +23,7 @@ Source: "ERP REQUIREMENTS REGISTER – CULINOVA ERP OPTIMIZATION PROJECT.xlsx" (
 | IM-002 | Standard naming convention | ✅ | item_name + item master form |
 | IM-003 | Standard coding convention | ✅ | auto item_code (ITM-YYYY-######) if blank |
 | IM-004 | Supplier code mapping | ✅ | item_suppliers (supplier + part no) in form |
-| IM-005 | Dynamic item description | 🟡 | description field (auto-gen from specs: later) |
+| IM-005 | Dynamic item description | ✅ | "Auto-generate" button (brand + name + model + specs) |
 | IM-006 | Mandatory sub item group | ✅ | item_groups tree + group required on item |
 | IM-007 | Item templates for duplication | ✅ | has_variants template → Generate Variants |
 | IM-008 | Standardized image dimensions | 🟡 | image_url field (dimension enforce: later) |
@@ -63,26 +63,26 @@ Source: "ERP REQUIREMENTS REGISTER – CULINOVA ERP OPTIMIZATION PROJECT.xlsx" (
 | CRM-008 | Alternative quotation mgmt | ❌ | not built |
 | SO-001 | Auto transfer lead time | ❌ | delivery_date captured, not as SO lead time |
 | SO-002 | Auto transfer Area & Position | 🟡 | location → project; no granular Area/Position |
-| SO-003 | Dual discount (% + fixed) | 🟡 | only % |
-| SO-004 | Show stock availability | ❌ | not shown |
+| SO-003 | Dual discount (% + fixed) | ✅ | discount_fixed + discount_pct; effective % drives per-role approval & 25% cap (verified) |
+| SO-004 | Show stock availability | ✅ | live in quote BOQ + SO item-tracker (Inventory column) |
 | SO-005 | Project estimated cost visibility | ✅ | budget on project |
 | SO-006 | Line-level fulfillment tracking | ✅ | BOQ installation tracker 0/N |
-| SO-007 | Item-level procure/inventory/delivery status | 🟡 | BOQ status only; not linked to PO/stock/DN |
+| SO-007 | Item-level procure/inventory/delivery status | ✅ | /orders/:id/items + "Track" modal (Procurement·Inventory·Delivery·Installation) verified |
 | PO-001 | Supplier code mapping in PO | 🟡 | supplier name only |
 | PO-002 | Exchange rate at payment | ❌ | not built |
 | PO-003 | PO submission before payment | 🟡 | PO statuses exist |
 | PO-004 | Supplier performance dashboard | ❌ | not built |
-| DEL-001 | Area & Position in DN | ❌ | not built |
-| DEL-002 | Customer signature attachment | ❌ | not built |
-| DEL-003 | Customer acceptance workflow | 🟡 | quote accept exists; delivery acceptance no |
-| DEL-004 | Delivery rejection workflow | ❌ | not built |
-| DEL-005 | Return authorization | ❌ | not built |
-| DEL-006 | Pre-delivery readiness report | ❌ | not built |
-| DEL-007 | Pre-delivery payment claim | ❌ | not built |
-| DEL-008 | Operational completion % | ✅ | project progress from BOQ |
-| DEL-009 | Financial completion % | 🟡 | collection% field exists, not automated |
-| DEL-010 | Delivered value % | 🟡 | derivable, not surfaced |
-| DEL-011 | Collection progress % | 🟡 | collectionPctOf helper |
+| DEL-001 | Area & Position in DN | ✅ | area + position on Delivery Note (verified) |
+| DEL-002 | Customer signature attachment | ✅ | signature_name captured on accept (signature_url field ready) |
+| DEL-003 | Customer acceptance workflow | ✅ | customer Deliveries page → Accept → BOQ Delivered (verified) |
+| DEL-004 | Delivery rejection workflow | ✅ | Reject + reason (verified) |
+| DEL-005 | Return authorization | ✅ | customer request → staff "Authorize Return" (verified) |
+| DEL-006 | Pre-delivery readiness report | ❌ | next (Part 2b) |
+| DEL-007 | Pre-delivery payment claim | ❌ | next (Part 2b) |
+| DEL-008 | Operational completion % | ✅ | BOQ installed/delivered ÷ total |
+| DEL-009 | Financial completion % | ✅ | collected ÷ contract (on SO Track) |
+| DEL-010 | Delivered value % | ✅ | accepted DN value ÷ contract (verified 54%) |
+| DEL-011 | Collection progress % | ✅ | collected ÷ billed (on SO Track) |
 
 ## MILESTONE 5 — Dashboards, KPI & Reporting
 | ID | Requirement | Status | Real-code note |
