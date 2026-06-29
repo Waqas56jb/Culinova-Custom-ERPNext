@@ -6,6 +6,8 @@ import salesRoutes from '../modules/sales/sales.routes.js'
 import notificationsRoutes from '../modules/notifications/notifications.routes.js'
 import pmRoutes from '../modules/pm/pm.routes.js'
 import inventoryRoutes from '../modules/inventory/inventory.routes.js'
+import itemRoutes from '../modules/item/item.routes.js'
+import mastersRoutes from '../modules/item/masters.routes.js'
 import { resources } from '../core/resources.js'
 import { crudRouter } from '../core/crud.js'
 import { rolePanels } from '../rbac/permissions.js'
@@ -28,6 +30,8 @@ api.use('/sales', salesRoutes)
 api.use('/notifications', notificationsRoutes)
 api.use('/pm', pmRoutes)
 api.use('/inventory', inventoryRoutes)
+api.use('/items', itemRoutes)        // full ERPNext-style Item Master (replaces generic)
+api.use('/masters', mastersRoutes)   // item-groups / brands / item-attributes
 
 // Generic config-driven REST for every resource/panel
 for (const [name, cfg] of Object.entries(resources)) {

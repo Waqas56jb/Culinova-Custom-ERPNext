@@ -17,7 +17,7 @@ export const resources = {
   rfqs: { table: 'rfqs', panel: 'procurement' },
   'purchase-orders': { table: 'purchase_orders', panel: 'procurement' },
   // warehouse
-  items: { table: 'items', panel: 'warehouse' },
+  // items: handled by the dedicated Item Master module (modules/item) — not generic CRUD
   warehouses: { table: 'warehouses', panel: 'warehouse' },
   stock: { table: 'stock_balances', panel: 'warehouse', orderBy: 'id' },
   'delivery-notes': { table: 'delivery_notes', panel: 'warehouse' },
