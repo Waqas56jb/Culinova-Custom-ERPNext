@@ -41,14 +41,14 @@ function ChildTable({ title, icon: Icon, rows = [], onChange, cols }) {
 }
 
 const blank = () => ({
-  item_code: '', item_name: '', item_group: '', brand: '', stock_uom: 'Nos', description: '',
+  item_code: '', item_name: '', item_group: '', brand: '', model: '', product_family: '', category: '', sub_category: '', stock_uom: 'Nos', description: '',
   disabled: false, is_stock_item: true, is_sales_item: true, is_purchase_item: true, is_fixed_asset: false,
   valuation_method: '', valuation_rate: 0, opening_stock: 0, standard_rate: 0, cost: 0,
   shelf_life_in_days: '', end_of_life: '', warranty_period: '', weight_per_unit: '', weight_uom: '',
   allow_negative_stock: false, has_batch_no: false, has_serial_no: false, has_expiry_date: false, serial_no_series: '', batch_number_series: '',
   sales_uom: '', max_discount: 0, grant_commission: true,
   purchase_uom: '', min_order_qty: 0, lead_time_days: 0, last_purchase_rate: 0, safety_stock: 0, delivered_by_supplier: false,
-  country_of_origin: '', customs_tariff_number: '',
+  country_of_origin: '', customs_tariff_number: '', eta_days: '',
   has_variants: false, variant_based_on: 'Item Attribute',
   is_sub_contracted_item: false, default_bom: '', production_capacity: '',
   inspection_required_before_purchase: false, inspection_required_before_delivery: false, quality_inspection_template: '',
@@ -77,8 +77,7 @@ export default function ItemForm({ open, itemId, onClose }) {
 
   const save = async () => {
     setErr('')
-    if (!v.item_name) { setTab('Details'); return setErr('Item name is required.') }
-    if (!v.item_group) { setTab('Details'); return setErr('Item Group is required.') }
+    if (!v.item_name && !(v.brand && v.model && v.product_family)) { setTab('Details'); return setErr('Item name (or Brand + Model + Family) is required.') }
     setBusy(true)
     try {
       if (isEdit) await d.updateItem(itemId, v); else await d.createItem(v)
@@ -110,8 +109,16 @@ export default function ItemForm({ open, itemId, onClose }) {
             <Field label="Item Name *" value={v.item_name} onChange={on('item_name')} placeholder="e.g. Combi Oven 10-Tray" />
           </Row>
           <Row>
-            <Select label="Item Group *" value={v.item_group} onChange={on('item_group')} options={['', ...groups]} />
             <Select label="Brand" value={v.brand} onChange={on('brand')} options={brandOpts} />
+            <Field label="Model" value={v.model} onChange={on('model')} placeholder="e.g. C-G941" />
+          </Row>
+          <Row>
+            <Select label="Product Family" value={v.product_family} onChange={on('product_family')} options={['', ...(d.productFamilies || []).map((f) => f.name)]} />
+            <Select label="Item Group (optional)" value={v.item_group} onChange={on('item_group')} options={['', ...groups]} />
+          </Row>
+          <Row>
+            <Field label="Category" value={v.category} onChange={on('category')} placeholder="Equipment / Custom Fabrication" />
+            <Field label="Sub Category" value={v.sub_category} onChange={on('sub_category')} placeholder="Cooking Equipment" />
           </Row>
           <Row>
             <Field label="Default Unit (Stock UOM)" value={v.stock_uom} onChange={on('stock_uom')} placeholder="Nos" />
@@ -154,6 +161,10 @@ export default function ItemForm({ open, itemId, onClose }) {
           <Row>
             <Field label="Warranty Period (days)" value={v.warranty_period} onChange={on('warranty_period')} />
             <Field label="Weight per Unit" type="number" value={v.weight_per_unit} onChange={on('weight_per_unit')} />
+          </Row>
+          <Row>
+            <Field label="ETA (days)" type="number" value={v.eta_days} onChange={on('eta_days')} hint="shown to Sales/Engineering as incoming ETA" />
+            <div />
           </Row>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             <Check label="Allow Negative Stock" val={v.allow_negative_stock} onChange={on('allow_negative_stock')} />

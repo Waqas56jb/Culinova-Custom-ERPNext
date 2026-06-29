@@ -30,7 +30,6 @@ const sections = [
   ] },
   { title: 'Warehouse / Stock', panel: 'warehouse', items: [
     { to: '/stock/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { to: '/stock/item-master', label: 'Item Master', icon: Package },
     { to: '/stock/items', label: 'Stock / Items', icon: Boxes },
     { to: '/stock/receipts', label: 'Goods Receipt', icon: Truck },
     { to: '/stock/delivery', label: 'Delivery Notes', icon: ClipboardList },
@@ -67,6 +66,10 @@ export default function Sidebar({ open, onClose }) {
   const { canSee } = useAuth()
   const unread = chatMessages.filter((m) => m.sender === 'customer' && !m.read).length
   const visible = sections.filter((s) => canSee(s.panel))
+  // Item Master is the shared product library — visible to EVERY user (Ali's spec).
+  // Access is enforced inside the page/API: Sales & Engineering view selling price +
+  // availability + datasheets only; cost/supplier/margin stay hidden; Warehouse/Admin edit.
+  const showCatalog = true
 
   return (
     <>
@@ -82,6 +85,14 @@ export default function Sidebar({ open, onClose }) {
         </div>
 
         <nav className="flex-1 overflow-y-auto px-3 py-5 space-y-1">
+          {showCatalog && (
+            <div>
+              <p className="section-title mb-2">Catalog</p>
+              <NavLink to="/stock/item-master" onClick={onClose} className={({ isActive }) => `nav-link group ${isActive ? 'nav-link-active' : 'hover:bg-white/5 hover:text-white'}`}>
+                {({ isActive }) => (<><Package size={18} className={isActive ? 'text-brand-300' : 'text-slate-400 group-hover:text-brand-300'} /><span className="flex-1">Item Master</span></>)}
+              </NavLink>
+            </div>
+          )}
           {visible.map((sec) => (
             <div key={sec.title}>
               <p className="section-title mb-2 mt-6 first:mt-0">{sec.title}</p>

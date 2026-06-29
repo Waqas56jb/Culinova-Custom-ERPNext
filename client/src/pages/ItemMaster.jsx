@@ -6,6 +6,8 @@ import { sar } from '../data/mockData.js'
 import { useData } from '../store/DataContext.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
 import ItemForm from '../components/ItemForm.jsx'
+import QuickItemForm from '../components/QuickItemForm.jsx'
+import ItemView from '../components/ItemView.jsx'
 
 export default function ItemMaster() {
   const d = useData()
@@ -15,10 +17,12 @@ export default function ItemMaster() {
   const [q, setQ] = useState('')
   const [g, setG] = useState('All')
   const [form, setForm] = useState({ open: false, id: null })
+  const [view, setView] = useState(null)
+  const [quick, setQuick] = useState(false)
   const [masters, setMasters] = useState(false)
 
-  const groups = ['All', ...new Set(items.map((i) => i.item_group).filter(Boolean))]
-  const rows = items.filter((i) => (g === 'All' || i.item_group === g) && `${i.item_code} ${i.item_name} ${i.brand || ''}`.toLowerCase().includes(q.toLowerCase()))
+  const groups = ['All', ...new Set(items.map((i) => i.category).filter(Boolean))]
+  const rows = items.filter((i) => (g === 'All' || i.category === g) && `${i.item_code} ${i.item_name} ${i.brand || ''} ${i.product_family || ''}`.toLowerCase().includes(q.toLowerCase()))
   const seeCost = items.some((i) => i.cost != null)
 
   const flag = (on, label, tone) => (on ? <span className={`mr-1 inline-block rounded px-1.5 py-0.5 text-[10px] font-bold ${tone}`}>{label}</span> : null)
@@ -26,14 +30,15 @@ export default function ItemMaster() {
   return (
     <>
       <PageHeader title="Item Master" subtitle="Central catalogue — created by Warehouse, used by every panel">
-        <button className="btn-ghost" onClick={() => setMasters(true)}><Settings2 size={16} /> Masters</button>
-        {canEdit && <button className="btn-primary" onClick={() => setForm({ open: true, id: null })}><Plus size={16} /> New Item</button>}
+        {canEdit && <button className="btn-ghost" onClick={() => setMasters(true)}><Settings2 size={16} /> Masters</button>}
+        {canEdit && <button className="btn-ghost" onClick={() => setForm({ open: true, id: null })}>Advanced</button>}
+        {canEdit && <button className="btn-primary" onClick={() => setQuick(true)}><Plus size={16} /> New Item</button>}
       </PageHeader>
 
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Items" value={items.filter((i) => !i.has_variants).length} icon={Package} tone="text-brand-600" />
         <Stat label="Templates" value={items.filter((i) => i.has_variants).length} icon={Layers} tone="text-violet-600" />
-        <Stat label="Item Groups" value={(d.itemGroups || []).length} icon={Tag} tone="text-gold-600" />
+        <Stat label="Product Families" value={(d.productFamilies || []).length} icon={Tag} tone="text-gold-600" />
         <Stat label="Disabled" value={items.filter((i) => i.disabled).length} icon={Sparkles} tone="text-rose-600" />
       </div>
 
@@ -52,17 +57,17 @@ export default function ItemMaster() {
         <div className="overflow-x-auto">
           <table className="w-full min-w-[920px]">
             <thead><tr className="bg-slate-50/60">
-              <th className="th">Code</th><th className="th">Item</th><th className="th">Group</th><th className="th">Brand</th>
-              <th className="th">UOM</th><th className="th">Type</th>{seeCost && <th className="th">Cost</th>}<th className="th">Sell Rate</th><th className="th">Status</th>
+              <th className="th">Code</th><th className="th">Item</th><th className="th">Family</th><th className="th">Category</th><th className="th">Brand</th>
+              <th className="th">Type</th>{seeCost && <th className="th">Cost</th>}<th className="th">Sell Rate</th><th className="th">Status</th>
             </tr></thead>
             <tbody>
               {rows.map((i) => (
-                <tr key={i.id} onClick={() => setForm({ open: true, id: i.id })} className="cursor-pointer hover:bg-slate-50/60">
+                <tr key={i.id} onClick={() => setView(i.id)} className="cursor-pointer hover:bg-slate-50/60">
                   <td className="td font-semibold text-brand-600">{i.item_code}</td>
                   <td className="td font-medium text-ink">{i.item_name}{i.variant_of && <span className="ml-1 text-[10px] text-violet-500">variant</span>}</td>
-                  <td className="td text-slate-500">{i.item_group}</td>
+                  <td className="td text-slate-500">{i.product_family || '—'}</td>
+                  <td className="td text-slate-500">{i.category || '—'}</td>
                   <td className="td text-slate-500">{i.brand || '—'}</td>
-                  <td className="td text-slate-500">{i.stock_uom}</td>
                   <td className="td">
                     {flag(i.is_stock_item, 'STK', 'bg-emerald-50 text-emerald-600')}
                     {flag(i.is_sales_item, 'SAL', 'bg-blue-50 text-blue-600')}
@@ -80,7 +85,9 @@ export default function ItemMaster() {
         </div>
       </div>
 
+      <ItemView open={!!view} itemId={view} canEdit={canEdit} onClose={() => setView(null)} onEdit={() => { setForm({ open: true, id: view }); setView(null) }} />
       <ItemForm open={form.open} itemId={form.id} onClose={() => setForm({ open: false, id: null })} />
+      <QuickItemForm open={quick} onClose={() => setQuick(false)} />
       <MastersModal open={masters} onClose={() => setMasters(false)} />
     </>
   )
@@ -95,38 +102,75 @@ function Stat({ label, value, icon: Icon, tone }) {
   )
 }
 
+const MTABS = ['Brands', 'Product Families', 'Price Lists']
 function MastersModal({ open, onClose }) {
   const d = useData()
-  const [grp, setGrp] = useState({ item_group_name: '', parent_item_group: '', is_group: false })
-  const [br, setBr] = useState('')
-  const [attr, setAttr] = useState({ attribute_name: '', values: '' })
+  const [tab, setTab] = useState('Brands')
   const [msg, setMsg] = useState('')
   const ok = (t) => { setMsg(t); setTimeout(() => setMsg(''), 2500) }
+  const [br, setBr] = useState({ brand: '', currency: 'SAR', exchange_factor: 1, price_factor: 1 })
+  const [fam, setFam] = useState({ name: '', category: 'Equipment', sub_category: '', datasheet_url: '' })
+  const [pl, setPl] = useState({ name: '', brand: '', currency: '', year: '', rows: '' })
+
+  const addBrand = async () => { if (!br.brand) return; try { await d.addBrand(br); setBr({ brand: '', currency: 'SAR', exchange_factor: 1, price_factor: 1 }); ok('Brand added') } catch (e) { alert(e.message) } }
+  const addFam = async () => { if (!fam.name) return; try { await d.addProductFamily(fam); setFam({ name: '', category: 'Equipment', sub_category: '', datasheet_url: '' }); ok('Product Family added') } catch (e) { alert(e.message) } }
+  const addPL = async () => {
+    if (!pl.name) return
+    const items = pl.rows.split('\n').map((l) => l.split(/[,\t]/)).filter((c) => c[0] && c[0].trim()).map((c) => ({ model: c[0].trim(), supplier_price: Number((c[1] || '').trim()) || 0 }))
+    try { const r = await d.addPriceList({ name: pl.name, brand: pl.brand, currency: pl.currency, year: pl.year, items }); setPl({ name: '', brand: '', currency: '', year: '', rows: '' }); ok(`Price list added (${r.imported} items)`) } catch (e) { alert(e.message) }
+  }
+
   return (
-    <Modal open={open} onClose={onClose} size="lg" title="Item Masters" subtitle="Item Groups · Brands · Variant Attributes"
+    <Modal open={open} onClose={onClose} size="lg" title="Item Masters" subtitle="Brands (factors) · Product Families · Supplier Price Lists"
       footer={<button className="btn-ghost" onClick={onClose}>Close</button>}>
-      {msg && <div className="mb-2 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-600">{msg}</div>}
-      <div className="grid gap-5 sm:grid-cols-3">
-        <div className="rounded-xl border border-slate-200 p-3">
-          <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase text-slate-500"><Tag size={14} /> Item Groups ({(d.itemGroups || []).length})</p>
-          <Field label="Group Name" value={grp.item_group_name} onChange={(e) => setGrp((s) => ({ ...s, item_group_name: e.target.value }))} />
-          <div className="mt-2"><Select label="Parent" value={grp.parent_item_group} onChange={(e) => setGrp((s) => ({ ...s, parent_item_group: e.target.value }))} options={['', ...(d.itemGroups || []).map((g) => g.item_group_name)]} /></div>
-          <label className="mt-2 flex items-center gap-2 text-xs"><input type="checkbox" checked={grp.is_group} onChange={(e) => setGrp((s) => ({ ...s, is_group: e.target.checked }))} className="h-4 w-4 accent-brand-500" /> Is a parent group</label>
-          <button className="btn-primary mt-3 w-full !py-2" onClick={async () => { if (!grp.item_group_name) return; try { await d.addItemGroup(grp); setGrp({ item_group_name: '', parent_item_group: '', is_group: false }); ok('Group added') } catch (e) { alert(e.message) } }}>Add Group</button>
-        </div>
-        <div className="rounded-xl border border-slate-200 p-3">
-          <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase text-slate-500"><Sparkles size={14} /> Brands ({(d.brands || []).length})</p>
-          <Field label="Brand Name" value={br} onChange={(e) => setBr(e.target.value)} />
-          <button className="btn-primary mt-3 w-full !py-2" onClick={async () => { if (!br) return; try { await d.addBrand({ brand: br }); setBr(''); ok('Brand added') } catch (e) { alert(e.message) } }}>Add Brand</button>
-          <div className="mt-3 flex flex-wrap gap-1">{(d.brands || []).map((b) => <span key={b.id} className="rounded bg-slate-100 px-2 py-0.5 text-[11px]">{b.brand}</span>)}</div>
-        </div>
-        <div className="rounded-xl border border-slate-200 p-3">
-          <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase text-slate-500"><Layers size={14} /> Attributes ({(d.itemAttributes || []).length})</p>
-          <Field label="Attribute Name" value={attr.attribute_name} onChange={(e) => setAttr((s) => ({ ...s, attribute_name: e.target.value }))} placeholder="e.g. Voltage" />
-          <div className="mt-2"><Field label="Values (comma-separated)" value={attr.values} onChange={(e) => setAttr((s) => ({ ...s, values: e.target.value }))} placeholder="220V, 380V" /></div>
-          <button className="btn-primary mt-3 w-full !py-2" onClick={async () => { if (!attr.attribute_name) return; try { await d.addItemAttribute({ attribute_name: attr.attribute_name, values: attr.values.split(',').map((x) => x.trim()).filter(Boolean).map((x) => ({ attribute_value: x })) }); setAttr({ attribute_name: '', values: '' }); ok('Attribute added') } catch (e) { alert(e.message) } }}>Add Attribute</button>
-        </div>
+      <div className="-mt-1 mb-3 flex gap-1.5 border-b border-slate-100 pb-3">
+        {MTABS.map((t) => <button key={t} onClick={() => setTab(t)} className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${tab === t ? 'bg-brand-500 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>{t}</button>)}
       </div>
+      {msg && <div className="mb-2 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-600">{msg}</div>}
+
+      {tab === 'Brands' && (
+        <div className="space-y-3">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Field label="Brand Name" value={br.brand} onChange={(e) => setBr((s) => ({ ...s, brand: e.target.value }))} />
+            <Field label="Currency" value={br.currency} onChange={(e) => setBr((s) => ({ ...s, currency: e.target.value }))} placeholder="EUR" />
+            <Field label="Exchange Factor" type="number" value={br.exchange_factor} onChange={(e) => setBr((s) => ({ ...s, exchange_factor: e.target.value }))} hint="supplier price × this = landed cost" />
+            <Field label="Price Factor" type="number" value={br.price_factor} onChange={(e) => setBr((s) => ({ ...s, price_factor: e.target.value }))} hint="landed × this = selling price" />
+          </div>
+          <button className="btn-primary !py-2" onClick={addBrand}>Add Brand</button>
+          <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="bg-slate-50/60"><th className="th">Brand</th><th className="th">Currency</th><th className="th">Exchange</th><th className="th">Price Factor</th></tr></thead>
+            <tbody>{(d.brands || []).map((b) => <tr key={b.id}><td className="td font-medium text-ink">{b.brand}</td><td className="td">{b.currency}</td><td className="td">{b.exchange_factor}</td><td className="td">{b.price_factor}</td></tr>)}</tbody></table></div>
+        </div>
+      )}
+
+      {tab === 'Product Families' && (
+        <div className="space-y-3">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Field label="Family Name" value={fam.name} onChange={(e) => setFam((s) => ({ ...s, name: e.target.value }))} placeholder="4 Burner Gas Range" />
+            <Select label="Category" value={fam.category} onChange={(e) => setFam((s) => ({ ...s, category: e.target.value }))} options={['Equipment', 'Custom Fabrication']} />
+            <Field label="Sub Category" value={fam.sub_category} onChange={(e) => setFam((s) => ({ ...s, sub_category: e.target.value }))} placeholder="Cooking Equipment" />
+            <Field label="Datasheet URL (custom fab)" value={fam.datasheet_url} onChange={(e) => setFam((s) => ({ ...s, datasheet_url: e.target.value }))} placeholder="https://…" />
+          </div>
+          <button className="btn-primary !py-2" onClick={addFam}>Add Product Family</button>
+          <div className="flex flex-wrap gap-1.5">{(d.productFamilies || []).map((f) => <span key={f.id} className="rounded-lg bg-slate-100 px-2 py-1 text-[11px]">{f.name} <span className="text-slate-400">· {f.category}</span></span>)}</div>
+        </div>
+      )}
+
+      {tab === 'Price Lists' && (
+        <div className="space-y-3">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Field label="List Name" value={pl.name} onChange={(e) => setPl((s) => ({ ...s, name: e.target.value }))} placeholder="Fagor 2027 Price List" />
+            <Select label="Brand" value={pl.brand} onChange={(e) => setPl((s) => ({ ...s, brand: e.target.value }))} options={['', ...(d.brands || []).map((b) => b.brand)]} />
+            <Field label="Currency" value={pl.currency} onChange={(e) => setPl((s) => ({ ...s, currency: e.target.value }))} placeholder="EUR" />
+            <Field label="Year" value={pl.year} onChange={(e) => setPl((s) => ({ ...s, year: e.target.value }))} placeholder="2027" />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-slate-600">Paste from Excel — one line per item: <span className="text-muted">Model, SupplierPrice</span></label>
+            <textarea rows={5} value={pl.rows} onChange={(e) => setPl((s) => ({ ...s, rows: e.target.value }))} placeholder={'C-G941, 1000\nC-G740, 850'} className="w-full rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2 text-sm font-mono outline-none focus:border-brand-400 focus:bg-white" />
+          </div>
+          <button className="btn-primary !py-2" onClick={addPL}>Import Price List</button>
+          <div className="space-y-1">{(d.priceLists || []).map((l) => <div key={l.id} className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-1.5 text-xs"><span className="font-medium text-ink">{l.name}</span><span className="text-muted">{l.brand} · {l.items} items</span></div>)}</div>
+        </div>
+      )}
     </Modal>
   )
 }

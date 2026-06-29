@@ -1,0 +1,173 @@
+==================================================================
+CULINOVA ERP 2.0 — ITEM MASTER
+Implementation Summary (response to Ali's requirements)
+==================================================================
+
+OVERVIEW
+------------------------------------------------------------------
+The Item Master is now the single, centralized product library for
+the whole company. It lives in the client (staff) frontend as a
+shared "Catalog" and is reachable from EVERY panel/role, while the
+data each role can see (and whether they can edit) is controlled
+by role-based security. Pricing, item code and item name are
+generated automatically. Creating a new item takes under a minute.
+
+
+1. WHERE IT APPEARS — EVERY PANEL, ONE SHARED CATALOG
+------------------------------------------------------------------
+In the left sidebar of the staff app there is a top section
+"CATALOG" with a single link: "Item Master". It is visible to
+users of ALL panels:
+
+   Sales & Estimation .......... sees Item Master
+   Project Management .......... sees Item Master
+   Procurement ................. sees Item Master
+   Warehouse / Stock ........... sees Item Master (owner)
+   Finance & Accounting ........ sees Item Master
+   Site Execution .............. sees Item Master
+   Service & Maintenance ....... sees Item Master
+   HR & Payroll ................ sees Item Master
+
+There is ONE Item Master shared by all panels (not a copy per
+panel). What changes per role is the ACCESS LEVEL, not the page.
+
+
+2. ACCESS BY ROLE (what each role can do / see)
+------------------------------------------------------------------
+VIEW the catalogue + open an item ....... EVERY logged-in user.
+
+CREATE / EDIT items, manage Masters ..... Warehouse / Stock roles
+   (Stock Manager, Stock User) and Management / Full Admin.
+   These roles see the "New Item", "Advanced" and "Masters"
+   buttons and an "Edit" button inside an item.
+
+SEE FINANCIALS (Purchase Cost, Supplier Price, Landed Cost,
+   GP / Margin) ......................... ONLY Management,
+   Operations, Finance, Warehouse, Procurement.
+
+Sales & Engineering users see: item information, SELLING PRICE,
+   availability and datasheets — but NEVER cost, supplier price
+   or margin (these are stripped by the server, not just hidden
+   in the screen).
+
+This is enforced on the server (API) as well as the screen, so a
+Sales user can never retrieve cost data even by other means.
+
+
+3. WHAT THE ITEM MASTER DOES (core functions)
+------------------------------------------------------------------
+- Eliminates duplicates: blocks creating an item with a Brand +
+  Model that already exists (and Item Code is unique).
+- Standardizes naming: Item Name is auto-built as
+  "Brand Model Family" (e.g. "Fagor C-G941 4 Burner Gas Range")
+  and Item Code is auto-generated.
+- Auto-pricing engine (per Brand factors):
+      Supplier Price  ->  x Exchange Factor  ->  Landed Cost
+                      ->  x Price Factor      ->  Selling Price
+                      ->  GP% (Selling vs LANDED cost)
+- Keeps Pricing History: every cost/selling value is stored;
+  if no supplier price exists the user enters values manually and
+  they are remembered for future quotations.
+- Product comparison: items in the same Product Family are shown
+  as alternatives (with their selling prices).
+- Inventory visibility: shows Available, Reserved, Incoming and
+  ETA for each stocked item.
+- Feeds the rest of the ERP: quotations, sales orders, purchase
+  and stock all select from this one master (item picker +
+  auto-fill of selling rate + live stock availability).
+
+
+4. THE BUTTONS AND THE PAGES (what each screen does)
+------------------------------------------------------------------
+A) ITEM MASTER (list page)  — route /stock/item-master
+   - KPI cards: # Items, # Templates, # Product Families, # Disabled.
+   - Search box + Category filter chips (Equipment / Custom Fab).
+   - Table columns: Code, Item, Family, Category, Brand, Type
+     (Stock/Sales/Purchase/Template flags), Cost (only if allowed),
+     Sell Rate, Status (Active/Disabled).
+   - Header buttons (editors only): "Masters", "Advanced",
+     and primary "New Item".
+   - Click any row -> opens the Item View.
+
+B) NEW ITEM — Quick Create (the <1-minute create, Ali's design)
+   - The user enters ONLY: Product Family, Brand, Model, Category,
+     Sub Category, Datasheet URL, and one Product Image.
+   - The image is auto-resized to a standard size on upload.
+   - Live preview shows the auto Item Name and the pricing rule.
+   - On save the system auto-generates Code + Name and computes
+     pricing from the brand's price list + factors.
+
+C) ITEM VIEW (read-only product card — opens for everyone)
+   - Image, Brand, Model, Category, Sub Category.
+   - Selling Price (everyone); Landed Cost / GP% / Supplier Price
+     (only finance-allowed roles).
+   - Availability: Available, Reserved, Incoming, ETA.
+   - Datasheet link.
+   - Alternatives (same Product Family) for comparison.
+   - "Edit" button shown only to editors.
+
+D) ADVANCED ITEM FORM (full master — editors only)
+   - Tabbed: Details, Inventory, Sales, Purchasing, Tax & Trade,
+     Accounting, Variants, Prices, More.
+   - Holds the complete (ERPNext-style) field set + child tables:
+     barcodes, UOM conversions, reorder levels, suppliers,
+     manufacturers, customer codes, taxes, company-wise item
+     defaults/accounts, variant attributes, alternatives, prices.
+   - Variant generation (template -> child items).
+   - Lock rules: once stock movement exists, key fields
+     (is_stock_item, valuation method, serial/batch, UOM) freeze.
+
+E) MASTERS (editors only) — three tabs
+   - Brands: name + Currency + Exchange Factor + Price Factor.
+   - Product Families: name + Category + Sub Category +
+     (custom-fabrication) Datasheet.
+   - Price Lists: name + brand + currency + year, with Excel
+     paste-import ("Model, SupplierPrice" per line). Supplier
+     prices live here, separate from the Item Master.
+
+
+5. THE DATABASE (tables behind it)
+------------------------------------------------------------------
+items ................ the product record (product fields +
+                       product_family, category, sub_category,
+                       supplier_price, landed_cost, selling_price,
+                       gp_percent, eta_days, image, datasheet,
+                       + full ERPNext field set).
+brands ............... brand + currency + exchange_factor +
+                       price_factor (items inherit these).
+product_families ..... family + category + sub_category +
+                       datasheet (custom fabrication).
+supplier_price_lists . one row per imported list (e.g. Fagor 2027).
+price_list_items ..... brand + model + supplier_price (Excel rows).
+item_pricing_history . every cost/selling value kept over time.
+Item child tables .... item_barcodes, item_uoms, item_reorders,
+                       item_suppliers, item_customer_details,
+                       item_taxes, item_defaults, item_prices,
+                       item_variant_attributes, item_manufacturers,
+                       item_alternatives.
+Inventory ............ stock_balances (physical + reserved) feed
+                       Available / Reserved / Incoming.
+
+
+6. REQUIREMENT CHECK (Ali's 13 points)
+------------------------------------------------------------------
+ 1. Category / Sub Category .................... DONE
+ 2. Product Family (compare / alternatives) .... DONE
+ 3. Auto Item Code + Name ...................... DONE
+ 4. Brand currency / exchange / price factor ... DONE (inherited)
+ 5. Price Lists separate, Excel import ......... DONE
+ 6. Pricing engine (supplier->landed->sell->GP)  DONE
+ 7. Missing price -> manual + Pricing History .. DONE
+ 8. Product comparison via Family .............. DONE
+ 9. Availability + ETA (Sales & Engineering) ... DONE
+10. Security (Sales/Eng: no cost/margin) ....... DONE
+11. One image, auto-resize .................... DONE
+12. Datasheet on Item / Family ................ DONE
+13. Duplicate prevention (Brand + Model) ....... DONE
+
+Design principle — "create an item in under a minute, product
+information only" — is met by the Quick Create screen.
+
+==================================================================
+END OF SUMMARY
+==================================================================

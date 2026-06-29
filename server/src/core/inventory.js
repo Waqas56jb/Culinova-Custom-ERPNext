@@ -4,15 +4,15 @@ const OPEN_PO = (s) => !['Received', 'Closed', 'Delivered', 'Cancelled'].include
 
 // Live availability for an item (matched by name) — physical, reserved, available, incoming.
 export async function availabilityFor(name) {
-  if (!name) return { matched: false, physical: 0, reserved: 0, available: 0, incoming: 0 }
-  const { data: item } = await supabase.from('items').select('id, name, code').ilike('name', name).limit(1).maybeSingle()
-  if (!item) return { matched: false, physical: 0, reserved: 0, available: 0, incoming: 0 }
+  if (!name) return { matched: false, physical: 0, reserved: 0, available: 0, incoming: 0, eta_days: 0 }
+  const { data: item } = await supabase.from('items').select('id, name, code, eta_days').ilike('name', name).limit(1).maybeSingle()
+  if (!item) return { matched: false, physical: 0, reserved: 0, available: 0, incoming: 0, eta_days: 0 }
   const { data: bals } = await supabase.from('stock_balances').select('qty, reserved').eq('item_id', item.id)
   const physical = (bals || []).reduce((s, b) => s + (Number(b.qty) || 0), 0)
   const reserved = (bals || []).reduce((s, b) => s + (Number(b.reserved) || 0), 0)
   const { data: pos } = await supabase.from('purchase_orders').select('qty, status').ilike('item_name', name)
   const incoming = (pos || []).filter((p) => OPEN_PO(p.status)).reduce((s, p) => s + (Number(p.qty) || 0), 0)
-  return { matched: true, item: item.name, code: item.code, physical, reserved, available: physical - reserved, incoming }
+  return { matched: true, item: item.name, code: item.code, physical, reserved, available: physical - reserved, incoming, eta_days: Number(item.eta_days) || 0 }
 }
 
 // INV-006: auto-reserve stock when a Sales Order is created. Matches each line to the

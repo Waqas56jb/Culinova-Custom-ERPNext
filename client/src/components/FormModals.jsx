@@ -36,7 +36,7 @@ function AvailabilityHint({ name, qty, check }) {
   const short = need > a.available
   return (
     <p className={`pl-1 pt-0.5 text-[10px] font-semibold ${short ? 'text-amber-600' : 'text-emerald-600'}`}>
-      Stock: {a.available} available{a.incoming ? ` · ${a.incoming} incoming` : ''}{short ? ` · short by ${need - a.available}` : ''}
+      Stock: {a.available} available{a.incoming ? ` · ${a.incoming} incoming${a.eta_days ? ` (ETA ${a.eta_days}d)` : ''}` : ''}{short ? ` · short by ${need - a.available}` : ''}
     </p>
   )
 }
