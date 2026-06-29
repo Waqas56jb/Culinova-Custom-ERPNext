@@ -178,16 +178,15 @@ export function DataProvider({ children }) {
 
   useEffect(() => { if (user) loadAll() }, [user, loadAll])
 
-  // ── REAL-TIME SYNC ── poll the records that change as deals flow (accept → order →
-  // project → opportunity Won) + chat, so the salesperson sees updates without refreshing.
+  // ── REAL-TIME SYNC ── refresh EVERYTHING on an interval so every panel + its KPIs,
+  // charts and values stay in sync via the shared store (Item Master, stock, leads,
+  // quotations, orders, projects, procurement, finance, chat — all of it).
   useEffect(() => {
     if (!user) return
-    const id = setInterval(() => {
-      loadChat(); loadQuotations(); loadProjects(); reload('salesOrders'); reload('opportunities'); reload('customers')
-    }, 12000)
+    const id = setInterval(() => { loadAll() }, 12000)
     return () => clearInterval(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, panels])
+  }, [user, loadAll])
 
   // helpers
   const post = (ep, body) => api('/' + ep, { method: 'POST', body })
