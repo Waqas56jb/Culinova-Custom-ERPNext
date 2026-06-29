@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react'
 import { X, Plus, Trash2, Loader2, Boxes, Layers } from 'lucide-react'
 import { Modal, Field, Select, TextArea, Row } from './Modal.jsx'
 import { useData } from '../store/DataContext.jsx'
+import { sar } from '../data/mockData.js'
 
-const TABS = ['Details', 'Inventory', 'Sales', 'Purchasing', 'Tax & Trade', 'Accounting', 'Variants', 'More']
+const TABS = ['Details', 'Inventory', 'Sales', 'Purchasing', 'Tax & Trade', 'Accounting', 'Variants', 'Prices', 'More']
 
 const Check = ({ label, val, onChange }) => (
   <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2 text-sm">
@@ -116,7 +117,13 @@ export default function ItemForm({ open, itemId, onClose }) {
             <Field label="Default Unit (Stock UOM)" value={v.stock_uom} onChange={on('stock_uom')} placeholder="Nos" />
             <Field label="Image URL" value={v.image_url || ''} onChange={on('image_url')} placeholder="https://…" />
           </Row>
-          <TextArea label="Description" rows={3} value={v.description} onChange={on('description')} />
+          <div>
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="text-xs font-semibold text-slate-600">Description</span>
+              <button type="button" onClick={() => setV((s) => ({ ...s, description: [s.brand, s.item_name, s.model, s.specifications].filter(Boolean).join(' — ') }))} className="text-[11px] font-semibold text-brand-600 hover:underline">Auto-generate</button>
+            </div>
+            <textarea rows={3} value={v.description} onChange={on('description')} className="w-full rounded-xl border border-slate-200 bg-slate-50/60 px-3.5 py-2.5 text-sm outline-none transition focus:border-brand-400 focus:bg-white" />
+          </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             <Check label="Maintain Stock" val={v.is_stock_item} onChange={on('is_stock_item')} />
             <Check label="Allow Sales" val={v.is_sales_item} onChange={on('is_sales_item')} />
@@ -237,6 +244,10 @@ export default function ItemForm({ open, itemId, onClose }) {
         </div>
       )}
 
+      {tab === 'Prices' && (
+        <PricesTab itemId={itemId} prices={v.prices} setPrices={(p) => setV((s) => ({ ...s, prices: p }))} stockUom={v.stock_uom} />
+      )}
+
       {tab === 'More' && (
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-2">
@@ -254,6 +265,54 @@ export default function ItemForm({ open, itemId, onClose }) {
         </div>
       )}
     </Modal>
+  )
+}
+
+function PricesTab({ itemId, prices, setPrices, stockUom }) {
+  const d = useData()
+  const [np, setNp] = useState({ price_list: 'Standard Selling', uom: stockUom || 'Nos', price_list_rate: 0, selling: true, customer: '', valid_from: '' })
+  const [busy, setBusy] = useState(false)
+  if (!itemId) return <p className="text-xs text-muted">Save the item first, then manage its prices (price lists, customer-specific, buying/selling).</p>
+  const add = async () => {
+    if (!np.price_list || !(Number(np.price_list_rate) > 0)) return alert('Price list + rate are required')
+    setBusy(true)
+    try {
+      const r = await d.addItemPrice(itemId, { price_list: np.price_list, uom: np.uom, price_list_rate: Number(np.price_list_rate), selling: np.selling, buying: !np.selling, customer: np.customer || null, valid_from: np.valid_from || null })
+      setPrices([...(prices || []), r]); setNp((s) => ({ ...s, price_list_rate: 0, customer: '' }))
+    } catch (e) { alert(e.message) } finally { setBusy(false) }
+  }
+  const rm = async (id) => { try { await d.deleteItemPrice(id); setPrices((prices || []).filter((x) => x.id !== id)) } catch (e) { alert(e.message) } }
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-slate-200 p-3">
+        <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Item Prices</p>
+        {(prices || []).length === 0 && <p className="px-1 py-1 text-xs text-slate-400">No prices yet.</p>}
+        {(prices || []).map((p) => (
+          <div key={p.id} className="flex items-center gap-2 border-b border-slate-50 py-1.5 text-sm">
+            <span className="flex-1 font-medium text-ink">{p.price_list}</span>
+            <span className="text-xs text-slate-500">{p.uom} · {p.selling ? 'Selling' : 'Buying'}{p.customer ? ` · ${p.customer}` : ''}{p.valid_from ? ` · from ${p.valid_from}` : ''}</span>
+            <span className="font-semibold">{sar(p.price_list_rate)}</span>
+            <button type="button" onClick={() => rm(p.id)} className="text-slate-300 hover:text-rose-500"><Trash2 size={14} /></button>
+          </div>
+        ))}
+      </div>
+      <div className="space-y-2 rounded-xl border border-dashed border-slate-300 p-3">
+        <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Add Price</p>
+        <Row>
+          <Field label="Price List" value={np.price_list} onChange={(e) => setNp((s) => ({ ...s, price_list: e.target.value }))} />
+          <Field label="Rate" type="number" value={np.price_list_rate} onChange={(e) => setNp((s) => ({ ...s, price_list_rate: e.target.value }))} />
+        </Row>
+        <Row>
+          <Field label="UOM" value={np.uom} onChange={(e) => setNp((s) => ({ ...s, uom: e.target.value }))} />
+          <Select label="Type" value={np.selling ? 'Selling' : 'Buying'} onChange={(e) => setNp((s) => ({ ...s, selling: e.target.value === 'Selling' }))} options={['Selling', 'Buying']} />
+        </Row>
+        <Row>
+          <Field label="Customer (optional)" value={np.customer} onChange={(e) => setNp((s) => ({ ...s, customer: e.target.value }))} />
+          <Field label="Valid From" type="date" value={np.valid_from} onChange={(e) => setNp((s) => ({ ...s, valid_from: e.target.value }))} />
+        </Row>
+        <button type="button" onClick={add} disabled={busy} className="btn-primary !py-2">{busy ? 'Adding…' : 'Add Price'}</button>
+      </div>
+    </div>
   )
 }
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { X, Plus, Loader2 } from 'lucide-react'
 import { useData } from '../store/DataContext.jsx'
 import { Modal, Field, Select, Row, TextArea } from './Modal.jsx'
@@ -172,6 +172,14 @@ function QuotationModal({ open, d }) {
   const setItem = (i, k, val) => setV((s) => ({ ...s, items: s.items.map((it, idx) => (idx === i ? { ...it, [k]: val } : it)) }))
   const addItem = () => setV((s) => ({ ...s, items: [...s.items, { name: '', qty: 1, rate: '' }] }))
   const removeItem = (i) => setV((s) => ({ ...s, items: s.items.length > 1 ? s.items.filter((_, idx) => idx !== i) : s.items }))
+  // Item-picker from the Item Master: pick a known item → auto-fill its selling rate
+  const masterByName = useMemo(() => { const m = {}; (d.items || []).forEach((it) => { m[(it.item_name || '').toLowerCase()] = it }); return m }, [d.items])
+  const onItemName = (i, name) => setV((s) => ({ ...s, items: s.items.map((it, idx) => {
+    if (idx !== i) return it
+    const m = masterByName[(name || '').trim().toLowerCase()]
+    const rate = m && (!it.rate || Number(it.rate) === 0) ? (m.standard_rate || it.rate) : it.rate
+    return { ...it, name, rate }
+  }) }))
 
   const disc = Math.max(0, Number(v.discount) || 0)
   const net = v.items.reduce((sum, it) => sum + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0)
@@ -238,6 +246,7 @@ function QuotationModal({ open, d }) {
           <span className="text-xs font-semibold text-slate-600">Items (BOQ)</span>
           <button onClick={addItem} className="inline-flex items-center gap-1 text-xs font-semibold text-brand-600 hover:text-brand-700"><Plus size={13} /> Add Item</button>
         </div>
+        <datalist id="qmaster-items">{(d.items || []).map((it) => <option key={it.id} value={it.item_name} />)}</datalist>
         <div className="grid grid-cols-[1fr_50px_84px_92px_22px] gap-2 px-1 pb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
           <span>Description</span><span className="text-center">Qty</span><span className="text-right">Unit Rate</span><span className="text-right">Amount</span><span />
         </div>
@@ -245,7 +254,7 @@ function QuotationModal({ open, d }) {
           {v.items.map((it, i) => (
             <div key={i}>
               <div className="grid grid-cols-[1fr_50px_84px_92px_22px] items-center gap-2">
-                <input className={cell} placeholder="Item description" value={it.name} onChange={(e) => setItem(i, 'name', e.target.value)} />
+                <input className={cell} placeholder="Item description" list="qmaster-items" value={it.name} onChange={(e) => onItemName(i, e.target.value)} />
                 <input className={`${cell} text-center`} type="number" value={it.qty} onChange={(e) => setItem(i, 'qty', e.target.value)} />
                 <input className={`${cell} text-right`} type="number" placeholder="0" value={it.rate} onChange={(e) => setItem(i, 'rate', e.target.value)} />
                 <span className="text-right text-sm font-semibold text-ink">{sar(Math.round((Number(it.qty) || 0) * (Number(it.rate) || 0)))}</span>
