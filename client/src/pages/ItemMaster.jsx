@@ -64,7 +64,12 @@ export default function ItemMaster() {
               {rows.map((i) => (
                 <tr key={i.id} onClick={() => setView(i.id)} className="cursor-pointer hover:bg-slate-50/60">
                   <td className="td font-semibold text-brand-600">{i.item_code}</td>
-                  <td className="td font-medium text-ink">{i.item_name}{i.variant_of && <span className="ml-1 text-[10px] text-violet-500">variant</span>}</td>
+                  <td className="td font-medium text-ink">
+                    <div className="flex items-center gap-2">
+                      {i.image_url ? <img src={i.image_url} alt="" className="h-8 w-8 shrink-0 rounded border border-slate-200 object-cover" /> : <span className="grid h-8 w-8 shrink-0 place-items-center rounded border border-dashed border-slate-200 text-[8px] text-slate-300">IMG</span>}
+                      <span>{i.item_name}{i.variant_of && <span className="ml-1 text-[10px] text-violet-500">variant</span>}</span>
+                    </div>
+                  </td>
                   <td className="td text-slate-500">{i.product_family || '—'}</td>
                   <td className="td text-slate-500">{i.category || '—'}</td>
                   <td className="td text-slate-500">{i.brand || '—'}</td>
