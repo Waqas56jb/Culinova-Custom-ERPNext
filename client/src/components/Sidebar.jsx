@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Users2, Target, FileText, ClipboardList, Building2,
   FolderKanban, ShoppingCart, Boxes, Wallet, HardHat, Wrench,
-  X, Sparkles, MessageSquare, Truck, Receipt, BarChart3, Coins, Ticket, CalendarClock, UserCheck, Lock,
+  X, Sparkles, MessageSquare, Truck, Receipt, BarChart3, Coins, Ticket, CalendarClock, UserCheck, Lock, Package,
 } from 'lucide-react'
 import { useData } from '../store/DataContext.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
@@ -30,6 +30,7 @@ const sections = [
   ] },
   { title: 'Warehouse / Stock', panel: 'warehouse', items: [
     { to: '/stock/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { to: '/stock/item-master', label: 'Item Master', icon: Package },
     { to: '/stock/items', label: 'Stock / Items', icon: Boxes },
     { to: '/stock/receipts', label: 'Goods Receipt', icon: Truck },
     { to: '/stock/delivery', label: 'Delivery Notes', icon: ClipboardList },

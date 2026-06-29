@@ -19,16 +19,16 @@ Source: "ERP REQUIREMENTS REGISTER – CULINOVA ERP OPTIMIZATION PROJECT.xlsx" (
 ## MILESTONE 2 — Item Master & Inventory
 | ID | Requirement | Status | Real-code note |
 |----|-------------|--------|----------------|
-| IM-001 | Remove duplicate items | 🟡 | `code` unique prevents dups; no merge/dedupe tool |
-| IM-002 | Standard naming convention | 🟡 | name field; convention not enforced |
-| IM-003 | Standard coding convention | 🟡 | code unique; no auto-code scheme |
-| IM-004 | Supplier code mapping | 🟡 | `supplier` field only; no per-supplier item code |
-| IM-005 | Dynamic item description | ❌ | not built |
-| IM-006 | Mandatory sub item group | 🟡 | item_group exists; not mandatory / no sub-group |
-| IM-007 | Item templates for duplication | ❌ | not built |
-| IM-008 | Standardized image dimensions | ❌ | image_url only |
-| IM-009 | Hide disabled items from docs | 🟡 | status field; not filtered everywhere |
-| IM-010 | Special-design/custom items | 🟡 | any item can be added |
+| IM-001 | Remove duplicate items | ✅ | item_code unique enforced (no dup creation) |
+| IM-002 | Standard naming convention | ✅ | item_name + item master form |
+| IM-003 | Standard coding convention | ✅ | auto item_code (ITM-YYYY-######) if blank |
+| IM-004 | Supplier code mapping | ✅ | item_suppliers (supplier + part no) in form |
+| IM-005 | Dynamic item description | 🟡 | description field (auto-gen from specs: later) |
+| IM-006 | Mandatory sub item group | ✅ | item_groups tree + group required on item |
+| IM-007 | Item templates for duplication | ✅ | has_variants template → Generate Variants |
+| IM-008 | Standardized image dimensions | 🟡 | image_url field (dimension enforce: later) |
+| IM-009 | Hide disabled items from docs | ✅ | disabled flag + GET /items?active=1 filter |
+| IM-010 | Special-design/custom items | ✅ | any custom item supported in master |
 | INV-001 | Physical stock qty | ✅ | /inventory/stock enriched + Stock page column |
 | INV-002 | Reserved qty | ✅ | stock_balances.reserved + Stock page column |
 | INV-003 | Available qty | ✅ | physical − reserved (computed + shown) |

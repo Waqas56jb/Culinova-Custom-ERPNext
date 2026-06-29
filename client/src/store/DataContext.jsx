@@ -71,6 +71,10 @@ export function DataProvider({ children }) {
   const [chatMessages, setChatMessages] = useState([])
   const [customerDir, setCustomerDir] = useState([])
   const [team, setTeam] = useState([])
+  const [items, setItems] = useState([])              // Item Master (full ERPNext-style)
+  const [itemGroups, setItemGroups] = useState([])
+  const [brands, setBrands] = useState([])
+  const [itemAttributes, setItemAttributes] = useState([])
   const [payrollStatus, setPayrollStatus] = useState('Pending')
 
   // resource registry: key → { ep, set, map, panel }
@@ -136,10 +140,29 @@ export function DataProvider({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [panels])
 
+  const loadItems = useCallback(async () => {
+    try { setItems(await api('/items') || []) } catch { setItems([]) }
+    try { setItemGroups(await api('/masters/item-groups') || []) } catch { setItemGroups([]) }
+    try { setBrands(await api('/masters/brands') || []) } catch { setBrands([]) }
+    try { setItemAttributes(await api('/masters/item-attributes') || []) } catch { setItemAttributes([]) }
+  }, [])
+
   const loadAll = useCallback(async () => {
-    await Promise.all([...Object.keys(SOURCES).map((k) => reload(k)), loadProjects(), loadQuotations(), loadChat()])
+    await Promise.all([...Object.keys(SOURCES).map((k) => reload(k)), loadProjects(), loadQuotations(), loadChat(), loadItems()])
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reload, loadProjects, loadQuotations, loadChat])
+  }, [reload, loadProjects, loadQuotations, loadChat, loadItems])
+
+  // ── ITEM MASTER (ERPNext-style) ──
+  const getItem = (id) => api(`/items/${id}`)
+  const createItem = async (body) => { const r = await post('items', body); await loadItems(); return r }
+  const updateItem = async (id, body) => { const r = await patch('items', id, body); await loadItems(); return r }
+  const deleteItem = async (id) => { await del('items', id); await loadItems() }
+  const generateVariants = async (id, combinations) => { const r = await api(`/items/${id}/variants`, { method: 'POST', body: { combinations } }); await loadItems(); return r }
+  const addItemPrice = async (id, body) => { const r = await api(`/items/${id}/prices`, { method: 'POST', body }); return r }
+  const deleteItemPrice = async (priceId) => api(`/items/prices/${priceId}`, { method: 'DELETE' })
+  const addItemGroup = async (body) => { const r = await api('/masters/item-groups', { method: 'POST', body }); await loadItems(); return r }
+  const addBrand = async (body) => { const r = await api('/masters/brands', { method: 'POST', body }); await loadItems(); return r }
+  const addItemAttribute = async (body) => { const r = await api('/masters/item-attributes', { method: 'POST', body }); await loadItems(); return r }
 
   // ── SALES CHAT (replies to customers) ──
   const sendChatReply = async (customer_email, customer_name, body, attachment) => { await post('sales/messages', { customer_email, customer_name, body, attachment }); await loadChat() }
@@ -287,6 +310,8 @@ export function DataProvider({ children }) {
     suppliers, rfqs, purchaseOrders, warehouses, stockItems, deliveryNotes,
     invoices, payables, payments,
     snags, commissioning, tickets, visits, contracts, employees, leaves, interactions, chatMessages, customerDir, team, payrollStatus,
+    items, itemGroups, brands, itemAttributes,
+    getItem, createItem, updateItem, deleteItem, generateVariants, addItemPrice, deleteItemPrice, addItemGroup, addBrand, addItemAttribute,
     reload, loadAll,
     addLead, addOpportunity, lostOpportunity, wonOpportunity, addInteraction, addQuotation, updateQuotation, addOrder, addCustomer, convertLead, checkAvailability,
     approveQuotation, rejectQuotation, sendQuotation, acceptQuotation, lostQuotation,
