@@ -13,7 +13,7 @@ const days = (d) => (d ? Math.max(0, Math.floor((Date.now() - new Date(d).getTim
 // INV-001..005: enriched stock — physical, reserved, available, incoming, aging.
 r.get('/stock', authRequired, authorize('warehouse', 'read'), asyncWrap(async (req, res) => {
   const [{ data: bals }, { data: pos }] = await Promise.all([
-    supabase.from('stock_balances').select('*, items(name, code, item_group, reorder_level, selling_rate, cost, uom)'),
+    supabase.from('stock_balances').select('*, items(name, code, item_group, reorder_level, selling_rate, standard_rate, cost, uom)'),
     supabase.from('purchase_orders').select('item_name, qty, status'),
   ])
   const incomingByName = {}
@@ -27,7 +27,7 @@ r.get('/stock', authRequired, authorize('warehouse', 'read'), asyncWrap(async (r
       physical, reserved, available: physical - reserved,
       incoming: incomingByName[name.toLowerCase()] || 0,
       aging_days: days(b.received_at), reorder_level: Number(b.items?.reorder_level) || 0,
-      rate: Number(b.items?.selling_rate) || 0, cost: Number(b.items?.cost) || 0, uom: b.items?.uom || 'Nos',
+      rate: Number(b.items?.standard_rate) || Number(b.items?.selling_rate) || 0, cost: Number(b.items?.cost) || 0, uom: b.items?.uom || 'Nos',
     }
   })
   res.json(rows)

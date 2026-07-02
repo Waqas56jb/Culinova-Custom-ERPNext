@@ -7,6 +7,7 @@ import { useData } from '../store/DataContext.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
 import ItemForm from '../components/ItemForm.jsx'
 import QuickItemForm from '../components/QuickItemForm.jsx'
+import ItemImportExport from '../components/ItemImportExport.jsx'
 import ItemView from '../components/ItemView.jsx'
 import ImageLightbox from '../components/ImageLightbox.jsx'
 
@@ -32,6 +33,7 @@ export default function ItemMaster() {
   return (
     <>
       <PageHeader title="Item Master" subtitle="Central catalogue — created by Warehouse, used by every panel">
+        {canEdit && <ItemImportExport />}
         {canEdit && <button className="btn-ghost" onClick={() => setMasters(true)}><Settings2 size={16} /> Masters</button>}
         {canEdit && <button className="btn-ghost" onClick={() => setForm({ open: true, id: null })}>Advanced</button>}
         {canEdit && <button className="btn-primary" onClick={() => setQuick(true)}><Plus size={16} /> New Item</button>}

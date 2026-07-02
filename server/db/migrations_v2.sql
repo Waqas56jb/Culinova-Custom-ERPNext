@@ -120,3 +120,21 @@ alter table projects   add column if not exists notes text;
 
 -- ---- NOTIFICATIONS (announcements + discount approval) ----
 create table if not exists notifications (id uuid primary key default gen_random_uuid(), user_id uuid references users(id) on delete cascade, title text, body text not null, sender text, read boolean default false, type text, ref_type text, ref_id uuid, action_status text, created_at timestamptz default now());
+
+-- ---- ITEM MASTER 2.0 (Ali spec: brand factors, families, price lists, pricing, import) ----
+alter table brands add column if not exists currency text default 'SAR';
+alter table brands add column if not exists exchange_factor numeric default 1;
+alter table brands add column if not exists price_factor numeric default 1;
+create table if not exists product_families (id uuid primary key default gen_random_uuid(), name text unique not null, category text, sub_category text, datasheet_url text, image_url text, specs text, created_at timestamptz default now());
+create table if not exists supplier_price_lists (id uuid primary key default gen_random_uuid(), name text, brand text, currency text, year text, created_at timestamptz default now());
+create table if not exists price_list_items (id uuid primary key default gen_random_uuid(), list_id uuid references supplier_price_lists(id) on delete cascade, brand text, model text, supplier_price numeric, created_at timestamptz default now());
+create table if not exists item_pricing_history (id uuid primary key default gen_random_uuid(), item_id uuid references items(id) on delete cascade, brand text, model text, cost numeric, selling_price numeric, source text, created_by uuid references users(id), created_at timestamptz default now());
+alter table items add column if not exists description text;
+alter table items add column if not exists product_family text;
+alter table items add column if not exists category text;
+alter table items add column if not exists sub_category text;
+alter table items add column if not exists supplier_price numeric;
+alter table items add column if not exists landed_cost numeric;
+alter table items add column if not exists selling_price numeric;
+alter table items add column if not exists gp_percent numeric;
+alter table items add column if not exists eta_days int;

@@ -8,12 +8,19 @@ import { stockMovement } from '../data/stockData.js'
 import { useData } from '../store/DataContext.jsx'
 
 export default function StockDashboard() {
-  const { stockItems, warehouses } = useData()
-  const totalValue = stockItems.reduce((s, it) => s + it.qty * it.rate, 0)
-  const low = stockItems.filter((it) => it.qty > 0 && it.qty <= it.reorder)
-  const out = stockItems.filter((it) => it.qty === 0)
+  const { items, stockItems, warehouses } = useData()
+  // catalogue SKUs come from the Item Master; on-hand qty joins from stock balances → live sync
+  const balByName = {}
+  for (const s of stockItems) { const k = (s.name || '').toLowerCase(); const b = balByName[k] || (balByName[k] = { physical: 0, available: 0 }); b.physical += Number(s.physical ?? s.qty) || 0; b.available += Number(s.available ?? s.qty) || 0 }
+  const skus = (items || []).filter((i) => i.is_stock_item && !i.has_variants).map((i) => {
+    const b = balByName[(i.item_name || '').toLowerCase()] || { physical: 0, available: 0 }
+    return { code: i.item_code, name: i.item_name, group: i.product_family || i.category || 'Other', qty: b.physical, available: b.available, rate: Number(i.cost) || Number(i.standard_rate) || 0, reorder: Number(i.safety_stock) || 0, uom: i.stock_uom || 'Nos', warehouse: '—' }
+  })
+  const totalValue = skus.reduce((s, it) => s + it.qty * it.rate, 0)
+  const low = skus.filter((it) => it.qty > 0 && it.qty <= it.reorder)
+  const out = skus.filter((it) => it.qty <= 0)
 
-  const byGroup = Object.values(stockItems.reduce((acc, it) => {
+  const byGroup = Object.values(skus.reduce((acc, it) => {
     acc[it.group] = acc[it.group] || { name: it.group, value: 0 }
     acc[it.group].value += Math.round((it.qty * it.rate) / 1000)
     return acc
@@ -24,8 +31,8 @@ export default function StockDashboard() {
       <PageHeader title="Stock Dashboard" subtitle="Inventory value, movement & reorder alerts" />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="Total Stock Value" value={sar(totalValue)} sub={`${stockItems.length} items`} icon={Boxes} accent="brand" />
-        <KpiCard label="Stock Items" value={stockItems.length} sub="active SKUs" icon={Layers} accent="violet" />
+        <KpiCard label="Total Stock Value" value={sar(totalValue)} sub={`${skus.length} items`} icon={Boxes} accent="brand" />
+        <KpiCard label="Stock Items" value={skus.length} sub="active SKUs" icon={Layers} accent="violet" />
         <KpiCard label="Warehouses" value={warehouses.length} sub="locations" icon={Building2} accent="emerald" />
         <KpiCard label="Low / Out of Stock" value={low.length + out.length} sub="need reorder" icon={AlertTriangle} accent="gold" />
       </div>

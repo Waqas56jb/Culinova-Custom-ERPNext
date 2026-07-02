@@ -162,6 +162,7 @@ export function DataProvider({ children }) {
   const updateItem = async (id, body) => { const r = await patch('items', id, body); await loadItems(); return r }
   const deleteItem = async (id) => { await del('items', id); await loadItems() }
   const generateVariants = async (id, combinations) => { const r = await api(`/items/${id}/variants`, { method: 'POST', body: { combinations } }); await loadItems(); return r }
+  const importItems = async (rows) => { const r = await api('/items/import', { method: 'POST', body: { rows } }); await loadItems(); return r }
   const addItemPrice = async (id, body) => { const r = await api(`/items/${id}/prices`, { method: 'POST', body }); return r }
   const deleteItemPrice = async (priceId) => api(`/items/prices/${priceId}`, { method: 'DELETE' })
   const addItemGroup = async (body) => { const r = await api('/masters/item-groups', { method: 'POST', body }); await loadItems(); return r }
@@ -320,7 +321,7 @@ export function DataProvider({ children }) {
     invoices, payables, payments,
     snags, commissioning, tickets, visits, contracts, employees, leaves, interactions, chatMessages, customerDir, team, payrollStatus,
     items, itemGroups, brands, itemAttributes, productFamilies, priceLists,
-    getItem, createItem, updateItem, deleteItem, generateVariants, addItemPrice, deleteItemPrice, addItemGroup, addBrand, updateBrand, addItemAttribute, addProductFamily, addPriceList, getAlternatives,
+    getItem, createItem, updateItem, deleteItem, generateVariants, importItems, addItemPrice, deleteItemPrice, addItemGroup, addBrand, updateBrand, addItemAttribute, addProductFamily, addPriceList, getAlternatives,
     reload, loadAll,
     addLead, addOpportunity, lostOpportunity, wonOpportunity, addInteraction, addQuotation, updateQuotation, addOrder, addCustomer, convertLead, checkAvailability, getOrderItems,
     approveQuotation, rejectQuotation, sendQuotation, acceptQuotation, lostQuotation,
