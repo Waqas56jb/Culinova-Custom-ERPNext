@@ -191,40 +191,88 @@ r.delete('/prices/:priceId', authRequired, authorize('warehouse', 'update'), asy
   await supabase.from('item_prices').delete().eq('id', req.params.priceId); res.json({ ok: true })
 }))
 
-// ── BULK IMPORT (CSV/Excel) — row-level validation, same naming/pricing/dup rules ──
-const bool = (v, def) => (v == null || v === '' ? def : ['true', '1', 'yes', 'y'].includes(String(v).toLowerCase()))
-async function importItemRow(p, user) {
+// ── BULK IMPORT (CSV/Excel) — accepts our simple template OR a full ERPNext export ──
+const bool = (v, def) => (v == null || v === '' ? def : ['1', 'true', 'yes', 'y'].includes(String(v).trim().toLowerCase()))
+const numOrNull = (v) => (v == null || v === '' || isNaN(Number(v)) ? null : Number(v))
+
+// Map many header styles (ERPNext export headers + our template headers) → internal fields.
+const HEADER_MAP = {
+  'item code': 'item_code', item_code: 'item_code',
+  'item name': 'item_name', item_name: 'item_name',
+  'item group': 'category', category: 'category',
+  'sub item group': 'sub_category', 'sub category': 'sub_category', sub_category: 'sub_category',
+  brand: 'brand', model: 'model', 'product family': 'product_family', product_family: 'product_family',
+  'default unit of measure': 'stock_uom', 'stock uom': 'stock_uom', stock_uom: 'stock_uom', uom: 'stock_uom',
+  description: 'description',
+  image: 'image_url', image_url: 'image_url',
+  'specs sheet': 'datasheet_url', datasheet_url: 'datasheet_url', 'datasheet url': 'datasheet_url',
+  'standard selling rate': 'standard_rate', 'selling price': 'selling_price', selling_price: 'selling_price',
+  'valuation rate': 'valuation_rate', 'landed cost': 'landed_cost', cost: 'cost',
+  'last purchase rate': 'last_purchase_rate', 'opening stock': 'opening_stock',
+  disabled: 'disabled', 'maintain stock': 'is_stock_item',
+  'allow purchase': 'is_purchase_item', 'allow sales': 'is_sales_item',
+  'max discount (%)': 'max_discount', 'max discount': 'max_discount',
+  'warranty period (in days)': 'warranty_period', 'country of origin': 'country_of_origin',
+  'company (item defaults)': 'def_company',
+  'default income account (item defaults)': 'def_income',
+  'default expense account (item defaults)': 'def_expense',
+  'default warehouse (item defaults)': 'def_warehouse',
+  'default selling cost center (item defaults)': 'def_sell_cc',
+}
+function normalizeRow(raw) {
+  const o = {}
+  for (const [k, v] of Object.entries(raw)) {
+    const key = HEADER_MAP[String(k).trim().toLowerCase()]
+    if (key && (o[key] === undefined || o[key] === '')) o[key] = typeof v === 'string' ? v.trim() : v
+  }
+  if (o.cost == null || o.cost === '') o.cost = o.landed_cost ?? o.valuation_rate           // cost ← landed cost / valuation
+  if (o.selling_price == null || o.selling_price === '') o.selling_price = o.standard_rate    // selling ← standard selling rate
+  return o
+}
+
+async function importItemRow(raw, user) {
+  const p = normalizeRow(raw)
   const brand = (p.brand || '').trim(), model = (p.model || '').trim()
-  if ((!brand || !model) && !(p.item_name || '').trim()) throw new Error('Brand + Model (or Item Name) required')
+  const givenName = (p.item_name || '').trim()
+  if (!givenName && (!brand || !model)) throw new Error('Item Name (or Brand + Model) required')
   if (brand && model) {
     const { data: dup } = await supabase.from('items').select('id').ilike('brand', brand).ilike('model', model).limit(1).maybeSingle()
     if (dup) throw new Error(`Duplicate — ${brand} ${model} already exists`)
   }
-  const auto = await resolveItemAuto({ brand, model, product_family: p.product_family, item_name: p.item_name })
-  const name = (p.item_name || auto.name || '').trim()
+  const auto = await resolveItemAuto({ brand, model, product_family: p.product_family, item_name: givenName })
+  const name = (givenName || auto.name || '').trim()
   if (!name) throw new Error('Could not resolve Item Name')
   const item_code = (p.item_code || '').trim() || num()
+
+  // supplier price list → auto pricing; otherwise take the values from the file
   const pricing = auto.supplier_price != null
     ? { supplier_price: auto.supplier_price, landed_cost: auto.landed_cost, cost: auto.landed_cost, selling_price: auto.selling_price, standard_rate: auto.selling_price, gp_percent: auto.gp_percent }
-    : {}
-  if (auto.supplier_price == null) { // manual price columns (only when no price-list match)
-    if (p.cost != null && p.cost !== '') pricing.cost = Number(p.cost)
-    const sp = p.selling_price ?? p.standard_rate
-    if (sp != null && sp !== '') pricing.standard_rate = Number(sp)
-  }
+    : { cost: numOrNull(p.cost), landed_cost: numOrNull(p.landed_cost ?? p.cost), valuation_rate: numOrNull(p.valuation_rate), standard_rate: numOrNull(p.selling_price), selling_price: numOrNull(p.selling_price) }
+
   const row = {
     item_code, code: item_code, name, item_name: name,
     brand: brand || null, model: model || null, product_family: (p.product_family || '').trim() || null,
     category: (p.category || '').trim() || null, sub_category: (p.sub_category || '').trim() || null,
+    item_group: (p.category || '').trim() || null,
     datasheet_url: (p.datasheet_url || '').trim() || null, image_url: (p.image_url || '').trim() || null,
     stock_uom: (p.stock_uom || '').trim() || 'Nos', description: (p.description || '').trim() || null,
+    opening_stock: numOrNull(p.opening_stock) || 0,
+    warranty_period: p.warranty_period != null && p.warranty_period !== '' ? String(p.warranty_period) : null,
+    country_of_origin: (p.country_of_origin || '').trim() || null,
+    max_discount: numOrNull(p.max_discount) || 0, last_purchase_rate: numOrNull(p.last_purchase_rate) || 0,
+    disabled: bool(p.disabled, false),
     is_stock_item: bool(p.is_stock_item, true), is_sales_item: bool(p.is_sales_item, true), is_purchase_item: bool(p.is_purchase_item, true),
     ...pricing,
   }
   const { data: item, error } = await supabase.from('items').insert(row).select().single()
   if (error) throw new Error(error.code === '23505' ? `Duplicate item code ${item_code}` : error.message)
+
+  // Item Defaults (company / accounts / warehouse) from the ERPNext columns
+  if (p.def_company || p.def_warehouse || p.def_income) {
+    await supabase.from('item_defaults').insert({ item_id: item.id, company: p.def_company || null, default_warehouse: p.def_warehouse || null, income_account: p.def_income || null, expense_account: p.def_expense || null, selling_cost_center: p.def_sell_cc || null })
+  }
   if (row.cost != null || row.standard_rate != null) {
-    await supabase.from('item_pricing_history').insert({ item_id: item.id, brand, model, cost: row.cost ?? null, selling_price: row.standard_rate ?? null, source: auto.supplier_price != null ? 'price-list' : 'manual', created_by: user.id })
+    await supabase.from('item_pricing_history').insert({ item_id: item.id, brand: brand || null, model: model || null, cost: row.cost ?? null, selling_price: row.standard_rate ?? null, source: auto.supplier_price != null ? 'price-list' : 'imported', created_by: user.id })
   }
   return item
 }
@@ -236,7 +284,7 @@ r.post('/import', authRequired, authorize('warehouse', 'create'), asyncWrap(asyn
   const errors = []
   for (let i = 0; i < rows.length; i++) {
     try { await importItemRow(rows[i], req.user); created++ }
-    catch (e) { errors.push({ row: i + 2, item: `${rows[i].brand || ''} ${rows[i].model || ''}`.trim() || rows[i].item_name || '', error: e.message }) }
+    catch (e) { errors.push({ row: i + 2, item: (rows[i]['Item Name'] || rows[i].item_name || rows[i]['Item Code'] || rows[i].item_code || '').toString().trim(), error: e.message }) }
   }
   await logAudit(req.user, 'item', null, 'imported', { created, failed: errors.length }).catch(() => {})
   res.json({ total: rows.length, created, failed: errors.length, errors })
