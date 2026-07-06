@@ -49,6 +49,9 @@ const blank = () => ({
   sales_uom: '', max_discount: 0, grant_commission: true,
   purchase_uom: '', min_order_qty: 0, lead_time_days: 0, last_purchase_rate: 0, safety_stock: 0, delivered_by_supplier: false,
   country_of_origin: '', customs_tariff_number: '', eta_days: '',
+  dimensions: '', power_type: '', product_type: 'Item', currency: '',
+  supplier_price: '', exchange_factor: '', price_factor: '', add_margin_pct: 0, special_offer_pct: 0, avg_cost: 0,
+  show_room: false, local_purchasing: false, alternatives_note: '',
   has_variants: false, variant_based_on: 'Item Attribute',
   is_sub_contracted_item: false, default_bom: '', production_capacity: '',
   inspection_required_before_purchase: false, inspection_required_before_delivery: false, quality_inspection_template: '',
@@ -122,6 +125,14 @@ export default function ItemForm({ open, itemId, onClose }) {
           </Row>
           <Row>
             <Field label="Default Unit (Stock UOM)" value={v.stock_uom} onChange={on('stock_uom')} placeholder="Nos" />
+            <Field label="Dimensions" value={v.dimensions} onChange={on('dimensions')} placeholder="1200x900x850 mm" />
+          </Row>
+          <Row>
+            <Select label="Power Type" value={v.power_type} onChange={on('power_type')} options={['', 'Gas', 'Electric', 'Neutral', 'Steam']} />
+            <Select label="Product Type" value={v.product_type} onChange={on('product_type')} options={['Item', 'Service']} />
+          </Row>
+          <Row>
+            <Field label="Country of Origin" value={v.country_of_origin} onChange={on('country_of_origin')} placeholder="Italy / Turkey / Saudi Arabia" />
             <Field label="Image URL" value={v.image_url || ''} onChange={on('image_url')} placeholder="https://…" />
           </Row>
           <div>
@@ -183,8 +194,23 @@ export default function ItemForm({ open, itemId, onClose }) {
 
       {tab === 'Sales' && (
         <div className="space-y-4">
+          <div className="rounded-xl border border-slate-200 p-3">
+            <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Auto Pricing (Supplier → Landed → Selling)</p>
+            <Row>
+              <Field label="Currency" value={v.currency} onChange={on('currency')} placeholder="EUR / USD / SAR" />
+              <Field label="Supplier Net Price" type="number" value={v.supplier_price} onChange={on('supplier_price')} />
+            </Row>
+            <div className="mt-2"><Row>
+              <Field label="Exchange Factor" type="number" value={v.exchange_factor} onChange={on('exchange_factor')} hint="blank = use brand factor" />
+              <Field label="Price Factor" type="number" value={v.price_factor} onChange={on('price_factor')} hint="blank = use brand factor" />
+            </Row></div>
+            <div className="mt-2"><Row>
+              <Field label="Add Margin (%)" type="number" value={v.add_margin_pct} onChange={on('add_margin_pct')} />
+              <Field label="Special Offer (%)" type="number" value={v.special_offer_pct} onChange={on('special_offer_pct')} />
+            </Row></div>
+          </div>
           <Row>
-            <Field label="Standard Selling Rate" type="number" value={v.standard_rate} onChange={on('standard_rate')} hint="Creates an Item Price automatically" />
+            <Field label="Selling Price" type="number" value={v.standard_rate} onChange={on('standard_rate')} hint="auto-calculated if supplier price + factors given" />
             <Field label="Default Sales UOM" value={v.sales_uom} onChange={on('sales_uom')} />
           </Row>
           <Row>
@@ -261,11 +287,15 @@ export default function ItemForm({ open, itemId, onClose }) {
 
       {tab === 'More' && (
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <Check label="Show Room" val={v.show_room} onChange={on('show_room')} />
+            <Check label="Local Purchasing" val={v.local_purchasing} onChange={on('local_purchasing')} />
+            <Check label="Serial No Control" val={v.has_serial_no} onChange={on('has_serial_no')} />
             <Check label="Is Subcontracted Item" val={v.is_sub_contracted_item} onChange={on('is_sub_contracted_item')} />
             <Check label="Inspection before Purchase" val={v.inspection_required_before_purchase} onChange={on('inspection_required_before_purchase')} />
             <Check label="Inspection before Delivery" val={v.inspection_required_before_delivery} onChange={on('inspection_required_before_delivery')} />
           </div>
+          <TextArea label="Alternatives Note" rows={2} value={v.alternatives_note} onChange={on('alternatives_note')} placeholder="Equivalent products / alternatives…" />
           <Row>
             <Field label="Default BOM" value={v.default_bom} onChange={on('default_bom')} />
             <Field label="Production Capacity" type="number" value={v.production_capacity} onChange={on('production_capacity')} />

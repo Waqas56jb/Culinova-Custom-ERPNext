@@ -5,10 +5,11 @@ export const resources = {
   customers: { table: 'customers', panel: 'sales' },
   leads: { table: 'leads', panel: 'sales' },
   opportunities: { table: 'opportunities', panel: 'sales' },
-  'sales-orders': { table: 'sales_orders', panel: 'sales' },
+  // sales_orders are created only by the quotation→customer-accept chain — never via blanket CRUD
+  'sales-orders': { table: 'sales_orders', panel: 'sales', readOnly: true },
   interactions: { table: 'customer_interactions', panel: 'sales' },
-  // projects
-  projects: { table: 'projects', panel: 'projects' },
+  // projects  — contract_value is financial: only Management may change it
+  projects: { table: 'projects', panel: 'projects', protect: ['contract_value', 'budget_cost', 'committed_cost'] },
   'project-boq': { table: 'project_boq', panel: 'projects', orderBy: 'id' },
   'project-tasks': { table: 'project_tasks', panel: 'projects', orderBy: 'id' },
   variations: { table: 'variation_orders', panel: 'projects', orderBy: 'id' },

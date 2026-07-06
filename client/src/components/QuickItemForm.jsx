@@ -4,7 +4,8 @@ import { Modal, Field, Select, Row } from './Modal.jsx'
 import { useData } from '../store/DataContext.jsx'
 
 const CATEGORIES = ['Equipment', 'Custom Fabrication']
-const blank = () => ({ product_family: '', brand: '', model: '', category: '', sub_category: '', datasheet_url: '', image_url: '' })
+const POWER_TYPES = ['', 'Gas', 'Electric', 'Neutral', 'Steam', 'Water']
+const blank = () => ({ product_family: '', brand: '', model: '', category: '', sub_category: '', datasheet_url: '', image_url: '', dimensions: '', power_type: '', supplier_price: '' })
 
 // (11) auto-resize uploaded image to standard dimensions → compact data URL (one image only)
 export function resizeImage(file, max = 600) {
@@ -60,6 +61,11 @@ export default function QuickItemForm({ open, onClose }) {
           <Select label="Category" value={v.category} onChange={on('category')} options={['', ...CATEGORIES]} />
           <Field label="Sub Category" value={v.sub_category} onChange={on('sub_category')} placeholder="e.g. Cooking Equipment" />
         </Row>
+        <Row>
+          <Field label="Dimensions" value={v.dimensions} onChange={on('dimensions')} placeholder="e.g. 900×700×850 mm" />
+          <Select label="Power Type" value={v.power_type} onChange={on('power_type')} options={POWER_TYPES} />
+        </Row>
+        <Field label="Supplier Net Price" type="number" value={v.supplier_price} onChange={on('supplier_price')} placeholder="optional — overrides price list for auto-pricing" />
         <Field label="Datasheet URL" value={v.datasheet_url} onChange={on('datasheet_url')} placeholder="https://… (PDF datasheet)" />
         <div>
           <label className="mb-1.5 block text-xs font-semibold text-slate-600">Product Image <span className="font-normal text-muted">(one image — auto-resized)</span></label>

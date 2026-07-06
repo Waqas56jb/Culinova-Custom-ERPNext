@@ -8,10 +8,17 @@ import { logAudit } from '../../core/audit.js'
 
 const r = Router()
 const clean = (u) => { if (!u) return u; const c = { ...u }; delete c.password_hash; return c }
+// external portal accounts — their record ownership is keyed on the account NAME
+const PORTAL_ROLES = ['Customer', 'Supplier', 'Technician']
 
 // ---- self-service (any logged-in user) — change own email / password ----
 r.patch('/me', authRequired, asyncWrap(async (req, res) => {
   const patch = {}
+  // SECURITY: portal ownership (quotations/POs/visits) is matched by name — a portal user must NOT be able
+  // to rename into another user's records. Staff may rename freely (RBAC-scoped, not name-scoped).
+  if (req.body.name && req.body.name !== req.user.name && PORTAL_ROLES.includes(req.user.role)) {
+    return res.status(403).json({ error: 'Your account name cannot be changed here — please contact support.' })
+  }
   if (req.body.name) patch.name = req.body.name
   if (req.body.email) patch.email = req.body.email
   const { data, error } = await supabase.from('users').update(patch).eq('id', req.user.id).select().single()

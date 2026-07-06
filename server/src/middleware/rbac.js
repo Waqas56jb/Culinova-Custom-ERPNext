@@ -10,14 +10,19 @@ export function authorize(panel, action) {
   }
 }
 
-// Strip cost/GP fields from responses for non-management users (Sales rules #4/#20)
+// Strip cost/GP fields from responses for non-management users (Sales rules #4/#20).
+// Recurses into nested objects/arrays so line items (e.g. quotation_items[].cost) are stripped too.
 export function redactFinancials(role, data) {
   if (isManagement(role)) return data
-  const strip = (row) => {
-    if (!row || typeof row !== 'object') return row
-    const clone = { ...row }
-    restrictedFields.forEach((f) => delete clone[f])
+  const strip = (val) => {
+    if (Array.isArray(val)) return val.map(strip)
+    if (!val || typeof val !== 'object') return val
+    const clone = {}
+    for (const [k, v] of Object.entries(val)) {
+      if (restrictedFields.includes(k)) continue
+      clone[k] = (v && typeof v === 'object') ? strip(v) : v
+    }
     return clone
   }
-  return Array.isArray(data) ? data.map(strip) : strip(data)
+  return strip(data)
 }

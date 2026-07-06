@@ -32,15 +32,18 @@ r.get('/brands', authRequired, asyncWrap(async (req, res) => {
 }))
 r.post('/brands', authRequired, authorize('warehouse', 'create'), asyncWrap(async (req, res) => {
   const b = req.body
-  const { data, error } = await supabase.from('brands').insert({ brand: b.brand, description: b.description || null, currency: b.currency || 'SAR', exchange_factor: Number(b.exchange_factor) || 1, price_factor: Number(b.price_factor) || 1 }).select().single()
+  const { data, error } = await supabase.from('brands').insert({ brand: b.brand, description: b.description || null, currency: b.currency || 'SAR', exchange_factor: Number(b.exchange_factor) || 1, price_factor: Number(b.price_factor) || 1, country_of_origin: b.country_of_origin || null, country_of_purchase: b.country_of_purchase || null }).select().single()
   if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: error.message })
   res.status(201).json(data)
 }))
 r.patch('/brands/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async (req, res) => {
   const patch = {}
-  for (const f of ['description', 'currency', 'exchange_factor', 'price_factor']) if (req.body[f] != null) patch[f] = req.body[f]
+  for (const f of ['description', 'currency', 'exchange_factor', 'price_factor', 'country_of_origin', 'country_of_purchase']) if (req.body[f] != null) patch[f] = req.body[f]
   const { data, error } = await supabase.from('brands').update(patch).eq('id', req.params.id).select().single()
   if (error) throw error; res.json(data)
+}))
+r.delete('/brands/:id', authRequired, authorize('warehouse', 'delete'), asyncWrap(async (req, res) => {
+  await supabase.from('brands').delete().eq('id', req.params.id); res.json({ ok: true })
 }))
 
 // ── (2) PRODUCT FAMILIES ──

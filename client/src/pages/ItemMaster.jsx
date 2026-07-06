@@ -118,7 +118,7 @@ function MastersModal({ open, onClose }) {
   const [tab, setTab] = useState('Brands')
   const [msg, setMsg] = useState('')
   const ok = (t) => { setMsg(t); setTimeout(() => setMsg(''), 2500) }
-  const [br, setBr] = useState({ brand: '', currency: 'SAR', exchange_factor: 1, price_factor: 1 })
+  const [br, setBr] = useState({ brand: '', currency: 'SAR', exchange_factor: 1, price_factor: 1, country_of_origin: '', country_of_purchase: '' })
   const [fam, setFam] = useState({ name: '', category: 'Equipment', sub_category: '', datasheet_url: '' })
   const [pl, setPl] = useState({ name: '', brand: '', currency: '', year: '', rows: '' })
 
@@ -145,6 +145,8 @@ function MastersModal({ open, onClose }) {
             <Field label="Currency" value={br.currency} onChange={(e) => setBr((s) => ({ ...s, currency: e.target.value }))} placeholder="EUR" />
             <Field label="Exchange Factor" type="number" value={br.exchange_factor} onChange={(e) => setBr((s) => ({ ...s, exchange_factor: e.target.value }))} hint="supplier price × this = landed cost" />
             <Field label="Price Factor" type="number" value={br.price_factor} onChange={(e) => setBr((s) => ({ ...s, price_factor: e.target.value }))} hint="landed × this = selling price" />
+            <Field label="Country of Origin" value={br.country_of_origin} onChange={(e) => setBr((s) => ({ ...s, country_of_origin: e.target.value }))} placeholder="Italy" />
+            <Field label="Country of Purchase" value={br.country_of_purchase} onChange={(e) => setBr((s) => ({ ...s, country_of_purchase: e.target.value }))} placeholder="KSA" />
           </div>
           <button className="btn-primary !py-2" onClick={addBrand}>Add Brand</button>
           <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="bg-slate-50/60"><th className="th">Brand</th><th className="th">Currency</th><th className="th">Exchange</th><th className="th">Price Factor</th></tr></thead>

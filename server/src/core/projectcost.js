@@ -3,12 +3,21 @@ import { supabase } from '../config/supabase.js'
 // Single source of truth for project cost & progress — recomputed from the BOQ
 // every time an item changes (budget, actual cost, or install status). This keeps
 // committed_cost / actual_cost / progress (and therefore GP) ALWAYS real & in sync.
+const DEAD = ['Rejected', 'Cancelled', 'Draft', 'Void']
 export async function recomputeProject(projectId) {
   if (!projectId) return
-  const { data: boq } = await supabase.from('project_boq').select('budget_cost, actual_cost, status').eq('project_id', projectId)
+  const [{ data: boq }, { data: vars }, { data: pos }] = await Promise.all([
+    supabase.from('project_boq').select('budget_cost, actual_cost, status').eq('project_id', projectId),
+    supabase.from('variation_orders').select('amount, status').eq('project_id', projectId),
+    supabase.from('purchase_orders').select('amount, status').eq('project_id', projectId),
+  ])
   const rows = boq || []
-  const committed = rows.reduce((s, b) => s + (Number(b.budget_cost) || 0), 0)
-  const actual = rows.reduce((s, b) => s + (Number(b.actual_cost) || 0), 0)
+  // committed = planned BOQ budget + approved scope-change (variation) amounts
+  const varAmt = (vars || []).filter((v) => !DEAD.includes(v.status)).reduce((s, v) => s + (Number(v.amount) || 0), 0)
+  const committed = rows.reduce((s, b) => s + (Number(b.budget_cost) || 0), 0) + varAmt
+  // actual = booked BOQ actuals + real procurement spend (POs raised against this project)
+  const poAmt = (pos || []).filter((p) => !DEAD.includes(p.status)).reduce((s, p) => s + (Number(p.amount) || 0), 0)
+  const actual = rows.reduce((s, b) => s + (Number(b.actual_cost) || 0), 0) + poAmt
   const total = rows.length
   const done = rows.filter((b) => ['Installed', 'Delivered'].includes(b.status)).length
   const progress = total ? Math.round((done / total) * 100) : 0

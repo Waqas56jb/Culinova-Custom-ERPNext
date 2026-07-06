@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { supabase } from '../../config/supabase.js'
 import { authRequired } from '../../middleware/auth.js'
+import { redactFinancials } from '../../middleware/rbac.js'
 import { asyncWrap } from '../../middleware/error.js'
 import { uploadAttachment, signAttachments } from '../../core/chatfiles.js'
 import { ensureLeadAndOpportunity, advanceOpportunity, winOpportunityForCustomer, loseOpportunityForCustomer } from '../../core/crmflow.js'
@@ -11,10 +12,20 @@ import { reserveForSalesOrder } from '../../core/inventory.js'
 const r = Router()
 const num = (p) => `${p}-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`
 const rows = (x) => x?.data || []
+// escape LIKE wildcards so an identity like "%" can't match every row (ilike treats % / _ as wildcards)
+const esc = (s) => String(s || '').replace(/[\\%_]/g, '\\$&')
+// projects a technician is assigned to (snags have no owner column, so scope them by the tech's projects)
+const techProjectIds = async (userId) => {
+  const [{ data: b }, { data: t }] = await Promise.all([
+    supabase.from('project_boq').select('project_id').eq('assignee_id', userId),
+    supabase.from('project_tasks').select('project_id').eq('assignee_id', userId),
+  ])
+  return [...new Set([...(b || []), ...(t || [])].map((x) => x.project_id).filter(Boolean))]
+}
 
 // ── CUSTOMER PORTAL — only this customer's records (matched by name/email) ──
 r.get('/customer/overview', authRequired, asyncWrap(async (req, res) => {
-  const name = req.user.name
+  const name = esc(req.user.name)
   const [q, inv, pr, tk] = await Promise.all([
     supabase.from('quotations').select('*, quotation_items(*)').ilike('customer', name).order('created_at', { ascending: false }),
     supabase.from('invoices').select('*').ilike('customer', name).order('created_at', { ascending: false }),
@@ -33,7 +44,8 @@ r.get('/customer/overview', authRequired, asyncWrap(async (req, res) => {
     p.progress = total ? Math.round((done / total) * 100) : (p.progress || 0)
     p.boq = items
   }
-  res.json({ quotations: rows(q), invoices: rows(inv), projects, tickets: rows(tk) })
+  // never expose our cost / GP / margin to the customer — strip it (recursively, incl. quotation line items)
+  res.json({ quotations: redactFinancials(req.user.role, rows(q)), invoices: rows(inv), projects, tickets: rows(tk) })
 }))
 r.post('/customer/tickets', authRequired, asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('service_tickets').insert({ number: num('TKT'), customer: req.user.name, subject: req.body.subject, priority: req.body.priority || 'Medium' }).select().single()
@@ -70,6 +82,8 @@ r.post('/customer/quotations/:id/accept', authRequired, asyncWrap(async (req, re
   const { data: q } = await supabase.from('quotations').select('*, quotation_items(*)').eq('id', req.params.id).single()
   if (!ownsQuote(q, req.user)) return res.status(403).json({ error: 'Not your quotation' })
   if (q.status === 'Ordered') return res.status(422).json({ error: 'Already accepted' })
+  // an over-limit quotation still awaiting management approval cannot be turned into an order yet
+  if (q.approval_status === 'Pending' || q.status === 'Pending Approval') return res.status(422).json({ error: 'This quotation is pending internal approval and cannot be accepted yet.' })
   const { data: so, error: e1 } = await supabase.from('sales_orders').insert({ number: num('SO'), quotation_id: q.id, customer: q.customer, amount: q.total_amount }).select().single()
   if (e1) throw e1
   const handover = await projectFieldsFromQuote(q)
@@ -120,7 +134,7 @@ r.post('/customer/quotations/:id/concession', authRequired, asyncWrap(async (req
 const ownsDN = (dn, user) => dn && (dn.customer || '').toLowerCase() === (user.name || '').toLowerCase()
 
 r.get('/customer/deliveries', authRequired, asyncWrap(async (req, res) => {
-  const { data, error } = await supabase.from('delivery_notes').select('*').ilike('customer', req.user.name).order('created_at', { ascending: false })
+  const { data, error } = await supabase.from('delivery_notes').select('*').ilike('customer', esc(req.user.name)).order('created_at', { ascending: false })
   if (error) throw error
   res.json(data || [])
 }))
@@ -156,13 +170,13 @@ r.post('/customer/deliveries/:id/return', authRequired, asyncWrap(async (req, re
 
 // ── SUPPLIER PORTAL — open RFQs to quote + this supplier's POs/deliveries ──
 r.get('/supplier/overview', authRequired, asyncWrap(async (req, res) => {
-  const name = req.user.name
-  const [rfqs, pos, dn] = await Promise.all([
+  const name = esc(req.user.name)
+  const [rfqs, pos] = await Promise.all([
     supabase.from('rfqs').select('*').order('created_at', { ascending: false }),
     supabase.from('purchase_orders').select('*').ilike('supplier', name).order('created_at', { ascending: false }),
-    supabase.from('delivery_notes').select('*').order('created_at', { ascending: false }),
   ])
-  res.json({ rfqs: rows(rfqs), purchaseOrders: rows(pos), deliveries: rows(dn) })
+  // delivery_notes are customer delivery documents with no supplier link — never expose them to a supplier
+  res.json({ rfqs: rows(rfqs), purchaseOrders: rows(pos), deliveries: [] })
 }))
 r.post('/supplier/quote', authRequired, asyncWrap(async (req, res) => {
   const { rfq_id, quote } = req.body
@@ -175,24 +189,30 @@ r.patch('/supplier/po/:id', authRequired, asyncWrap(async (req, res) => {
   const patch = {}
   if (req.body.accepted != null) patch.accepted = req.body.accepted
   if (req.body.shipment) patch.shipment = req.body.shipment
-  const { data, error } = await supabase.from('purchase_orders').update(patch).eq('id', req.params.id).select().single()
+  // scope to THIS supplier's PO — otherwise any user could accept/ship another supplier's order (IDOR)
+  const { data, error } = await supabase.from('purchase_orders').update(patch).eq('id', req.params.id).ilike('supplier', esc(req.user.name)).select().maybeSingle()
   if (error) throw error
+  if (!data) return res.status(404).json({ error: 'Not your purchase order' })
   res.json(data)
 }))
 
 // ── TECHNICIAN PORTAL — tasks/visits assigned to this technician + snags ──
 r.get('/technician/overview', authRequired, asyncWrap(async (req, res) => {
-  const [tasks, snags, visits, boq] = await Promise.all([
+  const projIds = await techProjectIds(req.user.id)
+  const [tasks, visits, boq] = await Promise.all([
     supabase.from('project_tasks').select('*').eq('assignee_id', req.user.id).order('id', { ascending: false }),
-    supabase.from('snags').select('*').order('created_at', { ascending: false }),
-    supabase.from('maintenance_visits').select('*').ilike('technician', req.user.name).order('id', { ascending: false }),
+    supabase.from('maintenance_visits').select('*').ilike('technician', esc(req.user.name)).order('id', { ascending: false }),
     supabase.from('project_boq').select('*, projects(number, name, customer, location)').eq('assignee_id', req.user.id),
   ])
+  // snags have no owner column → scope to the projects this technician is assigned to
+  const snags = projIds.length ? await supabase.from('snags').select('*').in('project_id', projIds).order('created_at', { ascending: false }) : { data: [] }
   res.json({ tasks: rows(tasks), snags: rows(snags), visits: rows(visits), boq: rows(boq) })
 }))
 r.patch('/technician/task/:id', authRequired, asyncWrap(async (req, res) => {
-  const { data, error } = await supabase.from('project_tasks').update({ status: req.body.status, progress: req.body.progress }).eq('id', req.params.id).select().single()
+  // scope to a task assigned to this technician (IDOR guard)
+  const { data, error } = await supabase.from('project_tasks').update({ status: req.body.status, progress: req.body.progress }).eq('id', req.params.id).eq('assignee_id', req.user.id).select().maybeSingle()
   if (error) throw error
+  if (!data) return res.status(404).json({ error: 'Not your task' })
   res.json(data)
 }))
 // technician updates an assigned BOQ item's status → project progress/cost auto roll up
@@ -209,13 +229,18 @@ r.post('/technician/snag', authRequired, asyncWrap(async (req, res) => {
   res.status(201).json(data)
 }))
 r.patch('/technician/snag/:id', authRequired, asyncWrap(async (req, res) => {
-  const { data, error } = await supabase.from('snags').update({ status: req.body.status }).eq('id', req.params.id).select().single()
+  // only snags on a project this technician is assigned to
+  const projIds = await techProjectIds(req.user.id)
+  if (!projIds.length) return res.status(404).json({ error: 'Not your snag' })
+  const { data, error } = await supabase.from('snags').update({ status: req.body.status }).eq('id', req.params.id).in('project_id', projIds).select().maybeSingle()
   if (error) throw error
+  if (!data) return res.status(404).json({ error: 'Not your snag' })
   res.json(data)
 }))
 r.patch('/technician/visit/:id', authRequired, asyncWrap(async (req, res) => {
-  const { data, error } = await supabase.from('maintenance_visits').update({ status: req.body.status }).eq('id', req.params.id).select().single()
+  const { data, error } = await supabase.from('maintenance_visits').update({ status: req.body.status }).eq('id', req.params.id).ilike('technician', esc(req.user.name)).select().maybeSingle()
   if (error) throw error
+  if (!data) return res.status(404).json({ error: 'Not your visit' })
   res.json(data)
 }))
 

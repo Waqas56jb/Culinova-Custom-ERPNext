@@ -24,18 +24,20 @@ export async function reserveForSalesOrder({ items, sales_order_id, project_id, 
     if (!name || qty <= 0) continue
     const { data: item } = await supabase.from('items').select('id').ilike('name', name).limit(1).maybeSingle()
     if (!item) continue
-    const { data: bals } = await supabase.from('stock_balances').select('*').eq('item_id', item.id).order('qty', { ascending: false })
-    let bal = bals?.[0]
-    if (!bal) { const { data: nb } = await supabase.from('stock_balances').insert({ item_id: item.id, warehouse: 'Main Store', qty: 0, reserved: 0 }).select().single(); bal = nb }
-    await supabase.from('stock_balances').update({ reserved: (Number(bal.reserved) || 0) + qty }).eq('id', bal.id)
-    await supabase.from('stock_reservations').insert({ item_id: item.id, item_name: name, warehouse: bal.warehouse, qty, sales_order_id, project_id, status: 'Active', requested_by: userId })
+    // pick the warehouse with the most stock (else Main Store); reserve ATOMICALLY so concurrent
+    // acceptances can't lose updates and reserved can never go negative (see reserve_stock RPC).
+    const { data: bals } = await supabase.from('stock_balances').select('warehouse, qty').eq('item_id', item.id).order('qty', { ascending: false })
+    const warehouse = bals?.[0]?.warehouse || 'Main Store'
+    await supabase.rpc('reserve_stock', { p_item_id: item.id, p_warehouse: warehouse, p_qty: qty })
+    await supabase.from('stock_reservations').insert({ item_id: item.id, item_name: name, warehouse, qty, sales_order_id, project_id, status: 'Active', requested_by: userId })
   }
 }
 
 // INV-007 / SEC-006: release a reservation back to free stock (only after Ops approval).
+// Flip status FIRST, conditioned on it still being Active, so two concurrent releases can't
+// both subtract the same qty (double-release race). Only the winner does the atomic release.
 export async function releaseReservation(reservationId) {
-  const { data: rv } = await supabase.from('stock_reservations').select('*').eq('id', reservationId).single()
-  if (!rv || rv.status === 'Released') return
-  const { data: bal } = await supabase.from('stock_balances').select('*').eq('item_id', rv.item_id).eq('warehouse', rv.warehouse).maybeSingle()
-  if (bal) await supabase.from('stock_balances').update({ reserved: Math.max(0, (Number(bal.reserved) || 0) - (Number(rv.qty) || 0)) }).eq('id', bal.id)
+  const { data: rv } = await supabase.from('stock_reservations').update({ status: 'Released' }).eq('id', reservationId).in('status', ['Active', 'Release Requested']).select().maybeSingle()
+  if (!rv) return // already released / not found → nothing to free
+  await supabase.rpc('release_stock', { p_item_id: rv.item_id, p_warehouse: rv.warehouse, p_qty: Number(rv.qty) || 0 })
 }

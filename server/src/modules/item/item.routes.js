@@ -20,7 +20,7 @@ const CHILD = {
 // Sales & Engineering see selling price + availability + datasheets — never cost/supplier/margin.
 const FIN_ROLES = ['Management', 'System Admin', 'Operations', 'Finance', 'Operations Manager', 'Finance Manager']
 const canSeeCost = (u) => isManagement(u.role) || FIN_ROLES.includes(u.role) || canAccessPanel(u.role, 'warehouse') || canAccessPanel(u.role, 'procurement') || canAccessPanel(u.role, 'finance')
-const COST_FIELDS = ['cost', 'supplier_price', 'landed_cost', 'gp_percent', 'valuation_rate', 'last_purchase_rate']
+const COST_FIELDS = ['cost', 'supplier_price', 'landed_cost', 'gp_percent', 'valuation_rate', 'last_purchase_rate', 'avg_cost', 'price_factor', 'exchange_factor', 'add_margin_pct', 'special_offer_pct', 'calculated_sale_price']
 const redact = (u, item) => { if (canSeeCost(u) || !item) return item; const x = { ...item }; COST_FIELDS.forEach((f) => delete x[f]); return x }
 
 async function loadChildren(itemId) {
@@ -47,6 +47,8 @@ async function hasStock(itemId) {
   return (data || []).some((b) => Number(b.qty) || Number(b.reserved))
 }
 const num = () => `ITM-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`
+// form fields arrive as '' for blanks — Postgres rejects '' for numeric/date columns, so null them out
+const nullEmpty = (o) => { for (const k of Object.keys(o)) if (o[k] === '') o[k] = null; return o }
 
 // ── LIST (everyone with a panel can read & select; cost redacted by role) ──
 r.get('/', authRequired, asyncWrap(async (req, res) => {
@@ -63,6 +65,12 @@ r.get('/:id', authRequired, asyncWrap(async (req, res) => {
   const { data: item, error } = await supabase.from('items').select('*').eq('id', req.params.id).single()
   if (error) return res.status(404).json({ error: 'Item not found' })
   const children = await loadChildren(item.id)
+  // (#10) child tables also carry cost — hide buying prices, supplier rates and item-default accounts from non-cost roles
+  if (!canSeeCost(req.user)) {
+    children.prices = (children.prices || []).filter((p) => p.selling !== false && !p.buying)
+    children.suppliers = []
+    children.item_defaults = []
+  }
   res.json({ ...redact(req.user, item), ...children })
 }))
 
@@ -103,9 +111,9 @@ r.post('/', authRequired, authorize('warehouse', 'create'), asyncWrap(async (req
   const { ...cols } = stripChildren(p)
   // when a supplier price exists → auto cost/selling/GP; else keep user-entered (manual) values
   const pricing = auto.supplier_price != null
-    ? { supplier_price: auto.supplier_price, landed_cost: auto.landed_cost, cost: auto.landed_cost, selling_price: auto.selling_price, standard_rate: auto.selling_price, gp_percent: auto.gp_percent }
+    ? { supplier_price: auto.supplier_price, landed_cost: auto.landed_cost, cost: auto.landed_cost, calculated_sale_price: auto.calculated_sale_price, selling_price: auto.selling_price, standard_rate: auto.selling_price, gp_percent: auto.gp_percent }
     : {}
-  const row = { ...cols, ...pricing, item_code, code: item_code, name, item_name: name }
+  const row = nullEmpty({ ...cols, ...pricing, item_code, code: item_code, name, item_name: name })
   const { data: item, error } = await supabase.from('items').insert(row).select().single()
   if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: error.message })
 
@@ -142,11 +150,39 @@ r.patch('/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async 
   }
   const cols = stripChildren(p)
   if (p.item_name || p.name) { cols.name = p.item_name || p.name; cols.item_name = p.item_name || p.name }
-  const { data: item, error } = await supabase.from('items').update(cols).eq('id', cur.id).select().single()
+  // (#pricing) recompute the whole pricing chain whenever any pricing input changes — otherwise
+  // editing supplier price / a factor leaves landed/selling/GP stale. Uses current values for
+  // whatever the edit didn't touch. Only overrides when a supplier price is resolvable (auto path).
+  const PRICE_INPUTS = ['supplier_price', 'exchange_factor', 'price_factor', 'add_margin_pct', 'special_offer_pct', 'brand', 'model']
+  if (PRICE_INPUTS.some((f) => p[f] !== undefined)) {
+    const auto = await resolveItemAuto({
+      brand: p.brand ?? cur.brand, model: p.model ?? cur.model,
+      product_family: p.product_family ?? cur.product_family, item_name: cols.item_name ?? cur.item_name,
+      supplier_price: p.supplier_price ?? cur.supplier_price,
+      exchange_factor: p.exchange_factor ?? cur.exchange_factor, price_factor: p.price_factor ?? cur.price_factor,
+      add_margin_pct: p.add_margin_pct ?? cur.add_margin_pct, special_offer_pct: p.special_offer_pct ?? cur.special_offer_pct,
+    })
+    if (auto.supplier_price != null) {
+      Object.assign(cols, {
+        supplier_price: auto.supplier_price, landed_cost: auto.landed_cost, cost: auto.landed_cost,
+        calculated_sale_price: auto.calculated_sale_price, selling_price: auto.selling_price,
+        standard_rate: auto.selling_price, gp_percent: auto.gp_percent,
+      })
+    }
+  }
+  const { data: item, error } = await supabase.from('items').update(nullEmpty(cols)).eq('id', cur.id).select().single()
   if (error) throw error
   await replaceChildren(cur.id, p)
+  // (7) keep pricing history when a recompute changed cost/selling
+  if (cols.cost != null && (cols.cost !== cur.cost || cols.standard_rate !== cur.standard_rate)) {
+    await supabase.from('item_pricing_history').insert({ item_id: item.id, brand: item.brand || null, model: item.model || null, cost: cols.cost ?? null, selling_price: cols.standard_rate ?? null, source: 'edit', created_by: req.user.id })
+  }
   // propagate name/brand to Item Price (ERPNext on_update)
   await supabase.from('item_prices').update({ item_code: item.item_code }).eq('item_id', item.id)
+  // keep the auto "Standard Selling" price row in sync when the selling rate changed
+  if (item.standard_rate != null && item.standard_rate !== cur.standard_rate) {
+    await supabase.from('item_prices').update({ price_list_rate: Number(item.standard_rate) }).eq('item_id', item.id).eq('price_list', 'Standard Selling').eq('selling', true)
+  }
   await logAudit(req.user, 'item', item.id, 'updated', {})
   res.json({ ...item, ...(await loadChildren(item.id)) })
 }))
@@ -192,27 +228,36 @@ r.delete('/prices/:priceId', authRequired, authorize('warehouse', 'update'), asy
 }))
 
 // ── BULK IMPORT (CSV/Excel) — accepts our simple template OR a full ERPNext export ──
-const bool = (v, def) => (v == null || v === '' ? def : ['1', 'true', 'yes', 'y'].includes(String(v).trim().toLowerCase()))
+const bool = (v, def) => (v == null || v === '' ? def : ['1', 'true', 'yes', 'y', 'checked', 'active', 'able'].includes(String(v).trim().toLowerCase()))
 const numOrNull = (v) => (v == null || v === '' || isNaN(Number(v)) ? null : Number(v))
 
-// Map many header styles (ERPNext export headers + our template headers) → internal fields.
+// Map many header styles (CEO ideal sheet + ERPNext export + our template) → internal fields.
 const HEADER_MAP = {
   'item code': 'item_code', item_code: 'item_code',
-  'item name': 'item_name', item_name: 'item_name',
+  'item name': 'item_name', 'model name': 'item_name', item_name: 'item_name',
   'item group': 'category', category: 'category',
   'sub item group': 'sub_category', 'sub category': 'sub_category', sub_category: 'sub_category',
-  brand: 'brand', model: 'model', 'product family': 'product_family', product_family: 'product_family',
+  'product family': 'product_family', product_family: 'product_family',
+  brand: 'brand', model: 'model', 'model no.': 'model', 'model no': 'model',
+  'supplier net price': 'supplier_price', 'supplier price': 'supplier_price', supplier_price: 'supplier_price',
   'default unit of measure': 'stock_uom', 'stock uom': 'stock_uom', stock_uom: 'stock_uom', uom: 'stock_uom',
-  description: 'description',
+  description: 'description', dimensions: 'dimensions',
   image: 'image_url', image_url: 'image_url',
-  'specs sheet': 'datasheet_url', datasheet_url: 'datasheet_url', 'datasheet url': 'datasheet_url',
+  'specs sheet': 'datasheet_url', attachment: 'datasheet_url', datasheet_url: 'datasheet_url', 'datasheet url': 'datasheet_url',
   'standard selling rate': 'standard_rate', 'selling price': 'selling_price', selling_price: 'selling_price',
-  'valuation rate': 'valuation_rate', 'landed cost': 'landed_cost', cost: 'cost',
-  'last purchase rate': 'last_purchase_rate', 'opening stock': 'opening_stock',
-  disabled: 'disabled', 'maintain stock': 'is_stock_item',
+  'calculated sale price': 'calculated_sale_price',
+  'valuation rate': 'valuation_rate', 'landed cost': 'landed_cost', cost: 'cost', 'avg cost': 'avg_cost',
+  'last purchase': 'last_purchase_rate', 'last purchase rate': 'last_purchase_rate', 'opening stock': 'opening_stock',
+  'price factor': 'price_factor', 'exchange factor': 'exchange_factor',
+  'add margin %': 'add_margin_pct', 'add margin': 'add_margin_pct', 'special offer %': 'special_offer_pct', 'special offer': 'special_offer_pct',
+  currency: 'currency', 'country of origin': 'country_of_origin',
+  'power type': 'power_type', 'product type': 'product_type',
+  'show room': 'show_room', 'local purchasing': 'local_purchasing', 'alternatives note': 'alternatives_note',
+  'sn control': 'sn_control',
+  disabled: 'disabled', status: 'status_text', 'stock item': 'is_stock_item', 'maintain stock': 'is_stock_item',
   'allow purchase': 'is_purchase_item', 'allow sales': 'is_sales_item',
   'max discount (%)': 'max_discount', 'max discount': 'max_discount',
-  'warranty period (in days)': 'warranty_period', 'country of origin': 'country_of_origin',
+  'warranty period (in days)': 'warranty_period',
   'company (item defaults)': 'def_company',
   'default income account (item defaults)': 'def_income',
   'default expense account (item defaults)': 'def_expense',
@@ -234,20 +279,26 @@ async function importItemRow(raw, user) {
   const p = normalizeRow(raw)
   const brand = (p.brand || '').trim(), model = (p.model || '').trim()
   const givenName = (p.item_name || '').trim()
-  if (!givenName && (!brand || !model)) throw new Error('Item Name (or Brand + Model) required')
+  if (!givenName && (!brand || !model)) throw new Error('Item / Model Name (or Brand + Model) required')
   if (brand && model) {
     const { data: dup } = await supabase.from('items').select('id').ilike('brand', brand).ilike('model', model).limit(1).maybeSingle()
     if (dup) throw new Error(`Duplicate — ${brand} ${model} already exists`)
   }
-  const auto = await resolveItemAuto({ brand, model, product_family: p.product_family, item_name: givenName })
+  const auto = await resolveItemAuto({
+    brand, model, product_family: p.product_family, item_name: givenName, supplier_price: p.supplier_price,
+    exchange_factor: numOrNull(p.exchange_factor), price_factor: numOrNull(p.price_factor),
+    add_margin_pct: numOrNull(p.add_margin_pct), special_offer_pct: numOrNull(p.special_offer_pct),
+  })
   const name = (givenName || auto.name || '').trim()
   if (!name) throw new Error('Could not resolve Item Name')
   const item_code = (p.item_code || '').trim() || num()
 
-  // supplier price list → auto pricing; otherwise take the values from the file
+  // supplier net price known → full computed pricing chain; else take the file values
   const pricing = auto.supplier_price != null
-    ? { supplier_price: auto.supplier_price, landed_cost: auto.landed_cost, cost: auto.landed_cost, selling_price: auto.selling_price, standard_rate: auto.selling_price, gp_percent: auto.gp_percent }
-    : { cost: numOrNull(p.cost), landed_cost: numOrNull(p.landed_cost ?? p.cost), valuation_rate: numOrNull(p.valuation_rate), standard_rate: numOrNull(p.selling_price), selling_price: numOrNull(p.selling_price) }
+    ? { supplier_price: auto.supplier_price, landed_cost: auto.landed_cost, cost: auto.landed_cost, calculated_sale_price: auto.calculated_sale_price, selling_price: auto.selling_price, standard_rate: auto.selling_price, gp_percent: auto.gp_percent }
+    : { cost: numOrNull(p.cost), landed_cost: numOrNull(p.landed_cost ?? p.cost), valuation_rate: numOrNull(p.valuation_rate), calculated_sale_price: numOrNull(p.calculated_sale_price), standard_rate: numOrNull(p.selling_price), selling_price: numOrNull(p.selling_price) }
+
+  const disabledVal = (p.status_text != null && p.status_text !== '') ? /disable|inactive|^no$|^0$/i.test(String(p.status_text).trim()) : bool(p.disabled, false)
 
   const row = {
     item_code, code: item_code, name, item_name: name,
@@ -256,16 +307,29 @@ async function importItemRow(raw, user) {
     item_group: (p.category || '').trim() || null,
     datasheet_url: (p.datasheet_url || '').trim() || null, image_url: (p.image_url || '').trim() || null,
     stock_uom: (p.stock_uom || '').trim() || 'Nos', description: (p.description || '').trim() || null,
+    dimensions: (p.dimensions != null ? String(p.dimensions).trim() : '') || null,
+    power_type: (p.power_type || '').trim() || null, product_type: (p.product_type || '').trim() || 'Item',
+    currency: (p.currency || '').trim() || null,
+    add_margin_pct: numOrNull(p.add_margin_pct) || 0, special_offer_pct: numOrNull(p.special_offer_pct) || 0, avg_cost: numOrNull(p.avg_cost) || 0,
+    price_factor: numOrNull(p.price_factor), exchange_factor: numOrNull(p.exchange_factor),
+    show_room: bool(p.show_room, false), local_purchasing: bool(p.local_purchasing, false),
+    alternatives_note: (p.alternatives_note || '').trim() || null, has_serial_no: bool(p.sn_control, false),
     opening_stock: numOrNull(p.opening_stock) || 0,
     warranty_period: p.warranty_period != null && p.warranty_period !== '' ? String(p.warranty_period) : null,
     country_of_origin: (p.country_of_origin || '').trim() || null,
     max_discount: numOrNull(p.max_discount) || 0, last_purchase_rate: numOrNull(p.last_purchase_rate) || 0,
-    disabled: bool(p.disabled, false),
+    disabled: disabledVal,
     is_stock_item: bool(p.is_stock_item, true), is_sales_item: bool(p.is_sales_item, true), is_purchase_item: bool(p.is_purchase_item, true),
     ...pricing,
   }
   const { data: item, error } = await supabase.from('items').insert(row).select().single()
   if (error) throw new Error(error.code === '23505' ? `Duplicate item code ${item_code}` : error.message)
+
+  // Product Family: create the master record on the fly so it shows in dropdowns + comparison
+  if (row.product_family) {
+    const { data: fam } = await supabase.from('product_families').select('id').ilike('name', row.product_family).limit(1).maybeSingle()
+    if (!fam) await supabase.from('product_families').insert({ name: row.product_family, category: row.category || null, sub_category: row.sub_category || null })
+  }
 
   // Item Defaults (company / accounts / warehouse) from the ERPNext columns
   if (p.def_company || p.def_warehouse || p.def_income) {

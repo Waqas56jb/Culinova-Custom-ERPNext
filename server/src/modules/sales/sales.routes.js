@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { supabase } from '../../config/supabase.js'
 import { authRequired } from '../../middleware/auth.js'
 import { authorize, redactFinancials } from '../../middleware/rbac.js'
+import { isManagement } from '../../rbac/permissions.js'
 import { asyncWrap } from '../../middleware/error.js'
 import { logAudit } from '../../core/audit.js'
 import { uploadAttachment, signAttachments } from '../../core/chatfiles.js'
@@ -14,6 +15,15 @@ import { validateRequiredFields, computeFinancials, evaluateApproval, discountSo
 
 const r = Router()
 const num = (p) => `${p}-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`
+
+// The approval decision's reason can spell out the GP margin ("GP 18% < 20%") — never expose that to
+// a salesperson. Keep the needs-approval / blocked flags, drop any GP-bearing reason text + numbers.
+const safeApproval = (role, d) => {
+  if (isManagement(role) || !d) return d
+  const parts = String(d.reason || '').split(' · ').filter((s) => s && !/gp\b/i.test(s))
+  const { gp_percent, cost_amount, ...rest } = d
+  return { ...rest, reason: parts.join(' · ') || (d.needsApproval ? 'Sent for management approval' : null) }
+}
 
 // Resolve each line's COST from the Item Master (by name) when not explicitly given.
 // → Salesperson never enters/sees cost, yet GP can still be computed (rule #5).
@@ -146,7 +156,7 @@ r.post('/quotations', authRequired, authorize('sales', 'create'), asyncWrap(asyn
   await advanceOpportunity(q.customer, 'Quotation')
   if (decision.needsApproval) await notifyManagementApproval(q, req.user.name) // high discount → admin notification
   await logAudit(req.user, 'quotation', q.id, 'created', { number: q.number, status, gp: fin.gp_percent })
-  res.status(201).json({ ...redactFinancials(req.user.role, q), _approval: decision })
+  res.status(201).json({ ...redactFinancials(req.user.role, q), _approval: safeApproval(req.user.role, decision) })
 }))
 
 // ── EDIT — recomputes, re-evaluates approval, keeps revision history (#10) ──
@@ -197,7 +207,7 @@ r.patch('/quotations/:id', authRequired, authorize('sales', 'update'), asyncWrap
   await supabase.from('quotation_revisions').insert({ quotation_id: existing.id, revision: patch.revision, changed_by: req.user.id, changes: { action: 'edited', ...(fin || {}) } })
   if (decision?.needsApproval) await notifyManagementApproval(updated, req.user.name) // edit pushed it >20% → admin notification
   await logAudit(req.user, 'quotation', existing.id, 'edited', { revision: patch.revision })
-  res.json({ ...redactFinancials(req.user.role, updated), _approval: decision })
+  res.json({ ...redactFinancials(req.user.role, updated), _approval: safeApproval(req.user.role, decision) })
 }))
 
 // ── APPROVE (Approval/Full Admin only) — #11 ──
@@ -229,6 +239,9 @@ r.post('/quotations/:id/send', authRequired, authorize('sales', 'create'), async
 
 // ── ACCEPT → auto Sales Order + Project + BOQ (full chain, #17) ── (salesperson records customer's yes → 'create')
 r.post('/quotations/:id/accept', authRequired, authorize('sales', 'create'), asyncWrap(async (req, res) => {
+  // RULE: only the CUSTOMER accepts (via their portal). A salesperson must never accept on their behalf.
+  // Internal acceptance is limited to Management for phone / walk-in orders where there's no portal customer.
+  if (!isManagement(req.user.role)) return res.status(403).json({ error: 'Only the customer can accept this quotation (from their portal). Internal acceptance is limited to Management.' })
   const { data: q } = await supabase.from('quotations').select('*, quotation_items(*)').eq('id', req.params.id).single()
   if (!q) return res.status(404).json({ error: 'Not found' })
   if (q.status === 'Ordered') return res.status(422).json({ error: 'Quotation already accepted' })

@@ -43,7 +43,7 @@ export function canDoAction(accessLevel, action) {
 }
 
 // fields only Management may see (Sales must never see cost/GP — Sales rules #4, #5, #20)
-export const restrictedFields = ['cost', 'cost_amount', 'gp_percent', 'gross_profit']
+export const restrictedFields = ['cost', 'cost_amount', 'gp_percent', 'gross_profit', 'supplier_price', 'landed_cost', 'calculated_sale_price', 'budget_cost', 'committed_cost', 'margin', 'markup', 'avg_cost', 'valuation_rate', 'last_purchase_rate', 'exchange_factor', 'price_factor', 'add_margin_pct', 'special_offer_pct']
 export function isManagement(role) {
   return role === 'Management' || role === 'System Admin'
 }

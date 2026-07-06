@@ -49,12 +49,17 @@ r.post('/signup', asyncWrap(async (req, res) => {
   res.status(201).json({ token: sign(data), user: { id: data.id, name: data.name, email: data.email, role: data.role, access_level: data.access_level } })
 }))
 
-// Password reset (simplified — production should email a one-time token).
+// Password reset — self-service recovery for EXTERNAL PORTAL accounts only.
+// SECURITY: this endpoint is unauthenticated (a "forgot password" flow), so it must NEVER be able to
+// reset an internal/staff/admin account — otherwise anyone who knows admin@gmail.com could seize Full Admin.
+// Internal staff passwords are reset only by an admin via the Users module (authenticated).
+// TODO(prod): replace with an emailed one-time reset token so even portal resets prove ownership.
 r.post('/reset-password', asyncWrap(async (req, res) => {
   const { email, newPassword } = req.body
   if (!email || !newPassword || newPassword.length < 6) return res.status(422).json({ error: 'email + newPassword (min 6) required' })
   const { data: user } = await supabase.from('users').select('id, role').eq('email', email).maybeSingle()
   if (!user) return res.status(404).json({ error: 'No account with this email' })
+  if (!PORTAL_ROLES.includes(user.role)) return res.status(403).json({ error: 'This account cannot be reset here — contact your administrator.' })
   await supabase.from('users').update({ password_hash: await bcrypt.hash(newPassword, 10) }).eq('id', user.id)
   res.json({ ok: true })
 }))
