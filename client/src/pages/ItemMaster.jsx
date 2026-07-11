@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Search, Plus, Package, Layers, Tag, Sparkles, Settings2 } from 'lucide-react'
+import { Search, Plus, Package, Layers, Tag, Sparkles, Settings2, Database } from 'lucide-react'
 import { PageHeader, Badge } from '../components/ui.jsx'
 import { Modal, Field, Select } from '../components/Modal.jsx'
 import { sar } from '../data/mockData.js'
@@ -8,6 +8,7 @@ import { useAuth } from '../auth/AuthContext.jsx'
 import ItemForm from '../components/ItemForm.jsx'
 import QuickItemForm from '../components/QuickItemForm.jsx'
 import ItemImportExport from '../components/ItemImportExport.jsx'
+import EosImportModal from '../components/EosImportModal.jsx'
 import ItemView from '../components/ItemView.jsx'
 import ImageLightbox from '../components/ImageLightbox.jsx'
 
@@ -22,6 +23,7 @@ export default function ItemMaster() {
   const [view, setView] = useState(null)
   const [quick, setQuick] = useState(false)
   const [masters, setMasters] = useState(false)
+  const [eos, setEos] = useState(false)
   const [lightbox, setLightbox] = useState(null)
 
   const groups = ['All', ...new Set(items.map((i) => i.category).filter(Boolean))]
@@ -34,6 +36,7 @@ export default function ItemMaster() {
     <>
       <PageHeader title="Item Master" subtitle="Central catalogue — created by Warehouse, used by every panel">
         {canEdit && <ItemImportExport />}
+        {canEdit && <button className="btn-ghost" onClick={() => setEos(true)}><Database size={16} /> Import from EOS</button>}
         {canEdit && <button className="btn-ghost" onClick={() => setMasters(true)}><Settings2 size={16} /> Masters</button>}
         {canEdit && <button className="btn-ghost" onClick={() => setForm({ open: true, id: null })}>Advanced</button>}
         {canEdit && <button className="btn-primary" onClick={() => setQuick(true)}><Plus size={16} /> New Item</button>}
@@ -71,7 +74,7 @@ export default function ItemMaster() {
                   <td className="td font-medium text-ink">
                     <div className="flex items-center gap-2">
                       {i.image_url ? <img src={i.image_url} alt="" onClick={(e) => { e.stopPropagation(); setLightbox(i.image_url) }} className="h-12 w-12 shrink-0 cursor-zoom-in rounded-lg border border-slate-200 object-cover transition hover:ring-2 hover:ring-brand-400" /> : <span className="grid h-12 w-12 shrink-0 place-items-center rounded-lg border border-dashed border-slate-200 text-[9px] text-slate-300">IMG</span>}
-                      <span>{i.item_name}{i.variant_of && <span className="ml-1 text-[10px] text-violet-500">variant</span>}</span>
+                      <span>{i.item_name}{i.variant_of && <span className="ml-1 text-[10px] text-violet-500">variant</span>}{i.eos_entry_id && <span className="ml-1 inline-flex items-center gap-0.5 rounded bg-brand-50 px-1 py-0.5 text-[9px] font-bold text-brand-600" title="Synced from CULINOVA EOS"><Database size={9} /> EOS</span>}</span>
                     </div>
                   </td>
                   <td className="td text-slate-500">{i.product_family || '—'}</td>
@@ -97,6 +100,7 @@ export default function ItemMaster() {
       <ItemView open={!!view} itemId={view} canEdit={canEdit} onClose={() => setView(null)} onEdit={() => { setForm({ open: true, id: view }); setView(null) }} />
       <ItemForm open={form.open} itemId={form.id} onClose={() => setForm({ open: false, id: null })} />
       <QuickItemForm open={quick} onClose={() => setQuick(false)} />
+      <EosImportModal open={eos} onClose={() => setEos(false)} />
       <MastersModal open={masters} onClose={() => setMasters(false)} />
       <ImageLightbox src={lightbox} onClose={() => setLightbox(null)} />
     </>

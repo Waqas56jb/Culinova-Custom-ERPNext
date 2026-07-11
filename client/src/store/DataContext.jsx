@@ -173,6 +173,11 @@ export function DataProvider({ children }) {
   const addPriceList = async (body) => { const r = await api('/masters/price-lists', { method: 'POST', body }); await loadItems(); return r }
   const getAlternatives = (id) => api(`/items/${id}/alternatives`)
 
+  // ── CULINOVA EOS (engineering knowledge base) → Item Master import/sync ──
+  const eosCatalog = (query = '', page = 1) => api(`/eos/catalog?query=${encodeURIComponent(query)}&page=${page}`)
+  const eosImport = async (ids) => { const r = await api('/eos/import', { method: 'POST', body: { ids } }); await loadItems(); return r }
+  const eosSync = async (itemId) => { const r = await api(`/eos/sync/${itemId}`, { method: 'POST' }); await loadItems(); return r }
+
   // ── SALES CHAT (replies to customers) ──
   const sendChatReply = async (customer_email, customer_name, body, attachment) => { await post('sales/messages', { customer_email, customer_name, body, attachment }); await loadChat() }
   const markChatRead = async (customer_email) => { await post('sales/messages/read', { customer_email }).catch(() => {}); await loadChat() }
@@ -322,6 +327,7 @@ export function DataProvider({ children }) {
     snags, commissioning, tickets, visits, contracts, employees, leaves, interactions, chatMessages, customerDir, team, payrollStatus,
     items, itemGroups, brands, itemAttributes, productFamilies, priceLists,
     getItem, createItem, updateItem, deleteItem, generateVariants, importItems, addItemPrice, deleteItemPrice, addItemGroup, addBrand, updateBrand, addItemAttribute, addProductFamily, addPriceList, getAlternatives,
+    eosCatalog, eosImport, eosSync,
     reload, loadAll,
     addLead, addOpportunity, lostOpportunity, wonOpportunity, addInteraction, addQuotation, updateQuotation, addOrder, addCustomer, convertLead, checkAvailability, getOrderItems,
     approveQuotation, rejectQuotation, sendQuotation, acceptQuotation, lostQuotation,

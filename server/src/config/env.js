@@ -24,4 +24,7 @@ export const env = {
   jwtSecret: process.env.JWT_SECRET || (isProd ? undefined : 'dev-insecure-secret'),
   jwtExpires: process.env.JWT_EXPIRES || '8h',
   corsOrigins: (process.env.CORS_ORIGINS || 'http://localhost:5173').split(',').map((s) => s.trim()),
+  // CULINOVA EOS (engineering knowledge base) — source of truth for approved product/engineering data.
+  // The ERP Item Master imports approved EOS entries. Defaults to the deployed EOS API.
+  eosApiUrl: (process.env.EOS_API_URL || 'https://culinova-rag-knowledgebase-server.vercel.app').replace(/\/$/, ''),
 }
