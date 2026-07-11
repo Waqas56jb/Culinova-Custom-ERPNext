@@ -62,9 +62,12 @@ export default function EosImportModal({ open, onClose }) {
     finally { setDetailLoading(false) }
   }
 
-  const importable = rows.filter((r) => !r.imported)
-  const allSelected = importable.length > 0 && importable.every((r) => sel.has(r.id))
-  const toggleAll = () => setSel(allSelected ? new Set() : new Set(importable.map((r) => r.id)))
+  // Only show approved EOS models NOT yet in the Item Master — a "pending to import" queue.
+  // Once imported, an item drops out of this list (it lives in the Item Master from then on).
+  const pending = rows.filter((r) => !r.imported)
+  const importedCount = rows.length - pending.length
+  const allSelected = pending.length > 0 && pending.every((r) => sel.has(r.id))
+  const toggleAll = () => setSel(allSelected ? new Set() : new Set(pending.map((r) => r.id)))
   const toggle = (id) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
 
   async function runImport(ids) {
@@ -72,21 +75,18 @@ export default function EosImportModal({ open, onClose }) {
     setBusy(true); setErr(''); setResult(null)
     try {
       const r = await dRef.current.eosImport(ids)
-      setResult(r); setSel(new Set())
+      setResult(r); setSel(new Set()); setActive(null); setDetail(null) // imported items leave the list
       await loadList(q)
-      if (active) openPreview(active) // refresh preview status
     } catch (e) { setErr(e.message) }
     finally { setBusy(false) }
   }
-
-  const importedCount = rows.length - importable.length
 
   return (
     <Modal open={open} onClose={onClose} size="xl" title="Import from EOS"
       subtitle="CULINOVA EOS — engineering knowledge base · single source of truth for approved products"
       footer={<>
         <span className="mr-auto text-xs text-muted">
-          {total} approved · {importedCount} in Item Master · {importable.length} new{sel.size ? ` · ${sel.size} selected` : ''}
+          {importedCount} of {total} approved already in Item Master · <b className="text-ink">{pending.length} to import</b>{sel.size ? ` · ${sel.size} selected` : ''}
         </span>
         <button className="btn-ghost" onClick={onClose}>Close</button>
         <button className="btn-primary" disabled={!sel.size || busy} onClick={() => runImport([...sel])}>
@@ -103,8 +103,8 @@ export default function EosImportModal({ open, onClose }) {
           </form>
           <button type="button" className="btn-ghost !py-2" onClick={() => loadList(q)}>Search</button>
           <label className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-2 text-xs font-semibold text-slate-600">
-            <input type="checkbox" checked={allSelected} onChange={toggleAll} disabled={!importable.length} className="h-4 w-4 accent-brand-500" />
-            Select all new ({importable.length})
+            <input type="checkbox" checked={allSelected} onChange={toggleAll} disabled={!pending.length} className="h-4 w-4 accent-brand-500" />
+            Select all ({pending.length})
           </label>
         </div>
 
@@ -123,14 +123,19 @@ export default function EosImportModal({ open, onClose }) {
           <div className="max-h-[56vh] min-h-[300px] space-y-1.5 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50/40 p-2">
             {loading && <div className="grid place-items-center gap-2 py-12 text-sm text-muted"><Loader2 className="animate-spin" /> Loading EOS catalogue…</div>}
             {!loading && !rows.length && <div className="py-12 text-center text-sm text-muted">No approved EOS models found.</div>}
-            {!loading && rows.map((it) => {
+            {!loading && rows.length > 0 && !pending.length && (
+              <div className="grid place-items-center gap-2 py-12 text-center text-sm text-emerald-600">
+                <CheckCircle2 size={26} />
+                <div className="font-semibold">All {total} approved EOS models are in your Item Master.</div>
+                <div className="text-xs text-muted">New approvals in EOS will appear here automatically to import.</div>
+              </div>
+            )}
+            {!loading && pending.map((it) => {
               const on = active && active.id === it.id
               return (
                 <div key={it.id} onClick={() => openPreview(it)}
-                  className={`flex cursor-pointer items-center gap-2.5 rounded-lg border px-2.5 py-2 transition ${on ? 'border-brand-400 bg-white shadow-sm' : 'border-transparent bg-white/70 hover:border-slate-200 hover:bg-white'}`}>
-                  {it.imported
-                    ? <CheckCircle2 size={17} className="shrink-0 text-emerald-500" title="Already in Item Master" />
-                    : <input type="checkbox" checked={sel.has(it.id)} onClick={(e) => e.stopPropagation()} onChange={() => toggle(it.id)} className="h-4 w-4 shrink-0 accent-brand-500" />}
+                  className={`flex cursor-pointer items-center gap-2.5 rounded-lg border px-2.5 py-2 transition ${on ? 'border-brand-400 bg-white shadow-sm' : sel.has(it.id) ? 'border-brand-300 bg-brand-50/40' : 'border-transparent bg-white/70 hover:border-slate-200 hover:bg-white'}`}>
+                  <input type="checkbox" checked={sel.has(it.id)} onClick={(e) => e.stopPropagation()} onChange={() => toggle(it.id)} className="h-4 w-4 shrink-0 accent-brand-500" title="Select to import" />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-semibold text-ink">{it.title}</div>
                     <div className="truncate text-[11px] text-muted">
@@ -138,9 +143,7 @@ export default function EosImportModal({ open, onClose }) {
                       {it.category ? ` · ${it.category}` : ''}{it.equipment_type ? ` · ${it.equipment_type}` : ''}
                     </div>
                   </div>
-                  {it.imported
-                    ? <span className="shrink-0 rounded bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700">IN ERP</span>
-                    : <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold text-amber-700">NEW</span>}
+                  <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold text-amber-700">TO IMPORT</span>
                 </div>
               )
             })}
@@ -155,9 +158,9 @@ export default function EosImportModal({ open, onClose }) {
         </div>
 
         <p className="text-[11px] leading-relaxed text-muted">
-          EOS stays the master for engineering data. Approved models are always browsable here. Importing lands a model in the
-          Item Master with identity, dimensions, datasheet & full engineering specs — <b>you add pricing in the Item Master</b>.
-          Re-importing refreshes engineering data and never creates duplicates.
+          This list shows only approved EOS models <b>not yet in your Item Master</b> — your pending-import queue. Selecting and
+          importing lands a model in the Item Master (identity, dimensions, datasheet & full engineering specs — <b>you add
+          pricing there</b>) and removes it from this list. When it's empty, every approved model has been imported.
         </p>
       </div>
     </Modal>
