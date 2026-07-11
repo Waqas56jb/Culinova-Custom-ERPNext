@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { Search, Plus, Package, Layers, Tag, Sparkles, Settings2, Database } from 'lucide-react'
-import { PageHeader, Badge } from '../components/ui.jsx'
+import { Search, Plus, Package, Layers, Tag, Sparkles, Settings2, Database, SlidersHorizontal } from 'lucide-react'
+import { PageHeader, Badge, Menu, MenuItem } from '../components/ui.jsx'
 import { Modal, Field, Select } from '../components/Modal.jsx'
 import { sar } from '../data/mockData.js'
 import { useData } from '../store/DataContext.jsx'
@@ -36,10 +36,14 @@ export default function ItemMaster() {
     <>
       <PageHeader title="Item Master" subtitle="Central catalogue — created by Warehouse, used by every panel">
         {canEdit && <ItemImportExport />}
-        {canEdit && <button className="btn-ghost" onClick={() => setEos(true)}><Database size={16} /> Import from EOS</button>}
-        {canEdit && <button className="btn-ghost" onClick={() => setMasters(true)}><Settings2 size={16} /> Masters</button>}
-        {canEdit && <button className="btn-ghost" onClick={() => setForm({ open: true, id: null })}>Advanced</button>}
-        {canEdit && <button className="btn-primary" onClick={() => setQuick(true)}><Plus size={16} /> New Item</button>}
+        {canEdit && <button className="btn-ghost whitespace-nowrap" onClick={() => setEos(true)}><Database size={16} /> Import from EOS</button>}
+        {canEdit && (
+          <Menu label="More" icon={Settings2}>
+            <MenuItem icon={Settings2} onClick={() => setMasters(true)}>Masters (brands · families · price lists)</MenuItem>
+            <MenuItem icon={SlidersHorizontal} onClick={() => setForm({ open: true, id: null })}>Advanced item form</MenuItem>
+          </Menu>
+        )}
+        {canEdit && <button className="btn-primary whitespace-nowrap" onClick={() => setQuick(true)}><Plus size={16} /> New Item</button>}
       </PageHeader>
 
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">

@@ -1,4 +1,36 @@
-import { TrendingUp, TrendingDown } from 'lucide-react'
+import { useState } from 'react'
+import { TrendingUp, TrendingDown, ChevronDown } from 'lucide-react'
+
+// Elegant, accessible dropdown menu for grouping toolbar actions (keeps headers uncluttered + responsive).
+export function Menu({ label, icon: Icon, variant = 'ghost', align = 'right', children }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="relative">
+      <button className={variant === 'primary' ? 'btn-primary' : 'btn-ghost'} onClick={() => setOpen((o) => !o)}>
+        {Icon && <Icon size={16} />} <span className="whitespace-nowrap">{label}</span>
+        <ChevronDown size={14} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-[70]" onClick={() => setOpen(false)} />
+          <div onClick={() => setOpen(false)}
+            className={`absolute z-[71] mt-1.5 min-w-[190px] rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg animate-fade-up ${align === 'right' ? 'right-0' : 'left-0'}`}>
+            {children}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+export function MenuItem({ icon: Icon, children, onClick, tone }) {
+  return (
+    <button onClick={onClick}
+      className={`flex w-full items-center gap-2.5 whitespace-nowrap rounded-lg px-3 py-2 text-left text-sm font-medium transition hover:bg-slate-100 ${tone === 'brand' ? 'text-brand-600 hover:bg-brand-50' : 'text-slate-600 hover:text-ink'}`}>
+      {Icon && <Icon size={15} className={tone === 'brand' ? 'text-brand-500' : 'text-slate-400'} />} {children}
+    </button>
+  )
+}
 
 const accentMap = {
   brand: 'from-brand-500 to-brand-600',
@@ -14,7 +46,7 @@ export function PageHeader({ title, subtitle, children }) {
         <h1 className="font-display text-2xl font-extrabold text-ink tracking-tight">{title}</h1>
         {subtitle && <p className="mt-1 text-sm text-muted">{subtitle}</p>}
       </div>
-      {children && <div className="flex items-center gap-2">{children}</div>}
+      {children && <div className="flex flex-wrap items-center gap-2 sm:justify-end">{children}</div>}
     </div>
   )
 }

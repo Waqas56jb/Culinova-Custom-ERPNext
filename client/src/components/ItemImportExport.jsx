@@ -2,6 +2,7 @@ import { useState } from 'react'
 import * as XLSX from 'xlsx'
 import { Download, Upload, FileSpreadsheet, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react'
 import { Modal } from './Modal.jsx'
+import { Menu, MenuItem } from './ui.jsx'
 import { useData } from '../store/DataContext.jsx'
 
 // Friendly, human-readable column order for the template + export.
@@ -126,9 +127,11 @@ export default function ItemImportExport() {
 
   return (
     <>
-      <button className="btn-ghost" title="Download the Excel template" onClick={downloadTemplate}><FileSpreadsheet size={16} /> Template</button>
-      <button className="btn-ghost" title="Upload a CSV / Excel file" onClick={() => setModal(true)}><Upload size={16} /> Import</button>
-      <button className="btn-ghost" title="Export the Item Master to Excel" onClick={exportItems}><Download size={16} /> Export</button>
+      <Menu label="Import / Export" icon={FileSpreadsheet}>
+        <MenuItem icon={FileSpreadsheet} onClick={downloadTemplate}>Download template</MenuItem>
+        <MenuItem icon={Upload} onClick={() => setModal(true)}>Import from file</MenuItem>
+        <MenuItem icon={Download} onClick={exportItems}>Export to Excel</MenuItem>
+      </Menu>
 
       <Modal open={modal} onClose={close} title="Import Items from CSV / Excel" subtitle="Fill the template, upload it here — each row is validated before saving"
         footer={<><button className="btn-ghost" onClick={close}>Close</button>{rows && !result && <button className="btn-primary" disabled={busy} onClick={doImport}>{busy ? <Loader2 size={16} className="animate-spin" /> : null} Import {rows.length} rows</button>}</>}>
