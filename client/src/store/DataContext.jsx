@@ -175,6 +175,7 @@ export function DataProvider({ children }) {
 
   // ── CULINOVA EOS (engineering knowledge base) → Item Master import/sync ──
   const eosCatalog = (query = '', page = 1) => api(`/eos/catalog?query=${encodeURIComponent(query)}&page=${page}`)
+  const eosDetail = (id) => api(`/eos/catalog/${id}`)
   const eosImport = async (ids) => { const r = await api('/eos/import', { method: 'POST', body: { ids } }); await loadItems(); return r }
   const eosSync = async (itemId) => { const r = await api(`/eos/sync/${itemId}`, { method: 'POST' }); await loadItems(); return r }
 
@@ -327,7 +328,7 @@ export function DataProvider({ children }) {
     snags, commissioning, tickets, visits, contracts, employees, leaves, interactions, chatMessages, customerDir, team, payrollStatus,
     items, itemGroups, brands, itemAttributes, productFamilies, priceLists,
     getItem, createItem, updateItem, deleteItem, generateVariants, importItems, addItemPrice, deleteItemPrice, addItemGroup, addBrand, updateBrand, addItemAttribute, addProductFamily, addPriceList, getAlternatives,
-    eosCatalog, eosImport, eosSync,
+    eosCatalog, eosDetail, eosImport, eosSync,
     reload, loadAll,
     addLead, addOpportunity, lostOpportunity, wonOpportunity, addInteraction, addQuotation, updateQuotation, addOrder, addCustomer, convertLead, checkAvailability, getOrderItems,
     approveQuotation, rejectQuotation, sendQuotation, acceptQuotation, lostQuotation,

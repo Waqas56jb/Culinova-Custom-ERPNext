@@ -3,7 +3,7 @@ import { X } from 'lucide-react'
 
 export function Modal({ open, onClose, title, subtitle, children, footer, size = 'md' }) {
   if (!open) return null
-  const w = size === 'lg' ? 'max-w-2xl' : size === 'sm' ? 'max-w-md' : 'max-w-lg'
+  const w = size === 'xl' ? 'max-w-5xl' : size === 'lg' ? 'max-w-2xl' : size === 'sm' ? 'max-w-md' : 'max-w-lg'
   // Portal to body so the modal is always centered to the viewport,
   // independent of any transformed/scrolled ancestor.
   return createPortal(
