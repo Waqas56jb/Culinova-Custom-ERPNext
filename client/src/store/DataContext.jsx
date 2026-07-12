@@ -340,8 +340,17 @@ export function DataProvider({ children }) {
 
   // ── WAREHOUSE ──
   const addWarehouse = async (d) => { await post('warehouses', { name: d.name, location: d.location, type: d.type || 'Storage' }); await reload('warehouses') }
-  const receivePO = async (poId) => { await patch('purchase-orders', poId, { status: 'Received' }); await reload('purchaseOrders') }
-  const createDeliveryNote = async (d) => { await post('delivery-notes', { project_id: d.project, customer: d.customer, item_name: d.item, qty: Number(d.qty) || 1, value: Number(d.value) || 0, area: d.area || null, position: d.position || null, status: 'Delivered' }); await reload('deliveryNotes') }
+  // receiving a PO now actually brings stock IN (creates a GRN + posts to the stock ledger)
+  const receivePO = async (poId) => {
+    const r = await api(`/goods-receipt/receive-po/${poId}`, { method: 'POST' })
+    await Promise.all([reload('purchaseOrders'), reload('stockItems')])
+    return r
+  }
+  // issuing a delivery note now actually takes stock OUT
+  const createDeliveryNote = async (d) => {
+    await post('delivery-notes', { project_id: d.project, customer: d.customer, item_name: d.item, qty: Number(d.qty) || 1, value: Number(d.value) || 0, area: d.area || null, position: d.position || null, status: 'Delivered' })
+    await Promise.all([reload('deliveryNotes'), reload('stockItems')])
+  }
   const authorizeReturn = async (id) => { await patch('delivery-notes', id, { status: 'Returned' }); await reload('deliveryNotes') } // DEL-005
 
   // ── FINANCE ──

@@ -19,10 +19,16 @@ export default function StockDashboard() {
   const stockMovement = inS.map((b, i) => ({ m: b.m, inq: b.v, out: (outS[i] || { v: 0 }).v }))
   // catalogue SKUs come from the Item Master; on-hand qty joins from stock balances → live sync
   const balByName = {}
-  for (const s of stockItems) { const k = (s.name || '').toLowerCase(); const b = balByName[k] || (balByName[k] = { physical: 0, available: 0 }); b.physical += Number(s.physical ?? s.qty) || 0; b.available += Number(s.available ?? s.qty) || 0 }
+  for (const s of stockItems) {
+    const k = (s.name || '').toLowerCase()
+    const b = balByName[k] || (balByName[k] = { physical: 0, available: 0, whs: new Set() })
+    b.physical += Number(s.physical ?? s.qty) || 0
+    b.available += Number(s.available ?? s.qty) || 0
+    if (s.warehouse) b.whs.add(s.warehouse)
+  }
   const skus = (items || []).filter((i) => i.is_stock_item && !i.has_variants).map((i) => {
-    const b = balByName[(i.item_name || '').toLowerCase()] || { physical: 0, available: 0 }
-    return { code: i.item_code, name: i.item_name, group: i.product_family || i.category || 'Other', qty: b.physical, available: b.available, rate: Number(i.cost) || Number(i.standard_rate) || 0, reorder: Number(i.safety_stock) || 0, uom: i.stock_uom || 'Nos', warehouse: '—' }
+    const b = balByName[(i.item_name || '').toLowerCase()] || { physical: 0, available: 0, whs: new Set() }
+    return { code: i.item_code, name: i.item_name, group: i.product_family || i.category || 'Other', qty: b.physical, available: b.available, rate: Number(i.cost) || Number(i.standard_rate) || 0, reorder: Number(i.reorder_level) || 0, uom: i.stock_uom || 'Nos', warehouse: b.whs.size ? [...b.whs].join(', ') : '—' }
   })
   const totalValue = skus.reduce((s, it) => s + it.qty * it.rate, 0)
   const low = skus.filter((it) => it.qty > 0 && it.qty <= it.reorder)

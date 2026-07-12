@@ -43,8 +43,9 @@ ok((await fetch(`${BASE}/party-categories?party=customer`, { headers: H(A) }).th
 
 S_('Warehouse ops')
 for (const e of ['warehouse-locations', 'stock-categories', 'stock-transfers', 'stock-adjustments', 'stock-ledger']) ok(Array.isArray(await fetch(`${BASE}/${e}`, { headers: H(A) }).then(j)), e)
-const tr = await fetch(`${BASE}/stock-transfers`, { method: 'POST', headers: H(A), body: JSON.stringify({ from_warehouse: 'A', to_warehouse: 'B', item_name: 'ZZ', qty: 1 }) }).then(j)
-ok(tr.number?.startsWith('ST-'), `transfer numbered ${tr.number}`)
+// the stock engine now validates: a transfer for an unknown item must be rejected (no phantom stock)
+const badTr = await fetch(`${BASE}/stock-transfers`, { method: 'POST', headers: H(A), body: JSON.stringify({ from_warehouse: 'A', to_warehouse: 'B', item_name: 'ZZ-nonexistent', qty: 1 }) })
+ok(badTr.status === 422, `stock transfer rejects unknown item (${badTr.status}) — real stock engine validates`)
 
 S_('Pricing engine')
 for (const e of ['price-lists', 'discount-rules']) ok((await fetch(`${BASE}/${e}`, { headers: H(A) }).then(j)).length >= 1, `${e} seeded`)
@@ -62,7 +63,7 @@ S_('Cleanup')
 await supabase.from('customer_contacts').delete().eq('customer_id', cus.id)
 await supabase.from('customer_addresses').delete().eq('customer_id', cus.id)
 await supabase.from('customers').delete().eq('id', cus.id)
-await supabase.from('stock_transfers').delete().eq('id', tr.id)
+
 await supabase.from('documents').delete().eq('id', doc.id)
 await supabase.from('approvals').delete().eq('id', ap.id)
 await supabase.from('user_preferences').delete().eq('pref_key', 'ui')
