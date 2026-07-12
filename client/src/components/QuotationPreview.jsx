@@ -66,7 +66,7 @@ export default function QuotationPreview({ open, onClose, quotation }) {
               </div>
               <div className="text-right text-xs text-slate-500">
                 <p><span className="font-semibold text-ink">Date:</span> {new Date().toISOString().slice(0, 10)}</p>
-                <p><span className="font-semibold text-ink">Valid Till:</span> {quotation.valid_till || '—'}</p>
+                <p><span className="font-semibold text-ink">Valid Till:</span> {quotation.validity_days ? `${quotation.validity_days} days` : '—'}</p>
                 {quotation.delivery_date && <p><span className="font-semibold text-ink">Delivery By:</span> {quotation.delivery_date}</p>}
                 <p><span className="font-semibold text-ink">Prepared By:</span> {quotation.owner || '—'}</p>
                 <p><span className="font-semibold text-ink">VAT No:</span> 3001234567800003</p>

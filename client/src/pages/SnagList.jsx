@@ -7,8 +7,8 @@ import { useData } from '../store/DataContext.jsx'
 export default function SnagList() {
   const { snags, addSnag, resolveSnag } = useData()
   const [modal, setModal] = useState(false)
-  const [v, setV] = useState({ project: '', item: '', desc: '', severity: 'Low' })
-  const save = () => { if (v.desc) addSnag(v); setV({ project: '', item: '', desc: '', severity: 'Low' }); setModal(false) }
+  const [v, setV] = useState({ project: '', item: '', description: '', severity: 'Low' })
+  const save = () => { if (v.description) addSnag(v); setV({ project: '', item: '', description: '', severity: 'Low' }); setModal(false) }
 
   return (
     <>
@@ -35,7 +35,7 @@ export default function SnagList() {
                   <td className="td font-semibold text-brand-600">{s.id}</td>
                   <td className="td"><span className="inline-flex items-center gap-1 text-xs font-semibold text-violet-600"><FolderKanban size={12} /> {s.project}</span></td>
                   <td className="td text-slate-600">{s.item}</td>
-                  <td className="td text-slate-700">{s.desc}</td>
+                  <td className="td text-slate-700">{s.description}</td>
                   <td className="td"><Badge tone={statusTone(s.severity)}>{s.severity}</Badge></td>
                   <td className="td"><Badge tone={statusTone(s.status)}>{s.status}</Badge></td>
                   <td className="td text-right">
@@ -56,7 +56,7 @@ export default function SnagList() {
           <Field label="Project" value={v.project} onChange={(e) => setV((s) => ({ ...s, project: e.target.value }))} placeholder="PRJ-0042" />
           <Field label="Item" value={v.item} onChange={(e) => setV((s) => ({ ...s, item: e.target.value }))} placeholder="Exhaust Hood" />
         </Row>
-        <Field label="Description" value={v.desc} onChange={(e) => setV((s) => ({ ...s, desc: e.target.value }))} placeholder="Describe the defect" />
+        <Field label="Description" value={v.description} onChange={(e) => setV((s) => ({ ...s, description: e.target.value }))} placeholder="Describe the defect" />
         <Select label="Severity" value={v.severity} onChange={(e) => setV((s) => ({ ...s, severity: e.target.value }))} options={['Low', 'Medium', 'High']} />
       </Modal>
     </>

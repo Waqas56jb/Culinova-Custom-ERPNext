@@ -1,14 +1,19 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Plus, Star } from 'lucide-react'
 import { PageHeader, Badge, statusTone } from '../components/ui.jsx'
 import { Modal, Field, Select, Row } from '../components/Modal.jsx'
 import { useData } from '../store/DataContext.jsx'
 
 export default function Suppliers() {
-  const { suppliers, addSupplier } = useData()
+  const d = useData()
+  const { suppliers, addSupplier, purchaseOrders } = d
+  const [cats, setCats] = useState([])
+  useEffect(() => { d.partyCategories('supplier').then((c) => setCats((c || []).map((x) => x.name))).catch(() => setCats([])) }, [d])
+  const poCount = {}
+  ;(purchaseOrders || []).forEach((p) => { if (p.supplier) poCount[p.supplier] = (poCount[p.supplier] || 0) + 1 })
   const [modal, setModal] = useState(false)
-  const [v, setV] = useState({ name: '', category: 'Equipment' })
-  const save = () => { addSupplier(v); setV({ name: '', category: 'Equipment' }); setModal(false) }
+  const [v, setV] = useState({ name: '', category: '' })
+  const save = () => { addSupplier(v); setV({ name: '', category: '' }); setModal(false) }
 
   return (
     <>
@@ -29,7 +34,7 @@ export default function Suppliers() {
                   <td className="td">
                     <div className="flex items-center gap-2.5">
                       <span className="grid h-9 w-9 place-items-center rounded-lg bg-gradient-to-br from-navy-700 to-brand-600 text-[11px] font-bold text-white">{s.name.slice(0, 2).toUpperCase()}</span>
-                      <div><p className="font-semibold text-ink">{s.name}</p><p className="text-xs text-muted">{s.id}</p></div>
+                      <div><p className="font-semibold text-ink">{s.name}</p><p className="text-xs text-muted">{s.code}</p></div>
                     </div>
                   </td>
                   <td className="td text-slate-600">{s.category}</td>
@@ -40,7 +45,7 @@ export default function Suppliers() {
                       <span className="text-xs text-muted">{s.onTime}%</span>
                     </div>
                   </td>
-                  <td className="td text-slate-600">{s.totalPOs}</td>
+                  <td className="td text-slate-600">{poCount[s.name] || 0}</td>
                   <td className="td"><Badge tone={statusTone(s.status)}>{s.status}</Badge></td>
                 </tr>
               ))}
@@ -52,7 +57,7 @@ export default function Suppliers() {
       <Modal open={modal} onClose={() => setModal(false)} title="New Supplier" subtitle="Add a vendor to the master"
         footer={<><button className="btn-ghost" onClick={() => setModal(false)}>Cancel</button><button className="btn-primary" onClick={save}>Create Supplier</button></>}>
         <Field label="Supplier Name" value={v.name} onChange={(e) => setV((s) => ({ ...s, name: e.target.value }))} placeholder="e.g. Gulf Kitchen Equip. Co." />
-        <Select label="Category" value={v.category} onChange={(e) => setV((s) => ({ ...s, category: e.target.value }))} options={['Equipment', 'Stainless Steel', 'Refrigeration', 'Ventilation', 'General']} />
+        <Select label="Category" value={v.category} onChange={(e) => setV((s) => ({ ...s, category: e.target.value }))} options={cats.length ? cats : ['Equipment', 'Fabrication', 'Local', 'Import']} />
       </Modal>
     </>
   )

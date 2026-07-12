@@ -35,7 +35,7 @@ export default function ServiceTickets() {
                 <tr key={t.id} className="hover:bg-slate-50/60">
                   <td className="td font-semibold text-brand-600">{t.id}</td>
                   <td className="td font-medium text-ink">{t.customer}</td>
-                  <td className="td"><span className="inline-flex items-center gap-1 text-xs font-semibold text-violet-600"><FolderKanban size={12} /> {t.project}</span></td>
+                  <td className="td"><span className="inline-flex items-center gap-1 text-xs font-semibold text-violet-600"><FolderKanban size={12} /> {t.project_id}</span></td>
                   <td className="td text-slate-700">{t.subject}</td>
                   <td className="td"><Badge tone={statusTone(t.priority)}>{t.priority}</Badge></td>
                   <td className="td"><Badge tone={statusTone(t.sla)}>{t.sla}</Badge></td>

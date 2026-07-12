@@ -6,7 +6,9 @@ import { sar } from '../data/mockData.js'
 import { useData } from '../store/DataContext.jsx'
 
 export default function DeliveryNotes() {
-  const { deliveryNotes, stockItems, createDeliveryNote, authorizeReturn } = useData()
+  const { deliveryNotes, stockItems, createDeliveryNote, authorizeReturn, projects, customers } = useData()
+  const projectOpts = [{ value: '', label: '— Select project —' }, ...(projects || []).map((p) => ({ value: p.id, label: `${p.ref || ''} ${p.name || ''}`.trim() }))]
+  const customerOpts = ['', ...(customers || []).map((c) => c.name).filter(Boolean)]
   const [modal, setModal] = useState(false)
   const [v, setV] = useState({ project: '', customer: '', item: '', qty: 1, area: '', position: '' })
   const itemOpts = stockItems.map((it) => ({ value: it.name, label: `${it.name} (${it.qty} in stock)` }))
@@ -55,10 +57,10 @@ export default function DeliveryNotes() {
         footer={<><button className="btn-ghost" onClick={() => setModal(false)}>Cancel</button><button className="btn-primary" onClick={save}>Create &amp; Deliver</button></>}>
         <Select label="Item (from stock)" value={v.item} onChange={(e) => setV((s) => ({ ...s, item: e.target.value }))} options={[{ value: '', label: '— Select item —' }, ...itemOpts]} />
         <Row>
-          <Field label="Project" value={v.project} onChange={(e) => setV((s) => ({ ...s, project: e.target.value }))} placeholder="PRJ-0042" />
+          <Select label="Project" value={v.project} onChange={(e) => setV((s) => ({ ...s, project: e.target.value }))} options={projectOpts} />
           <Field label="Qty" type="number" value={v.qty} onChange={(e) => setV((s) => ({ ...s, qty: e.target.value }))} />
         </Row>
-        <Field label="Customer" value={v.customer} onChange={(e) => setV((s) => ({ ...s, customer: e.target.value }))} placeholder="Riyadh Grand Hotel" />
+        <Select label="Customer" value={v.customer} onChange={(e) => setV((s) => ({ ...s, customer: e.target.value }))} options={customerOpts} />
         <Row>
           <Field label="Area (DEL-001)" value={v.area} onChange={(e) => setV((s) => ({ ...s, area: e.target.value }))} placeholder="e.g. Main Kitchen" />
           <Field label="Position" value={v.position} onChange={(e) => setV((s) => ({ ...s, position: e.target.value }))} placeholder="e.g. Wall A / Line 2" />

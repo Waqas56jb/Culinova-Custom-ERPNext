@@ -23,7 +23,7 @@ export default function Tasks() {
     if (sf !== 'All' && p.status !== sf) return false
     if (!ql) return true
     const inProject = (p.id + p.name + p.customer + p.salesOrder).toLowerCase().includes(ql)
-    const inTask = p.tasks.some((t) => (t.name + t.assignee).toLowerCase().includes(ql))
+    const inTask = p.tasks.some((t) => `${t.name || ''} ${t.assignee || ''}`.toLowerCase().includes(ql))
     return inProject || inTask
   }
   const shown = projects.filter(matches)
@@ -112,9 +112,10 @@ export default function Tasks() {
                             <div key={t.id} className="rounded-lg border border-slate-200/70 bg-white p-2.5 shadow-soft">
                               <p className="text-[13px] font-semibold leading-snug text-ink">{t.name}</p>
                               <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-muted">
-                                <span className="grid h-5 w-5 place-items-center rounded-full bg-gradient-to-br from-navy-700 to-brand-600 text-[8px] font-bold text-white">{t.assignee.slice(0, 2)}</span>
-                                {t.assignee}
-                                <span className={`ml-auto ${overdue ? 'font-semibold text-rose-600' : ''}`}>{overdue ? 'Overdue' : t.due}</span>
+                                {t.assignee
+                                  ? <><span className="grid h-5 w-5 place-items-center rounded-full bg-gradient-to-br from-navy-700 to-brand-600 text-[8px] font-bold text-white">{t.assignee.slice(0, 2)}</span>{t.assignee}</>
+                                  : <span className="text-slate-400">Unassigned</span>}
+                                <span className={`ml-auto ${overdue ? 'font-semibold text-rose-600' : ''}`}>{overdue ? 'Overdue' : (t.due_date || '')}</span>
                               </div>
                             </div>
                           )

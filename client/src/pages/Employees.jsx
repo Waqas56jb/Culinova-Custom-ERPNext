@@ -6,12 +6,13 @@ import { sar } from '../data/mockData.js'
 import { useData } from '../store/DataContext.jsx'
 
 export default function Employees() {
-  const { employees, addEmployee } = useData()
+  const { employees, addEmployee, settings } = useData()
+  const deptOptions = (settings?.departments || []).map((x) => x.name)
   const [q, setQ] = useState('')
   const [modal, setModal] = useState(false)
-  const [v, setV] = useState({ name: '', role: '', dept: 'Sales', salary: '' })
-  const rows = employees.filter((e) => (e.name + e.role + e.dept).toLowerCase().includes(q.toLowerCase()))
-  const save = () => { if (v.name) addEmployee(v); setV({ name: '', role: '', dept: 'Sales', salary: '' }); setModal(false) }
+  const [v, setV] = useState({ name: '', role: '', department: 'Sales', salary: '' })
+  const rows = employees.filter((e) => (e.name + e.role + e.department).toLowerCase().includes(q.toLowerCase()))
+  const save = () => { if (v.name) addEmployee(v); setV({ name: '', role: '', department: 'Sales', salary: '' }); setModal(false) }
 
   return (
     <>
@@ -41,7 +42,7 @@ export default function Employees() {
                     </div>
                   </td>
                   <td className="td text-slate-600">{e.role}</td>
-                  <td className="td text-slate-500">{e.dept}</td>
+                  <td className="td text-slate-500">{e.department}</td>
                   <td className="td font-semibold">{sar(e.salary)}</td>
                   <td className="td"><Badge tone={statusTone(e.today)}>{e.today}</Badge></td>
                 </tr>
@@ -56,7 +57,7 @@ export default function Employees() {
         <Field label="Full Name" value={v.name} onChange={(e) => setV((s) => ({ ...s, name: e.target.value }))} placeholder="e.g. Mohammed Ali" />
         <Row>
           <Field label="Role" value={v.role} onChange={(e) => setV((s) => ({ ...s, role: e.target.value }))} placeholder="e.g. Technician" />
-          <Select label="Department" value={v.dept} onChange={(e) => setV((s) => ({ ...s, dept: e.target.value }))} options={['Sales', 'Projects', 'Procurement', 'Warehouse', 'Finance', 'Site', 'Service', 'HR']} />
+          <Select label="Department" value={v.department} onChange={(e) => setV((s) => ({ ...s, department: e.target.value }))} options={deptOptions.length ? deptOptions : ['Management', 'Sales', 'Procurement', 'Warehouse', 'Projects', 'Finance', 'Service', 'HR']} />
         </Row>
         <Field label="Monthly Salary (SAR)" type="number" value={v.salary} onChange={(e) => setV((s) => ({ ...s, salary: e.target.value }))} placeholder="9000" />
       </Modal>

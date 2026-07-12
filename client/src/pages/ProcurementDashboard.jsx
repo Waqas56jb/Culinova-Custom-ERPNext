@@ -5,7 +5,7 @@ import {
 import { FileText, ShoppingCart, Truck, Users2, Download } from 'lucide-react'
 import { PageHeader, KpiCard, ChartCard, Badge, statusTone } from '../components/ui.jsx'
 import { sar } from '../data/mockData.js'
-import { spendTrend } from '../data/procurementData.js'
+import { monthly } from '../data/agg.js'
 import { useData } from '../store/DataContext.jsx'
 
 const poColors = { Pending: '#E0A82E', Received: '#0EA99A', Billed: '#6366f1' }
@@ -13,11 +13,15 @@ const poColors = { Pending: '#E0A82E', Received: '#0EA99A', Billed: '#6366f1' }
 export default function ProcurementDashboard() {
   const { rfqs, purchaseOrders, suppliers } = useData()
   const openRfqs = rfqs.filter((r) => r.status !== 'Ordered').length
-  const pendingPos = purchaseOrders.filter((p) => p.status === 'Pending').length
-  const spend = purchaseOrders.reduce((s, p) => s + p.amount, 0)
+  const pendingPos = purchaseOrders.filter((p) => p.status === 'Pending' || !p.accepted).length
+  const spend = purchaseOrders.reduce((s, p) => s + (p.amount || 0), 0)
 
   const poStatus = ['Pending', 'Received', 'Billed'].map((s) => ({ name: s, value: purchaseOrders.filter((p) => p.status === s).length, color: poColors[s] }))
-  const topSuppliers = [...suppliers].sort((a, b) => b.totalPOs - a.totalPOs).slice(0, 5).map((s) => ({ name: s.name.split(' ')[0], pos: s.totalPOs }))
+  // live spend trend + top suppliers from real POs
+  const spendTrend = monthly(purchaseOrders, { value: 'amount' }).map((b) => ({ m: b.m, spend: Math.round(b.v / 1000) }))
+  const poBySupplier = {}
+  purchaseOrders.forEach((p) => { if (p.supplier) poBySupplier[p.supplier] = (poBySupplier[p.supplier] || 0) + 1 })
+  const topSuppliers = Object.entries(poBySupplier).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([name, pos]) => ({ name: String(name).split(' ')[0], pos }))
 
   return (
     <>
@@ -85,8 +89,8 @@ export default function ProcurementDashboard() {
               <div key={po.id} className="flex items-center gap-3 py-2.5">
                 <span className="grid h-9 w-9 place-items-center rounded-lg bg-brand-50 text-brand-600"><ShoppingCart size={16} /></span>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold text-ink">{po.id} · {sar(po.amount)}</p>
-                  <p className="truncate text-xs text-muted">{po.item} · {po.project}</p>
+                  <p className="truncate text-sm font-semibold text-ink">{po.number || po.id} · {sar(po.amount)}</p>
+                  <p className="truncate text-xs text-muted">{po.item_name || '—'}{po.supplier ? ` · ${po.supplier}` : ''}</p>
                 </div>
                 <Badge tone={statusTone(po.status)}>{po.status}</Badge>
               </div>

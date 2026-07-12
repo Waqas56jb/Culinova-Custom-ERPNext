@@ -30,14 +30,14 @@ export default function Payments() {
                 const inflow = p.type === 'Received'
                 return (
                   <tr key={p.id} className="hover:bg-slate-50/60">
-                    <td className="td font-semibold text-brand-600">{p.id}</td>
+                    <td className="td font-semibold text-brand-600">{p.number}</td>
                     <td className="td">
                       <span className={`chip ${inflow ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
                         {inflow ? <ArrowDownLeft size={12} /> : <ArrowUpRight size={12} />} {p.type}
                       </span>
                     </td>
                     <td className="td font-medium text-ink">{p.party}</td>
-                    <td className="td text-slate-500">{p.ref}</td>
+                    <td className="td text-slate-500">{p.reference || '—'}</td>
                     <td className={`td font-semibold ${inflow ? 'text-emerald-600' : 'text-rose-600'}`}>{inflow ? '+' : '−'}{sar(p.amount)}</td>
                     <td className="td text-slate-500">{p.mode}</td>
                     <td className="td text-slate-500">{p.date}</td>

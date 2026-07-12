@@ -37,7 +37,7 @@ export default function Payroll() {
                 return (
                   <tr key={e.id} className="hover:bg-slate-50/60">
                     <td className="td font-medium text-ink">{e.name}</td>
-                    <td className="td text-slate-500">{e.dept}</td>
+                    <td className="td text-slate-500">{e.department}</td>
                     <td className="td font-semibold">{sar(e.salary)}</td>
                     <td className="td text-slate-500">{sar(g)}</td>
                     <td className="td font-semibold">{sar(e.salary - g)}</td>

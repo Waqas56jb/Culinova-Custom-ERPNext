@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Search, Plus, Package, Layers, Tag, Sparkles, Settings2, Database, SlidersHorizontal } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Search, Plus, Package, Layers, Tag, Sparkles, Settings2, Database, SlidersHorizontal, Trash2 } from 'lucide-react'
 import { PageHeader, Badge, Menu, MenuItem } from '../components/ui.jsx'
 import { Modal, Field, Select } from '../components/Modal.jsx'
 import { sar } from '../data/mockData.js'
@@ -120,7 +120,7 @@ function Stat({ label, value, icon: Icon, tone }) {
   )
 }
 
-const MTABS = ['Brands', 'Product Families', 'Price Lists']
+const MTABS = ['Brands', 'Product Families', 'Units', 'Price Lists']
 function MastersModal({ open, onClose }) {
   const d = useData()
   const [tab, setTab] = useState('Brands')
@@ -129,6 +129,12 @@ function MastersModal({ open, onClose }) {
   const [br, setBr] = useState({ brand: '', currency: 'SAR', exchange_factor: 1, price_factor: 1, country_of_origin: '', country_of_purchase: '' })
   const [fam, setFam] = useState({ name: '', category: 'Equipment', sub_category: '', datasheet_url: '' })
   const [pl, setPl] = useState({ name: '', brand: '', currency: '', year: '', rows: '' })
+  const [uoms, setUoms] = useState([])
+  const [uom, setUom] = useState({ name: '', symbol: '' })
+  const loadUoms = () => d.resList('masters/uoms').then((u) => setUoms(Array.isArray(u) ? u : [])).catch(() => setUoms([]))
+  useEffect(() => { if (open) loadUoms() }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
+  const addUom = async () => { if (!uom.name) return; try { await d.resAdd('masters/uoms', uom); setUom({ name: '', symbol: '' }); loadUoms(); ok('Unit added') } catch (e) { alert(e.message) } }
+  const delUom = async (id) => { try { await d.resDelete('masters/uoms', id); loadUoms() } catch (e) { alert(e.message) } }
 
   const addBrand = async () => { if (!br.brand) return; try { await d.addBrand(br); setBr({ brand: '', currency: 'SAR', exchange_factor: 1, price_factor: 1 }); ok('Brand added') } catch (e) { alert(e.message) } }
   const addFam = async () => { if (!fam.name) return; try { await d.addProductFamily(fam); setFam({ name: '', category: 'Equipment', sub_category: '', datasheet_url: '' }); ok('Product Family added') } catch (e) { alert(e.message) } }
@@ -172,6 +178,21 @@ function MastersModal({ open, onClose }) {
           </div>
           <button className="btn-primary !py-2" onClick={addFam}>Add Product Family</button>
           <div className="flex flex-wrap gap-1.5">{(d.productFamilies || []).map((f) => <span key={f.id} className="rounded-lg bg-slate-100 px-2 py-1 text-[11px]">{f.name} <span className="text-slate-400">· {f.category}</span></span>)}</div>
+        </div>
+      )}
+
+      {tab === 'Units' && (
+        <div className="space-y-3">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Field label="Unit Name" value={uom.name} onChange={(e) => setUom((s) => ({ ...s, name: e.target.value }))} placeholder="e.g. Kilogram" />
+            <Field label="Symbol" value={uom.symbol} onChange={(e) => setUom((s) => ({ ...s, symbol: e.target.value }))} placeholder="e.g. kg" />
+          </div>
+          <button className="btn-primary !py-2" onClick={addUom}>Add Unit</button>
+          <div className="flex flex-wrap gap-1.5">{uoms.map((u) => (
+            <span key={u.id} className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2 py-1 text-[11px]">{u.name}{u.symbol ? ` · ${u.symbol}` : ''}
+              <button onClick={() => delUom(u.id)} className="text-slate-400 hover:text-rose-500"><Trash2 size={11} /></button>
+            </span>
+          ))}</div>
         </div>
       )}
 

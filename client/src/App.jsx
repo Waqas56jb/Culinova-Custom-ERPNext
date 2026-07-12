@@ -47,6 +47,7 @@ import WarehouseOps from './pages/WarehouseOps.jsx'
 import PricingEngine from './pages/PricingEngine.jsx'
 import Documents from './pages/Documents.jsx'
 import PartyMaster from './pages/PartyMaster.jsx'
+import MyDashboard from './pages/MyDashboard.jsx'
 import FormModals from './components/FormModals.jsx'
 import Login from './pages/Login.jsx'
 import { useAuth } from './auth/AuthContext.jsx'
@@ -61,6 +62,7 @@ export default function App() {
         {/* main ERP shell */}
         <Route element={<Layout />}>
           <Route path="/" element={<Navigate to="/sales/dashboard" replace />} />
+          <Route path="/my-dashboard" element={<MyDashboard />} />
           <Route path="/sales/dashboard" element={<SalesDashboard />} />
           <Route path="/sales/leads" element={<Leads />} />
           <Route path="/sales/opportunities" element={<Opportunities />} />

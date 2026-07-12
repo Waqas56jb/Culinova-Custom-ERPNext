@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import { Plus, ShieldCheck, FolderKanban, Coins } from 'lucide-react'
 import { PageHeader, Badge, statusTone } from '../components/ui.jsx'
-import { Modal, Field, Row } from '../components/Modal.jsx'
+import { Modal, Field, Select, Row } from '../components/Modal.jsx'
 import { sar } from '../data/mockData.js'
 import { useData } from '../store/DataContext.jsx'
 
 export default function SalesInvoices() {
-  const { invoices, createInvoice, recordPayment } = useData()
+  const { invoices, createInvoice, recordPayment, customers, projects } = useData()
+  const customerOpts = ['', ...(customers || []).map((c) => c.name).filter(Boolean)]
+  const projectOpts = [{ value: '', label: '— None —' }, ...(projects || []).map((p) => ({ value: p.id, label: `${p.ref || ''} ${p.name || ''}`.trim() }))]
   const [newModal, setNewModal] = useState(false)
   const [payModal, setPayModal] = useState(null)
   const [nv, setNv] = useState({ customer: '', project: '', total: '' })
@@ -36,7 +38,7 @@ export default function SalesInvoices() {
                 return (
                   <tr key={i.id} className="hover:bg-slate-50/60">
                     <td className="td">
-                      <span className="font-semibold text-brand-600">{i.id}</span>
+                      <span className="font-semibold text-brand-600">{i.ref}</span>
                       <span className="ml-2 inline-flex items-center gap-1 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600"><ShieldCheck size={11} /> ZATCA</span>
                     </td>
                     <td className="td font-medium text-ink">{i.customer}</td>
@@ -63,15 +65,15 @@ export default function SalesInvoices() {
       <Modal open={newModal} onClose={() => setNewModal(false)} title="New Sales Invoice" subtitle="VAT 15% + ZATCA e-invoice generated automatically"
         footer={<><button className="btn-ghost" onClick={() => setNewModal(false)}>Cancel</button><button className="btn-primary" onClick={saveNew}>Create Invoice</button></>}>
         <Row>
-          <Field label="Customer" value={nv.customer} onChange={(e) => setNv((s) => ({ ...s, customer: e.target.value }))} placeholder="Customer name" />
-          <Field label="Project" value={nv.project} onChange={(e) => setNv((s) => ({ ...s, project: e.target.value }))} placeholder="PRJ-0042" />
+          <Select label="Customer" value={nv.customer} onChange={(e) => setNv((s) => ({ ...s, customer: e.target.value }))} options={customerOpts} />
+          <Select label="Project" value={nv.project} onChange={(e) => setNv((s) => ({ ...s, project: e.target.value }))} options={projectOpts} />
         </Row>
         <Field label="Total incl. VAT (SAR)" type="number" value={nv.total} onChange={(e) => setNv((s) => ({ ...s, total: e.target.value }))} placeholder="480000" />
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">🛡 ZATCA e-invoice with QR code will be generated on creation (handled by ERPNext KSA Compliance).</div>
       </Modal>
 
       {/* Record payment */}
-      <Modal open={!!inv} onClose={() => setPayModal(null)} title="Record Payment" subtitle={inv ? `${inv.id} · ${inv.customer}` : ''}
+      <Modal open={!!inv} onClose={() => setPayModal(null)} title="Record Payment" subtitle={inv ? `${inv.ref} · ${inv.customer}` : ''}
         footer={<><button className="btn-ghost" onClick={() => setPayModal(null)}>Cancel</button><button className="btn-primary" onClick={savePay}>Record Payment</button></>}>
         {inv && (
           <>

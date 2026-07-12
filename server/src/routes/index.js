@@ -15,6 +15,7 @@ import { partyRouter, partyCategoriesRouter } from '../modules/parties/party.rou
 import adminRoutes from '../modules/admin/admin.routes.js'
 import filesRoutes from '../modules/files/files.routes.js'
 import prefsRoutes from '../modules/prefs/prefs.routes.js'
+import procurementRoutes from '../modules/procurement/procurement.routes.js'
 import { resources } from '../core/resources.js'
 import { crudRouter } from '../core/crud.js'
 import { rolePanels } from '../rbac/permissions.js'
@@ -45,6 +46,7 @@ api.use('/search', searchRoutes)     // Global cross-entity search
 api.use('/admin', adminRoutes)       // Admin: audit trail · RBAC matrix · approval workflow
 api.use('/documents', filesRoutes)   // File/Document management with version history
 api.use('/preferences', prefsRoutes) // Per-user preferences (dashboard layout etc.)
+api.use('/procurement', procurementRoutes) // RFQs enriched with supplier quotes
 
 // Customer / Supplier enrichment (detail + contacts/addresses/documents) — layered BEFORE the
 // generic CRUD so /:id and child routes take precedence; base list/create/update stays generic.

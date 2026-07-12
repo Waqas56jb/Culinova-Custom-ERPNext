@@ -1,11 +1,12 @@
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts'
 import { PageHeader, ChartCard } from '../components/ui.jsx'
 import { sar } from '../data/mockData.js'
-import { revenueExpense } from '../data/financeData.js'
+import { monthly, zip, k1000 } from '../data/agg.js'
 import { useData } from '../store/DataContext.jsx'
 
 export default function FinancialReports() {
   const { invoices, payables } = useData()
+  const revenueExpense = zip(monthly(invoices, { value: 'total' }), monthly(payables, { value: 'amount' }), 'income', 'expense', k1000)
   const income = Math.round(invoices.reduce((s, i) => s + i.total / 1.15, 0))
   const vatOut = Math.round(invoices.reduce((s, i) => s + (i.total - i.total / 1.15), 0))
   const expense = payables.reduce((s, p) => s + p.amount, 0)

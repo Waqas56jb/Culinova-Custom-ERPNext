@@ -17,8 +17,8 @@ export default function HRDashboard() {
   const payroll = employees.reduce((s, e) => s + e.salary, 0)
 
   const byDept = Object.values(employees.reduce((acc, e) => {
-    acc[e.dept] = acc[e.dept] || { name: e.dept, value: 0 }
-    acc[e.dept].value += 1
+    acc[e.department] = acc[e.department] || { name: e.department || 'Unassigned', value: 0 }
+    acc[e.department].value += 1
     return acc
   }, {}))
 
@@ -54,8 +54,8 @@ export default function HRDashboard() {
           <div className="divide-y divide-slate-100">
             {leaves.map((l) => (
               <div key={l.id} className="flex items-center gap-3 py-3">
-                <span className="grid h-9 w-9 place-items-center rounded-lg bg-gradient-to-br from-navy-700 to-brand-600 text-[10px] font-bold text-white">{l.name.split(' ').map((n) => n[0]).join('')}</span>
-                <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-ink">{l.name}</p><p className="text-xs text-muted">{l.type} · {l.from} → {l.to}</p></div>
+                <span className="grid h-9 w-9 place-items-center rounded-lg bg-gradient-to-br from-navy-700 to-brand-600 text-[10px] font-bold text-white">{(l.employee || '—').split(' ').map((n) => n[0]).join('')}</span>
+                <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-ink">{l.employee || '—'}</p><p className="text-xs text-muted">{l.type} · {l.from} → {l.to}</p></div>
                 <Badge tone={statusTone(l.status === 'Approved' ? 'Approved' : 'Pending')}>{l.status}</Badge>
               </div>
             ))}

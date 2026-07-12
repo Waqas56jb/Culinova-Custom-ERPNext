@@ -32,7 +32,7 @@ export default function RFQs() {
             <tbody>
               {rfqs.map((r) => (
                 <tr key={r.id} className="hover:bg-slate-50/60">
-                  <td className="td font-semibold text-brand-600">{r.id}</td>
+                  <td className="td font-semibold text-brand-600">{r.ref}</td>
                   <td className="td font-medium text-ink">{r.item}</td>
                   <td className="td"><span className="text-xs font-semibold text-violet-600">{r.project}</span></td>
                   <td className="td text-slate-600">{r.qty}</td>

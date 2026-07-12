@@ -34,7 +34,7 @@ export default function Ledger() {
               <tbody>
                 {ar.map((i) => (
                   <tr key={i.id} className="hover:bg-slate-50/60">
-                    <td className="td font-semibold text-brand-600">{i.id}</td>
+                    <td className="td font-semibold text-brand-600">{i.ref}</td>
                     <td className="td text-ink">{i.customer}</td>
                     <td className="td font-semibold text-rose-600">{sar(i.total - i.paid)}</td>
                     <td className="td text-right"><button onClick={() => { setPay(i.id); setAmt(i.total - i.paid) }} className="rounded-lg bg-brand-50 px-3 py-1.5 text-xs font-semibold text-brand-600 hover:bg-brand-500 hover:text-white">Collect</button></td>
@@ -55,7 +55,7 @@ export default function Ledger() {
               <tbody>
                 {ap.map((p) => (
                   <tr key={p.id} className="hover:bg-slate-50/60">
-                    <td className="td font-semibold text-brand-600">{p.id}</td>
+                    <td className="td font-semibold text-brand-600">{p.ref}</td>
                     <td className="td text-ink">{p.supplier}</td>
                     <td className="td font-semibold text-rose-600">{sar(p.amount - p.paid)}</td>
                     <td className="td text-right"><button onClick={() => paySupplier(p.id)} className="rounded-lg bg-brand-50 px-3 py-1.5 text-xs font-semibold text-brand-600 hover:bg-brand-500 hover:text-white">Pay</button></td>
@@ -68,7 +68,7 @@ export default function Ledger() {
         </div>
       </div>
 
-      <Modal open={!!inv} onClose={() => setPay(null)} title="Collect Payment" subtitle={inv ? `${inv.id} · ${inv.customer}` : ''}
+      <Modal open={!!inv} onClose={() => setPay(null)} title="Collect Payment" subtitle={inv ? `${inv.ref} · ${inv.customer}` : ''}
         footer={<><button className="btn-ghost" onClick={() => setPay(null)}>Cancel</button><button className="btn-primary" onClick={() => { recordPayment(pay, amt); setPay(null) }}><Coins size={15} /> Record</button></>}>
         {inv && <><div className="mb-2 flex justify-between rounded-xl bg-slate-50 px-3 py-2 text-sm"><span className="text-muted">Outstanding</span><span className="font-bold">{sar(inv.total - inv.paid)}</span></div><Field label="Amount (SAR)" type="number" value={amt} onChange={(e) => setAmt(e.target.value)} /></>}
       </Modal>

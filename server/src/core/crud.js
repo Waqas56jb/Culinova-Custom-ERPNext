@@ -5,6 +5,7 @@ import { authorize, redactFinancials } from '../middleware/rbac.js'
 import { isManagement } from '../rbac/permissions.js'
 import { asyncWrap } from '../middleware/error.js'
 import { logAudit } from './audit.js'
+import { nextNumber } from './numbering.js'
 
 // Fields a client may NEVER set through generic CRUD (identity, audit trail, auth) — prevents
 // mass-assignment tampering (e.g. forging `number`, overwriting `password_hash`, spoofing timestamps).
@@ -59,7 +60,8 @@ export function crudRouter(name, cfg) {
   r.post('/', authRequired, authorize(cfg.panel, 'create'), asyncWrap(async (req, res) => {
     const body = sanitizeBody(req.body, cfg, req.user.role)
     const pfx = NUMBER_PREFIX[t]
-    if (pfx && !body.number) body.number = genNumber(pfx)
+    // consume the editable numbering series (Company Settings) when configured; else fall back
+    if (pfx && !body.number) body.number = await nextNumber(t, pfx)
     const { data, error } = await supabase.from(t).insert(body).select().single()
     if (error) throw error
     await logAudit(req.user, name, data.id, 'created', body)

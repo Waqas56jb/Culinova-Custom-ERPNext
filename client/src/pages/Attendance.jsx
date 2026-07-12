@@ -26,7 +26,7 @@ export default function Attendance() {
                 {employees.map((e) => (
                   <tr key={e.id} className="hover:bg-slate-50/60">
                     <td className="td font-medium text-ink">{e.name}</td>
-                    <td className="td text-slate-500">{e.dept}</td>
+                    <td className="td text-slate-500">{e.department}</td>
                     <td className="td"><Badge tone={statusTone(e.today)}>{e.today}</Badge></td>
                     <td className="td">
                       <select value={e.today} onChange={(ev) => setAttendance(e.id, ev.target.value)} className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium outline-none focus:border-brand-400 focus:bg-white">
@@ -45,7 +45,7 @@ export default function Attendance() {
           <div className="divide-y divide-slate-100">
             {leaves.map((l) => (
               <div key={l.id} className="p-4">
-                <div className="flex items-center justify-between"><p className="text-sm font-semibold text-ink">{l.name}</p><Badge tone={l.status === 'Approved' ? 'green' : 'amber'}>{l.status}</Badge></div>
+                <div className="flex items-center justify-between"><p className="text-sm font-semibold text-ink">{l.employee}</p><Badge tone={l.status === 'Approved' ? 'green' : 'amber'}>{l.status}</Badge></div>
                 <p className="mt-0.5 text-xs text-muted">{l.type} · {l.from} → {l.to}</p>
                 {l.status === 'Pending' && <button onClick={() => approveLeave(l.id)} className="btn-primary mt-2 !py-1.5 text-xs">Approve</button>}
               </div>

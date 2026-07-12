@@ -1,14 +1,22 @@
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, BarChart, Bar, Legend,
 } from 'recharts'
+import { useState, useEffect } from 'react'
 import { Boxes, Layers, Building2, AlertTriangle } from 'lucide-react'
 import { PageHeader, KpiCard, ChartCard, Badge } from '../components/ui.jsx'
 import { sar } from '../data/mockData.js'
-import { stockMovement } from '../data/stockData.js'
+import { monthly } from '../data/agg.js'
 import { useData } from '../store/DataContext.jsx'
 
 export default function StockDashboard() {
-  const { items, stockItems, warehouses } = useData()
+  const d = useData()
+  const { items, stockItems, warehouses } = d
+  // live stock movement from the stock ledger (qty in vs out per month)
+  const [ledger, setLedger] = useState([])
+  useEffect(() => { d.resList('stock-ledger').then((l) => setLedger(Array.isArray(l) ? l : [])).catch(() => setLedger([])) }, [d])
+  const inS = monthly(ledger, { value: 'qty_in' })
+  const outS = monthly(ledger, { value: 'qty_out' })
+  const stockMovement = inS.map((b, i) => ({ m: b.m, inq: b.v, out: (outS[i] || { v: 0 }).v }))
   // catalogue SKUs come from the Item Master; on-hand qty joins from stock balances → live sync
   const balByName = {}
   for (const s of stockItems) { const k = (s.name || '').toLowerCase(); const b = balByName[k] || (balByName[k] = { physical: 0, available: 0 }); b.physical += Number(s.physical ?? s.qty) || 0; b.available += Number(s.available ?? s.qty) || 0 }

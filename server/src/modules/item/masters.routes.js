@@ -46,6 +46,24 @@ r.delete('/brands/:id', authRequired, authorize('warehouse', 'delete'), asyncWra
   await supabase.from('brands').delete().eq('id', req.params.id); res.json({ ok: true })
 }))
 
+// ── UNITS OF MEASURE (master) ──
+r.get('/uoms', authRequired, asyncWrap(async (req, res) => {
+  const { data, error } = await supabase.from('uoms').select('*').order('name')
+  if (error) throw error; res.json(data || [])
+}))
+r.post('/uoms', authRequired, authorize('warehouse', 'create'), asyncWrap(async (req, res) => {
+  const { data, error } = await supabase.from('uoms').insert({ name: req.body.name, symbol: req.body.symbol || null, is_active: req.body.is_active ?? true }).select().single()
+  if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: error.message })
+  res.status(201).json(data)
+}))
+r.patch('/uoms/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async (req, res) => {
+  const { data, error } = await supabase.from('uoms').update(req.body).eq('id', req.params.id).select().single()
+  if (error) throw error; res.json(data)
+}))
+r.delete('/uoms/:id', authRequired, authorize('warehouse', 'delete'), asyncWrap(async (req, res) => {
+  await supabase.from('uoms').delete().eq('id', req.params.id); res.json({ ok: true })
+}))
+
 // ── (2) PRODUCT FAMILIES ──
 r.get('/product-families', authRequired, asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('product_families').select('*').order('name')

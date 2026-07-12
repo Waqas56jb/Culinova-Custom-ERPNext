@@ -354,16 +354,23 @@ function OrderModal({ open, d }) {
 }
 
 function CustomerModal({ open, d }) {
-  const [v, on, reset] = useFormState({ name: '', group: 'Hospitality', territory: 'Riyadh' })
-  const save = async () => { try { await d.addCustomer({ name: v.name, category: v.group, territory: v.territory }) } catch (e) { alert(e.message); return } reset(); d.closeForm() }
+  const [v, on, reset] = useFormState({ name: '', group: '', territory: 'Riyadh', contact: '', email: '', phone: '' })
+  const [cats, setCats] = useState([])
+  useEffect(() => { if (open) d.partyCategories('customer').then((c) => setCats((c || []).map((x) => x.name))).catch(() => setCats([])) }, [open, d])
+  const save = async () => { try { await d.addCustomer({ name: v.name, category: v.group, territory: v.territory, contact: v.contact, email: v.email, phone: v.phone }) } catch (e) { alert(e.message); return } reset(); d.closeForm() }
   return (
     <Modal open={open} onClose={d.closeForm} title="New Customer" subtitle="Add a customer account"
       footer={<><button className="btn-ghost" onClick={d.closeForm}>Cancel</button><SaveButton onClick={save}>Create Customer</SaveButton></>}>
       <Field label="Customer Name" value={v.name} onChange={on('name')} placeholder="e.g. Jeddah Hilton" />
       <Row>
-        <Select label="Group" value={v.group} onChange={on('group')} options={['Hospitality', 'Catering', 'Restaurant', 'Retail']} />
-        <Select label="Territory" value={v.territory} onChange={on('territory')} options={['Riyadh', 'Jeddah', 'Eastern', 'Makkah']} />
+        <Select label="Group / Category" value={v.group} onChange={on('group')} options={cats.length ? cats : ['Hotel', 'Restaurant', 'Catering', 'Hospital', 'Contractor']} />
+        <Select label="Territory" value={v.territory} onChange={on('territory')} options={['Riyadh', 'Jeddah', 'Eastern', 'Makkah', 'Madinah', 'Other']} />
       </Row>
+      <Row>
+        <Field label="Contact Person" value={v.contact} onChange={on('contact')} placeholder="e.g. Ahmed Ali" />
+        <Field label="Phone" value={v.phone} onChange={on('phone')} placeholder="05xxxxxxxx" />
+      </Row>
+      <Field label="Email" value={v.email} onChange={on('email')} placeholder="name@company.com" />
     </Modal>
   )
 }

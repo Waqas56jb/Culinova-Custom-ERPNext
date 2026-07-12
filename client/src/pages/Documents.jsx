@@ -1,9 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
-import { FileText, Plus, History, Trash2, ExternalLink, Loader2 } from 'lucide-react'
+import { FileText, Plus, History, Trash2, ExternalLink, Loader2, Eye } from 'lucide-react'
 import { PageHeader, Badge } from '../components/ui.jsx'
 import { Modal, Field, Select } from '../components/Modal.jsx'
 import { useData } from '../store/DataContext.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
+
+const isImage = (u = '') => /\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(u)
+const isPdf = (u = '') => /\.pdf(\?|$)/i.test(u)
 
 const DOC_TYPES = ['Contract', 'Datasheet', 'Certificate', 'Drawing', 'Invoice', 'Registration', 'Report', 'Other']
 
@@ -14,6 +17,7 @@ export default function Documents() {
   const [rows, setRows] = useState([])
   const [add, setAdd] = useState(null)
   const [ver, setVer] = useState(null)     // document being versioned/viewed
+  const [preview, setPreview] = useState(null) // document being previewed inline
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
 
@@ -51,7 +55,8 @@ export default function Documents() {
                   <td className="td text-slate-500">{doc.uploaded_by_name || '—'}</td>
                   <td className="td text-slate-500 whitespace-nowrap">{new Date(doc.created_at).toLocaleDateString()}</td>
                   <td className="td text-right">
-                    {doc.file_url && <a href={doc.file_url} target="_blank" rel="noreferrer" className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-brand-600 inline-block" title="Open"><ExternalLink size={15} /></a>}
+                    {doc.file_url && <button className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-brand-600" title="Preview" onClick={() => setPreview(doc)}><Eye size={15} /></button>}
+                    {doc.file_url && <a href={doc.file_url} target="_blank" rel="noreferrer" className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-brand-600 inline-block" title="Open in new tab"><ExternalLink size={15} /></a>}
                     <button className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-brand-600" title="Version history" onClick={() => openVersions(doc)}><History size={15} /></button>
                     {canEdit && <button className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-500" title="Delete" onClick={() => remove(doc.id)}><Trash2 size={15} /></button>}
                   </td>
@@ -101,6 +106,20 @@ export default function Documents() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+      </Modal>
+
+      {/* inline preview modal */}
+      <Modal open={!!preview} onClose={() => setPreview(null)} size="xl" title={preview?.name} subtitle={preview?.doc_type}
+        footer={<>{preview?.file_url && <a href={preview.file_url} target="_blank" rel="noreferrer" className="btn-ghost">Open in new tab</a>}<button className="btn-ghost" onClick={() => setPreview(null)}>Close</button></>}>
+        {preview && (
+          <div className="grid place-items-center">
+            {isImage(preview.file_url)
+              ? <img src={preview.file_url} alt={preview.name} className="max-h-[70vh] w-auto rounded-lg border border-slate-200" />
+              : isPdf(preview.file_url)
+                ? <iframe src={preview.file_url} title={preview.name} className="h-[70vh] w-full rounded-lg border border-slate-200" />
+                : <div className="py-10 text-center text-sm text-muted"><FileText size={40} className="mx-auto mb-2 text-slate-300" />No inline preview for this file type.<br /><a href={preview.file_url} target="_blank" rel="noreferrer" className="mt-2 inline-block font-semibold text-brand-600">Open in new tab →</a></div>}
           </div>
         )}
       </Modal>

@@ -66,7 +66,7 @@ export default function Quotations() {
                     <td className="td font-semibold">{sar(q.amount)}</td>
                     <td className="td text-slate-500">{q.discount ? `${q.discount}%` : '—'}</td>
                     {isMgmt && <td className="td"><span className={`chip ${q.gp < 35 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>{q.gp}%</span></td>}
-                    <td className="td text-slate-500">{q.valid_till || '—'}</td>
+                    <td className="td text-slate-500">{q.validity ? `${q.validity} days` : '—'}</td>
                     <td className="td text-slate-500">{q.owner}</td>
                     <td className="td"><Badge tone={statusTone(q.status)}>{q.status}</Badge></td>
                     <td className="td">

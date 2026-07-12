@@ -31,7 +31,7 @@ const mapItem = (r) => ({ ...r, group: r.item_group, rate: Number(r.selling_rate
 const mapStock = (r) => ({ code: r.code, name: r.item, group: r.group, warehouse: r.warehouse, uom: r.uom || 'Nos', qty: r.physical ?? 0, physical: r.physical ?? 0, reserved: r.reserved ?? 0, available: r.available ?? 0, incoming: r.incoming ?? 0, aging: r.aging_days ?? 0, reorder: r.reorder_level ?? 0, rate: Number(r.rate) || 0 })
 const mapDN = (r) => ({ ...r, item: r.item_name, project: r.project_id, value: Number(r.value) || 0, date: d10(r), ref: r.number })
 const mapInvoice = (r) => ({ ...r, total: Number(r.total) || 0, paid: Number(r.paid) || 0, project: r.project_id || '—', due: r.due_date || d10(r), date: d10(r), ref: r.number })
-const mapPayment = (r) => ({ ...r, ref: r.reference, amount: Number(r.amount) || 0, date: d10(r) })
+const mapPayment = (r) => ({ ...r, number: r.number, ref: r.number, reference: r.reference, amount: Number(r.amount) || 0, date: d10(r) })
 const mapPayable = (r) => ({ ...r, amount: Number(r.amount) || 0, paid: Number(r.paid) || 0, date: d10(r), ref: r.number })
 const mapSnag = (r) => ({ ...r, item: r.item_name, project: r.project_id, date: d10(r) })
 const mapTest = (r) => ({ ...r, project: r.project_id })
@@ -87,7 +87,7 @@ export function DataProvider({ children }) {
     opportunities: { ep: 'opportunities', set: setOpportunities, map: mapOpp, panel: 'sales' },
     salesOrders: { ep: 'sales/orders', set: setSalesOrders, map: mapSO, panel: 'sales' },
     suppliers: { ep: 'suppliers', set: setSuppliers, map: mapSupplier, panel: 'procurement' },
-    rfqs: { ep: 'rfqs', set: setRfqs, map: mapRFQ, panel: 'procurement' },
+    rfqs: { ep: 'procurement/rfqs', set: setRfqs, map: mapRFQ, panel: 'procurement' },
     purchaseOrders: { ep: 'purchase-orders', set: setPurchaseOrders, map: mapPO, panel: 'procurement' },
     warehouses: { ep: 'warehouses', set: setWarehouses, map: (r) => r, panel: 'warehouse' },
     stockItems: { ep: 'inventory/stock', set: setStockItems, map: mapStock, panel: 'warehouse' },
@@ -204,6 +204,10 @@ export function DataProvider({ children }) {
   const docNewVersion = (id, body) => api(`/documents/${id}/version`, { method: 'POST', body })
   const docDelete = (id) => api(`/documents/${id}`, { method: 'DELETE' })
 
+  // ── USER PREFERENCES (dashboard widgets etc.) ──
+  const getPrefs = () => api('/preferences')
+  const savePref = (key, value) => api(`/preferences/${key}`, { method: 'PUT', body: { value } })
+
   // ── GLOBAL SEARCH ──
   const globalSearch = (q) => api(`/search?q=${encodeURIComponent(q)}`)
 
@@ -306,7 +310,16 @@ export function DataProvider({ children }) {
   const updateTask = async (pid, tid, p) => { await patch('project-tasks', tid, p); await loadProjects() }
   const deleteTask = async (pid, tid) => { await del('project-tasks', tid); await loadProjects() }
   const updateBoqItem = async (pid, idx, p) => { const proj = projects.find((x) => x.id === pid); const b = proj?.boq?.[idx]; if (b?.id) { await patch('pm/boq', b.id, p); await loadProjects() } }
-  const updateProject = async (pid, p) => { const body = {}; if (p.progress != null) body.progress = p.progress; if (p.status) body.status = p.status; await patch('projects', pid, body); await loadProjects() }
+  const updateProject = async (pid, p) => {
+    const body = {}
+    if (p.progress != null) body.progress = p.progress
+    if (p.status) body.status = p.status
+    if (p.name) body.name = p.name
+    if (p.contractValue != null) body.contract_value = Number(p.contractValue) || 0  // note: protected — only Management persists this
+    if (p.start) body.start_date = p.start
+    if (p.end) body.end_date = p.end
+    await patch('projects', pid, body); await loadProjects()
+  }
   const addVariation = async (pid, vo) => { await post('variations', { project_id: pid, description: vo.desc || vo.description, amount: Number(vo.amount) || 0 }); await loadProjects() }
 
   // ── PROCUREMENT ──
@@ -384,6 +397,7 @@ export function DataProvider({ children }) {
     adminUsers, adminAddUser, adminUpdateUser, adminDeleteUser, adminResetPassword, adminRbac, adminAudit, adminApprovals, adminRequestApproval, adminDecideApproval,
     getParty, addPartyChild, deletePartyChild, partyCategories,
     resList, resGet, resAdd, resUpdate, resDelete, docList, docGet, docAdd, docNewVersion, docDelete,
+    getPrefs, savePref,
     reload, loadAll,
     addLead, addOpportunity, lostOpportunity, wonOpportunity, addInteraction, addQuotation, updateQuotation, addOrder, addCustomer, convertLead, checkAvailability, getOrderItems,
     approveQuotation, rejectQuotation, sendQuotation, acceptQuotation, lostQuotation,

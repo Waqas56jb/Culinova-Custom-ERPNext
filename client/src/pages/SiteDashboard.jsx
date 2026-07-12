@@ -40,7 +40,7 @@ export default function SiteDashboard() {
             {snags.slice(0, 5).map((s) => (
               <div key={s.id} className="flex items-center gap-3 py-3">
                 <span className="grid h-9 w-9 place-items-center rounded-lg bg-amber-50 text-amber-600"><AlertTriangle size={16} /></span>
-                <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-ink">{s.desc}</p><p className="text-xs text-muted">{s.project} · {s.item}</p></div>
+                <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-ink">{s.description}</p><p className="text-xs text-muted">{s.project} · {s.item}</p></div>
                 <Badge tone={statusTone(s.severity)}>{s.severity}</Badge>
                 <Badge tone={statusTone(s.status)}>{s.status}</Badge>
               </div>

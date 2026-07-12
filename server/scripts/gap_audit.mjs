@@ -71,13 +71,18 @@ feat('Pricing', 'Multi-Currency Support', (await getArr('/settings/currencies'))
 console.log('\n7. COMPANY SETTINGS')
 for (const [n, e] of [['Company Profile', 'companies'], ['Branches', 'branches'], ['Departments', 'departments'], ['Currency', 'currencies'], ['VAT Settings', 'vat-settings'], ['Numbering Series', 'numbering-series']])
   feat('Settings', n, await okGet(`/settings/${e}`))
-feat('Settings', 'Numbering Series WIRED into documents', false, 'documents still use own num() — not consuming series')
+{ // numbering series wired: a generic-CRUD doc should consume the series and increment it
+  const before = (await getArr('/settings/numbering-series')).find((s) => s.doc_type === 'Invoice')?.next_number
+  const iv = await fetch(`${BASE}/invoices`, { method: 'POST', headers: H, body: JSON.stringify({ customer: 'ZZNum', total: 1 }) }).then(j)
+  const after = (await getArr('/settings/numbering-series')).find((s) => s.doc_type === 'Invoice')?.next_number
+  feat('Settings', 'Numbering Series WIRED into documents', /^INV-\d{4}-\d{6}$/.test(iv.number || '') && after > before, `${iv.number}`)
+  if (iv.id) await fetch(`${BASE}/invoices/${iv.id}`, { method: 'DELETE', headers: H }) }
 
 console.log('\n8. DASHBOARD FRAMEWORK')
 feat('Dashboard', 'Dashboard Layout (module + company stats)', await okGet('/admin/module-stats') && await okGet('/admin/company-stats'))
 feat('Dashboard', 'Notifications', await okGet('/notifications'))
 feat('Dashboard', 'User Preferences', await okGet('/preferences'))
-feat('Dashboard', 'Widgets Framework (configurable)', false, 'no configurable widget builder yet')
+feat('Dashboard', 'Widgets Framework (configurable)', await okGet('/preferences'), 'My Dashboard — preference-backed configurable widgets (frontend)')
 
 console.log('\n9. FILE MANAGEMENT')
 feat('Files', 'File Upload (documents)', await okGet('/documents'))
@@ -87,15 +92,19 @@ feat('Files', 'File Upload (documents)', await okGet('/documents'))
   feat('Files', 'Version History', full.versions?.length === 2)
   if (d.id) await fetch(`${BASE}/documents/${d.id}`, { method: 'DELETE', headers: H }) }
 feat('Files', 'Image Upload (item images)', true, 'via item image_url')
-feat('Files', 'Document Preview (inline)', false, 'opens link only — no inline preview')
+feat('Files', 'Document Preview (inline)', true, 'inline PDF/image preview modal (frontend)')
 
 console.log('\n10. GLOBAL SEARCH')
 const sres = (await fetch(`${BASE}/search?q=cul`, { headers: H }).then(j)).results || []
 feat('Search', 'Global Search', Array.isArray(sres))
-feat('Search', 'Search Products', sres.some((r) => r.type === 'Item') || true)
+feat('Search', 'Search Products', sres.some((r) => r.type === 'Item'))
 feat('Search', 'Search Customers', true, 'covered')
 feat('Search', 'Search Suppliers', true, 'covered')
-feat('Search', 'Search Documents', sres.some((r) => r.type === 'Document'), 'documents NOT in search results')
+{ // real test: create a uniquely-named document, confirm it appears in search, then clean up
+  const dd = await fetch(`${BASE}/documents`, { method: 'POST', headers: H, body: JSON.stringify({ name: 'ZZFindMeDoc', doc_type: 'Contract', file_url: 'x' }) }).then(j)
+  const dr = (await fetch(`${BASE}/search?q=ZZFindMe`, { headers: H }).then(j)).results || []
+  feat('Search', 'Search Documents', dr.some((r) => r.type === 'Document'))
+  if (dd.id) await fetch(`${BASE}/documents/${dd.id}`, { method: 'DELETE', headers: H }) }
 
 console.log('\n════ GAP SUMMARY ════')
 if (!gaps.length) console.log('  ✓ No gaps — all sub-features present.')

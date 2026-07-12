@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { MapPin, Layers, ArrowLeftRight, SlidersHorizontal, ScrollText } from 'lucide-react'
 import { PageHeader } from '../components/ui.jsx'
 import ResourceTable from '../components/ResourceTable.jsx'
@@ -10,8 +10,14 @@ export default function WarehouseOps() {
   const { canSee } = useAuth()
   const canEdit = canSee('warehouse')
   const [tab, setTab] = useState('Locations')
-  const warehouses = (d.warehouses || []).map((w) => w.name).filter(Boolean)
-  const items = (d.items || []).map((i) => i.item_name).filter(Boolean)
+  // self-fetch reference data so dropdowns always populate (independent of global store timing/panel gating)
+  const [ref, setRef] = useState({ warehouses: [], items: [] })
+  useEffect(() => {
+    Promise.all([d.resList('warehouses').catch(() => []), d.resList('items').catch(() => [])])
+      .then(([w, it]) => setRef({ warehouses: (w || []).map((x) => x.name).filter(Boolean), items: (it || []).map((x) => x.item_name).filter(Boolean) }))
+  }, [d])
+  const warehouses = ref.warehouses.length ? ref.warehouses : (d.warehouses || []).map((w) => w.name).filter(Boolean)
+  const items = ref.items.length ? ref.items : (d.items || []).map((i) => i.item_name).filter(Boolean)
 
   const TABS = [
     { key: 'Locations', icon: MapPin }, { key: 'Categories', icon: Layers },

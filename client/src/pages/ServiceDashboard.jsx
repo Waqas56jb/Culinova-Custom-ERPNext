@@ -8,7 +8,7 @@ export default function ServiceDashboard() {
   const { tickets, visits, contracts } = useData()
   const open = tickets.filter((t) => t.status !== 'Resolved')
   const scheduled = visits.filter((v) => v.status === 'Scheduled')
-  const breaches = tickets.filter((t) => t.sla === 'Resolution Due')
+  const breaches = tickets.filter((t) => !['On Track','Met'].includes(t.sla))
 
   return (
     <>

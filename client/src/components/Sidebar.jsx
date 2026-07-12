@@ -97,6 +97,9 @@ export default function Sidebar({ open, onClose }) {
           {showCatalog && (
             <div>
               <p className="section-title mb-2">Catalog</p>
+              <NavLink to="/my-dashboard" onClick={onClose} className={({ isActive }) => `nav-link group ${isActive ? 'nav-link-active' : 'hover:bg-white/5 hover:text-white'}`}>
+                {({ isActive }) => (<><LayoutDashboard size={18} className={isActive ? 'text-brand-300' : 'text-slate-400 group-hover:text-brand-300'} /><span className="flex-1">My Dashboard</span></>)}
+              </NavLink>
               <NavLink to="/stock/item-master" onClick={onClose} className={({ isActive }) => `nav-link group ${isActive ? 'nav-link-active' : 'hover:bg-white/5 hover:text-white'}`}>
                 {({ isActive }) => (<><Package size={18} className={isActive ? 'text-brand-300' : 'text-slate-400 group-hover:text-brand-300'} /><span className="flex-1">Item Master</span></>)}
               </NavLink>

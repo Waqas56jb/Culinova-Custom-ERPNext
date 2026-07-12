@@ -29,7 +29,7 @@ export default function GoodsReceipt() {
             <tbody>
               {toReceive.map((po) => (
                 <tr key={po.id} className="hover:bg-slate-50/60">
-                  <td className="td font-semibold text-brand-600">{po.id}</td>
+                  <td className="td font-semibold text-brand-600">{po.ref}</td>
                   <td className="td font-medium text-ink">{po.supplier}</td>
                   <td className="td text-slate-600">{po.item}</td>
                   <td className="td text-slate-600">{po.qty || 1}</td>
@@ -55,7 +55,7 @@ export default function GoodsReceipt() {
           {received.map((po) => (
             <div key={po.id} className="flex items-center gap-3 px-4 py-3">
               <span className="grid h-9 w-9 place-items-center rounded-lg bg-emerald-50 text-emerald-600"><CheckCircle2 size={16} /></span>
-              <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-ink">{po.item}</p><p className="text-xs text-muted">{po.id} · {po.supplier}</p></div>
+              <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-ink">{po.item}</p><p className="text-xs text-muted">{po.ref} · {po.supplier}</p></div>
               <span className="text-sm font-semibold text-ink">{sar(po.amount)}</span>
               <Badge tone={statusTone(po.status)}>{po.status}</Badge>
             </div>

@@ -4,18 +4,22 @@ import {
 import { Wallet, TrendingUp, Coins, AlertTriangle } from 'lucide-react'
 import { PageHeader, KpiCard, ChartCard, Badge, statusTone } from '../components/ui.jsx'
 import { sar } from '../data/mockData.js'
-import { revenueExpense, cashFlow } from '../data/financeData.js'
+import { monthly, zip, k1000 } from '../data/agg.js'
 import { useData } from '../store/DataContext.jsx'
 
 export default function FinanceDashboard() {
-  const { invoices, payables } = useData()
-  const invoiced = invoices.reduce((s, i) => s + i.total, 0)
-  const collected = invoices.reduce((s, i) => s + i.paid, 0)
+  const { invoices, payables, payments } = useData()
+  const invoiced = invoices.reduce((s, i) => s + (i.total || 0), 0)
+  const collected = invoices.reduce((s, i) => s + (i.paid || 0), 0)
   const receivables = invoiced - collected
-  const ap = payables.reduce((s, p) => s + (p.amount - p.paid), 0)
-  const vat = Math.round(invoices.reduce((s, i) => s + (i.total - i.total / 1.15), 0))
-  const income = Math.round(invoices.reduce((s, i) => s + i.total / 1.15, 0))
-  const expense = payables.reduce((s, p) => s + p.amount, 0)
+  const ap = payables.reduce((s, p) => s + ((p.amount || 0) - (p.paid || 0)), 0)
+  const vat = Math.round(invoices.reduce((s, i) => s + ((i.total || 0) - (i.total || 0) / 1.15), 0))
+  const income = Math.round(invoices.reduce((s, i) => s + (i.total || 0) / 1.15, 0))
+  const expense = payables.reduce((s, p) => s + (p.amount || 0), 0)
+
+  // live monthly trends from real store data
+  const revenueExpense = zip(monthly(invoices, { value: 'total' }), monthly(payables, { value: 'amount' }), 'income', 'expense', k1000)
+  const cashFlow = zip(monthly(invoices, { value: 'paid' }), monthly(payments || [], { value: 'amount' }), 'inflow', 'outflow', k1000)
 
   return (
     <>
@@ -77,7 +81,7 @@ export default function FinanceDashboard() {
             <tbody>
               {invoices.slice(0, 5).map((i) => (
                 <tr key={i.id} className="hover:bg-slate-50/60">
-                  <td className="td font-semibold text-brand-600">{i.id}</td>
+                  <td className="td font-semibold text-brand-600">{i.number || i.id}</td>
                   <td className="td text-ink">{i.customer}</td>
                   <td className="td font-semibold">{sar(i.total)}</td>
                   <td className="td">{i.total - i.paid > 0 ? <span className="font-semibold text-rose-600">{sar(i.total - i.paid)}</span> : '—'}</td>

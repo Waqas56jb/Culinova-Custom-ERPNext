@@ -5,7 +5,8 @@ import {
 import { FolderKanban, Wallet, TrendingUp, AlertTriangle, Download } from 'lucide-react'
 import { PageHeader, KpiCard, ChartCard, Badge, statusTone } from '../components/ui.jsx'
 import { sar } from '../data/mockData.js'
-import { gpOf, gpPctOf, progressTrend } from '../data/projectData.js'
+import { gpOf, gpPctOf } from '../data/projectData.js'
+import { monthly } from '../data/agg.js'
 import { useData } from '../store/DataContext.jsx'
 
 const statusColors = { 'On Track': '#0EA99A', 'At Risk': '#E0A82E', Delayed: '#ef4444', Completed: '#3b82f6' }
@@ -15,18 +16,21 @@ export default function ProjectDashboard() {
   const active = projects.filter((p) => p.status !== 'Completed').length
   const totalCV = projects.reduce((s, p) => s + p.contractValue, 0)
   const totalGP = projects.reduce((s, p) => s + gpOf(p), 0)
-  const avgGP = Math.round((totalGP / totalCV) * 100)
+  const avgGP = totalCV > 0 ? Math.round((totalGP / totalCV) * 100) : 0
   const delayed = projects.filter((p) => p.status === 'Delayed').length
   const totalBilled = projects.reduce((s, p) => s + p.billed, 0)
   const totalCollected = projects.reduce((s, p) => s + p.collected, 0)
   const totalCommitted = projects.reduce((s, p) => s + p.committedCost, 0)
-  const avgProgress = Math.round(projects.reduce((s, p) => s + p.progress, 0) / projects.length)
+  const avgProgress = projects.length ? Math.round(projects.reduce((s, p) => s + p.progress, 0) / projects.length) : 0
 
+  const short = (p) => String(p.ref || p.number || '').replace('PRJ-', '#') || (p.name || '').slice(0, 10)
   const statusDist = ['On Track', 'At Risk', 'Delayed', 'Completed'].map((s) => ({
     name: s, value: projects.filter((p) => p.status === s).length, color: statusColors[s],
   }))
-  const budgetVsActual = projects.map((p) => ({ name: p.id.replace('PRJ-', '#'), budget: Math.round(p.contractValue / 1000), actual: Math.round(p.actualCost / 1000) }))
-  const profitability = projects.map((p) => ({ name: p.id.replace('PRJ-', '#'), gp: gpPctOf(p) }))
+  const budgetVsActual = projects.map((p) => ({ name: short(p), budget: Math.round(p.contractValue / 1000), actual: Math.round(p.actualCost / 1000) }))
+  const profitability = projects.map((p) => ({ name: short(p), gp: gpPctOf(p) }))
+  // live "projects started" trend (real monthly count) — replaces the empty planned-vs-actual mock series
+  const progressTrend = monthly(projects, { count: true }).map((b) => ({ m: b.m, started: b.v }))
 
   return (
     <>
@@ -104,7 +108,7 @@ export default function ProjectDashboard() {
           </ResponsiveContainer>
         </ChartCard>
 
-        <ChartCard title="Progress: Planned vs Actual" subtitle="% complete over time" className="xl:col-span-2">
+        <ChartCard title="Projects Started" subtitle="New projects per month" className="xl:col-span-2">
           <ResponsiveContainer width="100%" height={230}>
             <AreaChart data={progressTrend} margin={{ left: -18, right: 6, top: 6 }}>
               <defs>
@@ -112,11 +116,10 @@ export default function ProjectDashboard() {
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#eef2f6" vertical={false} />
               <XAxis dataKey="m" tickLine={false} axisLine={false} tick={{ fontSize: 12, fill: '#94a3b8' }} />
-              <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 12, fill: '#94a3b8' }} />
+              <YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fontSize: 12, fill: '#94a3b8' }} />
               <Tooltip />
               <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Area type="monotone" dataKey="planned" name="Planned" stroke="#E0A82E" strokeWidth={2} strokeDasharray="5 4" fill="none" isAnimationActive={false} />
-              <Area type="monotone" dataKey="actual" name="Actual" stroke="#0EA99A" strokeWidth={2.5} fill="url(#pA)" isAnimationActive={false} />
+              <Area type="monotone" dataKey="started" name="Projects Started" stroke="#0EA99A" strokeWidth={2.5} fill="url(#pA)" isAnimationActive={false} />
             </AreaChart>
           </ResponsiveContainer>
         </ChartCard>

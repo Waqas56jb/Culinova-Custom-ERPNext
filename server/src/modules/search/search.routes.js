@@ -16,7 +16,7 @@ r.get('/', authRequired, asyncWrap(async (req, res) => {
   const like = `%${q}%`
   const lim = 6
 
-  const [customers, suppliers, items, quotations, orders, projects, pos, leads] = await Promise.all([
+  const [customers, suppliers, items, quotations, orders, projects, pos, leads, documents] = await Promise.all([
     supabase.from('customers').select('id, name').ilike('name', like).limit(lim),
     supabase.from('suppliers').select('id, name').ilike('name', like).limit(lim),
     supabase.from('items').select('id, item_code, item_name, brand').or(`item_name.ilike.${like},item_code.ilike.${like},brand.ilike.${like}`).limit(8),
@@ -25,6 +25,7 @@ r.get('/', authRequired, asyncWrap(async (req, res) => {
     supabase.from('projects').select('id, number, name, customer').or(`number.ilike.${like},name.ilike.${like},customer.ilike.${like}`).limit(lim),
     supabase.from('purchase_orders').select('id, number, supplier').or(`number.ilike.${like},supplier.ilike.${like}`).limit(lim),
     supabase.from('leads').select('id, name, company').or(`name.ilike.${like},company.ilike.${like}`).limit(lim),
+    supabase.from('documents').select('id, name, doc_type').or(`name.ilike.${like},doc_type.ilike.${like}`).limit(lim),
   ])
 
   const results = []
@@ -37,6 +38,7 @@ r.get('/', authRequired, asyncWrap(async (req, res) => {
   push(projects, (x) => ({ type: 'Project', id: x.id, label: x.name || x.number, sub: x.customer, route: `/projects/${x.id}` }))
   push(pos, (x) => ({ type: 'Purchase Order', id: x.id, label: x.number, sub: x.supplier, route: '/procurement/po' }))
   push(leads, (x) => ({ type: 'Lead', id: x.id, label: x.name || x.company, sub: x.company, route: '/sales/leads' }))
+  push(documents, (x) => ({ type: 'Document', id: x.id, label: x.name, sub: x.doc_type, route: '/admin/documents' }))
 
   res.json({ query: raw, results })
 }))

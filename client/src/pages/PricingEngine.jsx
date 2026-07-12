@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { ListChecks, Percent, Info } from 'lucide-react'
 import { PageHeader } from '../components/ui.jsx'
 import ResourceTable from '../components/ResourceTable.jsx'
@@ -11,7 +11,13 @@ export default function PricingEngine() {
   const canEdit = canSee('warehouse') || canSee('admin')
   const [tab, setTab] = useState('Price Lists')
   const currencyCodes = (d.settings?.currencies || []).map((c) => c.code)
-  const roles = ['Sales User', 'Sales Manager', 'Management']
+  // roles come from the real RBAC config (not hardcoded); categories from party categories master
+  const [roles, setRoles] = useState([])
+  const [custCats, setCustCats] = useState([])
+  useEffect(() => {
+    d.adminRbac().then((r) => setRoles(Object.keys(r.rolePanels || {}))).catch(() => setRoles([]))
+    d.partyCategories('customer').then((c) => setCustCats((c || []).map((x) => x.name))).catch(() => setCustCats([]))
+  }, [d])
 
   return (
     <>
@@ -38,7 +44,7 @@ export default function PricingEngine() {
       {tab === 'Discount Rules' && (
         <ResourceTable resource="discount-rules" canEdit={canEdit} title="Discount Rules" subtitle="Per-role / category discount limits (drives quotation approval)" addLabel="Add Rule"
           columns={[{ key: 'name', label: 'Rule', className: 'font-semibold text-ink' }, { key: 'applies_to', label: 'Applies To', type: 'badge' }, { key: 'target', label: 'Target' }, { key: 'discount_pct', label: 'Discount %', render: (r) => `${r.discount_pct}%` }, { key: 'max_discount', label: 'Max %', render: (r) => `${r.max_discount}%` }, { key: 'is_active', label: 'Active', type: 'bool' }]}
-          fields={[{ key: 'name', label: 'Rule Name', required: true }, { key: 'applies_to', label: 'Applies To', type: 'select', options: ['Role', 'Customer Category', 'Item Group', 'All'] }, { key: 'target', label: 'Target', type: 'select', options: roles }, { key: 'discount_pct', label: 'Allowed Discount %', type: 'number' }, { key: 'max_discount', label: 'Max Discount %', type: 'number' }, { key: 'is_active', label: 'Active', type: 'checkbox' }]} />
+          fields={[{ key: 'name', label: 'Rule Name', required: true }, { key: 'applies_to', label: 'Applies To', type: 'select', options: ['Role', 'Customer Category', 'Item Group', 'All'] }, { key: 'target', label: 'Target (role / category)', type: 'select', options: [...roles, ...custCats] }, { key: 'discount_pct', label: 'Allowed Discount %', type: 'number' }, { key: 'max_discount', label: 'Max Discount %', type: 'number' }, { key: 'is_active', label: 'Active', type: 'checkbox' }]} />
       )}
     </>
   )

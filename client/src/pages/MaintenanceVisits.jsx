@@ -17,7 +17,7 @@ export default function MaintenanceVisits() {
             {contracts.map((c) => (
               <div key={c.id} className="flex items-center gap-3 px-4 py-3">
                 <span className="grid h-9 w-9 place-items-center rounded-lg bg-emerald-50 text-emerald-600"><ShieldCheck size={16} /></span>
-                <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-ink">{c.customer}</p><p className="text-xs text-muted">{c.id} · till {c.end}</p></div>
+                <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-ink">{c.customer}</p><p className="text-xs text-muted">{c.ref || c.id} · till {c.end_date}</p></div>
                 <Badge tone={statusTone(c.status)}>{c.status}</Badge>
               </div>
             ))}

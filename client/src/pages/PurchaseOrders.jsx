@@ -28,7 +28,7 @@ export default function PurchaseOrders() {
             <tbody>
               {purchaseOrders.map((po) => (
                 <tr key={po.id} className="hover:bg-slate-50/60">
-                  <td className="td font-semibold text-brand-600">{po.id}</td>
+                  <td className="td font-semibold text-brand-600">{po.ref}</td>
                   <td className="td font-medium text-ink">{po.supplier}</td>
                   <td className="td text-slate-600">{po.item}</td>
                   <td className="td"><span className="inline-flex items-center gap-1 text-xs font-semibold text-violet-600"><FolderKanban size={13} /> {po.project}</span></td>
