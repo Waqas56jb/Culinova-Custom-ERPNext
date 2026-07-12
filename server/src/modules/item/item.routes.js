@@ -23,7 +23,9 @@ async function repriceItem(merged) {
     price_factor: blank(merged.price_factor) ?? brandRec?.price_factor ?? null,
     currency: merged.currency || brandRec?.currency || null,
   }
-  const chain = await priceItem(resolved)
+  // item-master pricing is the LIST price — discounts are applied later at quotation time, not baked
+  // into the item's stored selling price
+  const chain = await priceItem(resolved, { applyDiscount: false })
   if (!chain.priced) return {}
   const cols = persistable(chain)
   cols.standard_rate = chain.selling_price // the rest of the app reads standard_rate as the sell rate

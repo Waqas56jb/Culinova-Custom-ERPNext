@@ -5,6 +5,8 @@ import { useData } from '../store/DataContext.jsx'
 import { sar } from '../data/mockData.js'
 
 const TABS = ['Details', 'Inventory', 'Sales', 'Purchasing', 'Tax & Trade', 'Accounting', 'Variants', 'Prices', 'More']
+// Top-level ERP buckets — always available; DB categories (from product families) are merged on top.
+const DEFAULT_CATEGORIES = ['Equipment', 'Custom Fabrication']
 
 const Check = ({ label, val, onChange }) => (
   <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2 text-sm">
@@ -27,11 +29,17 @@ function ChildTable({ title, icon: Icon, rows = [], onChange, cols }) {
       <div className="space-y-2">
         {rows.map((r, i) => (
           <div key={i} className="flex items-center gap-2">
-            {cols.map((c) => (
-              c.type === 'check'
-                ? <label key={c.key} className="flex shrink-0 items-center gap-1 text-xs"><input type="checkbox" checked={!!r[c.key]} onChange={(e) => set(i, c.key, e.target.checked)} className="h-4 w-4 accent-brand-500" />{c.label}</label>
-                : <input key={c.key} type={c.type || 'text'} placeholder={c.label} value={r[c.key] ?? ''} onChange={(e) => set(i, c.key, c.type === 'number' ? Number(e.target.value) : e.target.value)} className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50/60 px-2.5 py-1.5 text-xs outline-none focus:border-brand-400 focus:bg-white" />
-            ))}
+            {cols.map((c) => {
+              if (c.type === 'check') return <label key={c.key} className="flex shrink-0 items-center gap-1 text-xs"><input type="checkbox" checked={!!r[c.key]} onChange={(e) => set(i, c.key, e.target.checked)} className="h-4 w-4 accent-brand-500" />{c.label}</label>
+              if (c.type === 'select') {
+                const opts = c.options || []
+                const cur = r[c.key]
+                // preserve a value that isn't in the master so existing rows never silently blank out
+                const withCur = cur && !opts.includes(cur) ? [...opts, cur] : opts
+                return <select key={c.key} value={cur ?? ''} onChange={(e) => set(i, c.key, e.target.value)} className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50/60 px-2.5 py-1.5 text-xs outline-none focus:border-brand-400 focus:bg-white">{withCur.map((o) => <option key={o} value={o}>{o || c.label}</option>)}</select>
+              }
+              return <input key={c.key} type={c.type || 'text'} placeholder={c.label} value={r[c.key] ?? ''} onChange={(e) => set(i, c.key, c.type === 'number' ? Number(e.target.value) : e.target.value)} className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50/60 px-2.5 py-1.5 text-xs outline-none focus:border-brand-400 focus:bg-white" />
+            })}
             <button type="button" onClick={() => rm(i)} className="shrink-0 text-slate-300 hover:text-rose-500"><Trash2 size={15} /></button>
           </div>
         ))}
@@ -65,6 +73,7 @@ export default function ItemForm({ open, itemId, onClose }) {
   const [v, setV] = useState(blank())
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  const [uoms, setUoms] = useState([])              // UOM master (shared lookup)
   const isEdit = !!itemId
 
   useEffect(() => {
@@ -74,6 +83,13 @@ export default function ItemForm({ open, itemId, onClose }) {
     else setV(blank())
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, itemId])
+
+  // load the UOM master so every UOM field is a real DB-driven dropdown (not free text)
+  useEffect(() => {
+    if (!open) return
+    d.resList('masters/uoms').then((rows) => setUoms(rows || [])).catch(() => setUoms([]))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
 
   const on = (k) => (e) => setV((s) => ({ ...s, [k]: e?.target ? e.target.value : e }))
   const setChild = (k) => (rows) => setV((s) => ({ ...s, [k]: rows }))
@@ -90,7 +106,16 @@ export default function ItemForm({ open, itemId, onClose }) {
 
   const groups = (d.itemGroups || []).filter((g) => !g.is_group).map((g) => g.item_group_name)
   const brandOpts = ['', ...(d.brands || []).map((b) => b.brand)]
-  const attrOpts = (d.itemAttributes || []).map((a) => a.attribute_name)
+  const attrOpts = (d.itemAttributes || []).map((a) => a.attribute_name).filter(Boolean)
+  // UOM master → dropdown options; falls back to free-text only when the master is empty
+  const uomNames = (uoms || []).map((u) => u.name).filter(Boolean)
+  const uomOptsFor = (cur) => { const base = ['', ...uomNames]; return cur && !uomNames.includes(cur) ? [...base, cur] : base }
+  const uomControl = (label, key) => uomNames.length
+    ? <Select label={label} value={v[key]} onChange={on(key)} options={uomOptsFor(v[key])} />
+    : <Field label={label} value={v[key]} onChange={on(key)} placeholder="e.g. Nos" />
+  // Category options = fixed ERP defaults + distinct categories from the product-families master
+  const catNames = [...new Set([...DEFAULT_CATEGORIES, ...(d.productFamilies || []).map((f) => f.category).filter(Boolean)])]
+  const catOpts = v.category && !catNames.includes(v.category) ? ['', ...catNames, v.category] : ['', ...catNames]
 
   return (
     <Modal open={open} onClose={() => onClose(false)} size="lg"
@@ -117,14 +142,17 @@ export default function ItemForm({ open, itemId, onClose }) {
           </Row>
           <Row>
             <Select label="Product Family" value={v.product_family} onChange={on('product_family')} options={['', ...(d.productFamilies || []).map((f) => f.name)]} />
-            <Select label="Item Group (optional)" value={v.item_group} onChange={on('item_group')} options={['', ...groups]} />
+            <div>
+              <Select label="Item Group (optional)" value={v.item_group} onChange={on('item_group')} options={['', ...groups]} />
+              {groups.length === 0 && <p className="mt-1 text-[11px] text-muted">No item groups defined yet — add them in Masters.</p>}
+            </div>
           </Row>
           <Row>
-            <Field label="Category" value={v.category} onChange={on('category')} placeholder="Equipment / Custom Fabrication" />
+            <Select label="Category" value={v.category} onChange={on('category')} options={catOpts} />
             <Field label="Sub Category" value={v.sub_category} onChange={on('sub_category')} placeholder="Cooking Equipment" />
           </Row>
           <Row>
-            <Field label="Default Unit (Stock UOM)" value={v.stock_uom} onChange={on('stock_uom')} placeholder="Nos" />
+            {uomControl('Default Unit (Stock UOM)', 'stock_uom')}
             <Field label="Dimensions" value={v.dimensions} onChange={on('dimensions')} placeholder="1200x900x850 mm" />
           </Row>
           <Row>
@@ -151,7 +179,7 @@ export default function ItemForm({ open, itemId, onClose }) {
             <Check label="Disabled" val={v.disabled} onChange={on('disabled')} />
           </div>
           <ChildTable title="Barcodes" icon={Boxes} rows={v.barcodes} onChange={setChild('barcodes')}
-            cols={[{ key: 'barcode', label: 'Barcode' }, { key: 'barcode_type', label: 'Type (EAN/UPC)' }, { key: 'uom', label: 'UOM' }]} />
+            cols={[{ key: 'barcode', label: 'Barcode' }, { key: 'barcode_type', label: 'Type (EAN/UPC)' }, { key: 'uom', label: 'UOM', type: uomNames.length ? 'select' : 'text', options: ['', ...uomNames] }]} />
         </div>
       )}
 
@@ -174,8 +202,8 @@ export default function ItemForm({ open, itemId, onClose }) {
             <Field label="Weight per Unit" type="number" value={v.weight_per_unit} onChange={on('weight_per_unit')} />
           </Row>
           <Row>
+            {uomControl('Weight UOM', 'weight_uom')}
             <Field label="ETA (days)" type="number" value={v.eta_days} onChange={on('eta_days')} hint="shown to Sales/Engineering as incoming ETA" />
-            <div />
           </Row>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             <Check label="Allow Negative Stock" val={v.allow_negative_stock} onChange={on('allow_negative_stock')} />
@@ -186,7 +214,7 @@ export default function ItemForm({ open, itemId, onClose }) {
           {v.has_serial_no && <Field label="Serial Number Series" value={v.serial_no_series} onChange={on('serial_no_series')} placeholder="SN.#####" />}
           {v.has_batch_no && <Field label="Batch Number Series" value={v.batch_number_series} onChange={on('batch_number_series')} placeholder="BATCH.#####" />}
           <ChildTable title="UOM Conversions" rows={v.uoms} onChange={setChild('uoms')}
-            cols={[{ key: 'uom', label: 'UOM' }, { key: 'conversion_factor', label: 'Factor', type: 'number' }]} />
+            cols={[{ key: 'uom', label: 'UOM', type: uomNames.length ? 'select' : 'text', options: ['', ...uomNames] }, { key: 'conversion_factor', label: 'Factor', type: 'number' }]} />
           <ChildTable title="Reorder Levels (auto re-order)" rows={v.reorders} onChange={setChild('reorders')}
             cols={[{ key: 'warehouse', label: 'Warehouse' }, { key: 'warehouse_reorder_level', label: 'Re-order Level', type: 'number' }, { key: 'warehouse_reorder_qty', label: 'Re-order Qty', type: 'number' }, { key: 'material_request_type', label: 'Type' }]} />
         </div>
@@ -211,7 +239,7 @@ export default function ItemForm({ open, itemId, onClose }) {
           </div>
           <Row>
             <Field label="Selling Price" type="number" value={v.standard_rate} onChange={on('standard_rate')} hint="auto-calculated if supplier price + factors given" />
-            <Field label="Default Sales UOM" value={v.sales_uom} onChange={on('sales_uom')} />
+            {uomControl('Default Sales UOM', 'sales_uom')}
           </Row>
           <Row>
             <Field label="Max Discount (%)" type="number" value={v.max_discount} onChange={on('max_discount')} />
@@ -225,7 +253,7 @@ export default function ItemForm({ open, itemId, onClose }) {
       {tab === 'Purchasing' && (
         <div className="space-y-4">
           <Row>
-            <Field label="Default Purchase UOM" value={v.purchase_uom} onChange={on('purchase_uom')} />
+            {uomControl('Default Purchase UOM', 'purchase_uom')}
             <Field label="Min Order Qty" type="number" value={v.min_order_qty} onChange={on('min_order_qty')} />
           </Row>
           <Row>
@@ -273,7 +301,7 @@ export default function ItemForm({ open, itemId, onClose }) {
             <Select label="Variant Based On" value={v.variant_based_on} onChange={on('variant_based_on')} options={['Item Attribute', 'Manufacturer']} />
           </div>
           <ChildTable title="Variant Attributes" icon={Layers} rows={v.attributes} onChange={setChild('attributes')}
-            cols={[{ key: 'attribute', label: `Attribute (${attrOpts.join('/') || 'create in Masters'})` }, { key: 'attribute_value', label: 'Value' }]} />
+            cols={[{ key: 'attribute', label: attrOpts.length ? 'Attribute' : 'Attribute (create in Masters)', type: attrOpts.length ? 'select' : 'text', options: ['', ...attrOpts] }, { key: 'attribute_value', label: 'Value' }]} />
           {isEdit && v.has_variants && (
             <VariantGenerator item={v} itemId={itemId} onDone={() => onClose(true)} />
           )}

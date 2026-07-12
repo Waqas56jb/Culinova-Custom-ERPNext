@@ -30,7 +30,7 @@ function TooltipBox({ active, payload, label }) {
 const groupCount = (arr, key) => Object.entries(arr.reduce((a, x) => { const k = x[key] || 'Other'; a[k] = (a[k] || 0) + 1; return a }, {}))
 
 export default function SalesDashboard() {
-  const { openForm, leads, opportunities, quotations, salesOrders, customers } = useData()
+  const { openForm, leads, opportunities, quotations, salesOrders, invoices } = useData()
 
   const openOpps = opportunities.filter((o) => !['Won', 'Lost'].includes(o.stage))
   const wonOpps = opportunities.filter((o) => o.stage === 'Won').length
@@ -57,10 +57,18 @@ export default function SalesDashboard() {
 
   const quotationStatus = groupCount(quotations, 'status').map(([name, value]) => ({ name, value, color: STATUS_COLORS[name] || '#94a3b8' }))
   const leadSources = groupCount(leads, 'source').map(([name, value], i) => ({ name, value, color: SRC_COLORS[i % SRC_COLORS.length] }))
-  const topCustomers = [...customers]
-    .sort((a, b) => (b.outstanding || 0) - (a.outstanding || 0))
+  // Outstanding is NOT a stored column — derive it from real unpaid invoice balances,
+  // grouped per customer. (Invoices live in the finance panel: absent for pure sales roles ⇒
+  // honest empty state below, never fabricated zero-height bars.)
+  const outstandingByCustomer = invoices.reduce((acc, inv) => {
+    const bal = (Number(inv.total) || 0) - (Number(inv.paid) || 0)
+    if (bal > 0 && inv.customer) acc[inv.customer] = (acc[inv.customer] || 0) + bal
+    return acc
+  }, {})
+  const topCustomers = Object.entries(outstandingByCustomer)
+    .map(([name, bal]) => ({ name, bal, value: Math.round(bal / 1000) }))
+    .sort((a, b) => b.bal - a.bal)
     .slice(0, 5)
-    .map((c) => ({ name: c.name, value: Math.round((c.outstanding || 0) / 1000) }))
 
   const empty = leads.length + opportunities.length + quotations.length + salesOrders.length === 0
 
@@ -159,7 +167,7 @@ export default function SalesDashboard() {
                 <Bar dataKey="value" name="Outstanding" radius={[0, 6, 6, 0]} barSize={16} fill="#0EA99A" isAnimationActive={false} />
               </BarChart>
             </ResponsiveContainer>
-          ) : <p className="py-12 text-center text-sm text-slate-400">No customers yet</p>}
+          ) : <p className="py-12 text-center text-sm text-slate-400">{invoices.length ? 'No outstanding balances' : 'No invoice data available'}</p>}
         </ChartCard>
 
         <div className="card card-pad relative overflow-hidden animate-fade-up bg-gradient-to-br from-navy-800 to-navy-900 text-white">

@@ -36,15 +36,22 @@ function UsersTab() {
   const d = useData()
   const [users, setUsers] = useState([])
   const [rbac, setRbac] = useState(null)
+  const [depts, setDepts] = useState([])
   const [modal, setModal] = useState(null)
   const [pw, setPw] = useState(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const load = useCallback(() => { d.adminUsers().then(setUsers).catch(() => setUsers([])) }, [d])
-  useEffect(() => { load(); d.adminRbac().then(setRbac).catch(() => {}) }, [load, d])
+  useEffect(() => {
+    load()
+    d.adminRbac().then(setRbac).catch(() => {})
+    // Departments master is readable by every internal role — never a free-text field.
+    d.resList('settings/departments').then((r) => setDepts(Array.isArray(r) ? r : [])).catch(() => setDepts(d.settings?.departments || []))
+  }, [load, d])
 
   const roles = rbac ? Object.keys(rbac.rolePanels) : ['Management', 'Sales User', 'Project Manager', 'Stock User', 'Accounts User']
   const levels = rbac ? Object.keys(rbac.levelActions) : ['View Only', 'Create', 'Edit', 'Approval', 'Full Admin']
+  const deptOptions = [{ value: '', label: '— none —' }, ...depts.map((dp) => ({ value: dp.name, label: dp.name }))]
   const blank = () => ({ name: '', email: '', password: '', role: 'Sales User', access_level: 'Create', department: '', status: 'Active' })
 
   const save = async () => {
@@ -95,7 +102,7 @@ function UsersTab() {
             {!modal.id && <Field label="Password *" type="password" value={modal.password} onChange={(e) => setModal({ ...modal, password: e.target.value })} />}
             <Select label="Role" value={modal.role} onChange={(e) => setModal({ ...modal, role: e.target.value })} options={roles} />
             <Select label="Access Level" value={modal.access_level} onChange={(e) => setModal({ ...modal, access_level: e.target.value })} options={levels} />
-            <Field label="Department" value={modal.department || ''} onChange={(e) => setModal({ ...modal, department: e.target.value })} />
+            <Select label="Department" value={modal.department || ''} onChange={(e) => setModal({ ...modal, department: e.target.value })} options={deptOptions} />
             <Select label="Status" value={modal.status || 'Active'} onChange={(e) => setModal({ ...modal, status: e.target.value })} options={['Active', 'Inactive']} />
             {err && <div className="sm:col-span-2 rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600">{err}</div>}
           </div>

@@ -12,8 +12,11 @@ import { notifyManagementApproval } from '../../core/notify.js'
 import { recomputeProject } from '../../core/projectcost.js'
 import { reserveForSalesOrder } from '../../core/inventory.js'
 import { validateRequiredFields, computeFinancials, evaluateApproval, discountSource, RULES } from './quotation.rules.js'
+import { nextNumber } from '../../core/numbering.js'
 
 const r = Router()
+// Document numbers come from the editable numbering_series (Company Settings), NOT from Date.now();
+// nextNumber falls back to a safe reference only when no series is configured for the doc type.
 const num = (p) => `${p}-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`
 
 // The approval decision's reason can spell out the GP margin ("GP 18% < 20%") — never expose that to
@@ -72,6 +75,46 @@ r.get('/orders', authRequired, authorize('sales', 'read'), asyncWrap(async (req,
     })
   }
   res.json(out)
+}))
+
+// ── CREATE a direct Sales Order (walk-in / phone order not raised from a quotation) ──
+// Mirrors the accept-chain: creates the sales_order + an auto-linked Project (+ BOQ lines when items
+// are supplied) in ONE call, so the "New Sales Order" button actually persists everything.
+r.post('/orders', authRequired, authorize('sales', 'create'), asyncWrap(async (req, res) => {
+  const b = req.body || {}
+  const customer = (b.customer || '').trim()
+  if (!customer) return res.status(422).json({ error: 'Customer is required' })
+  const items = Array.isArray(b.items) ? b.items.filter((it) => it && (it.item_name || it.item)) : []
+  const amount = b.amount != null && b.amount !== ''
+    ? Number(b.amount)
+    : items.reduce((s, it) => s + (Number(it.qty) || 1) * (Number(it.rate) || 0), 0)
+
+  // 1) Sales Order
+  const { data: so, error: soErr } = await supabase.from('sales_orders').insert({
+    number: await nextNumber('sales_orders', 'SO'), quotation_id: b.quotation_id || null, customer, amount,
+  }).select().single()
+  if (soErr) throw soErr
+
+  // 2) auto Project (linked) — one place owns project creation, so no duplicate client-side insert
+  const { data: proj, error: pErr } = await supabase.from('projects').insert({
+    number: await nextNumber('projects', 'PRJ'),
+    name: `${customer} — ${b.project_name || b.project || 'Project'}`,
+    customer, sales_order_id: so.id, contract_value: amount, manager_id: req.user.id, status: 'On Track',
+    location: b.location || null, delivery_date: b.delivery_date || null,
+  }).select().single()
+  if (pErr) throw pErr
+
+  // 3) BOQ lines from the supplied items (budget cost seeded from the Item Master cost)
+  if (items.length) {
+    await supabase.from('project_boq').insert(items.map((it) => ({
+      project_id: proj.id, item_name: it.item_name || it.item, qty: Number(it.qty) || 1, status: 'Waiting',
+      budget_cost: (Number(it.cost) || 0) * (Number(it.qty) || 1),
+    })))
+  }
+  await supabase.from('sales_orders').update({ project_id: proj.id }).eq('id', so.id)
+  await recomputeProject(proj.id)
+  await logAudit(req.user, 'sales_order', so.id, 'created', { number: so.number, project: proj.number })
+  res.status(201).json(redactFinancials(req.user.role, { ...so, project_id: proj.id, project_number: proj.number, project: proj }))
 }))
 
 // ── SO-007: item-level Procurement / Inventory / Delivery / Installation status ──

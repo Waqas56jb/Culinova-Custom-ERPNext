@@ -8,18 +8,32 @@ import { monthly, zip, k1000 } from '../data/agg.js'
 import { useData } from '../store/DataContext.jsx'
 
 export default function FinanceDashboard() {
-  const { invoices, payables, payments } = useData()
+  const { invoices, payables, payments, settings } = useData()
+  // VAT rate resolved from Company Settings (never hardcoded); null when not configured
+  const vatPct = (() => {
+    const rows = settings?.vatSettings || []
+    const def = rows.find((v) => v.is_default && v.is_active) || rows.find((v) => v.is_active) || rows[0]
+    const r = Number(def?.rate)
+    return r > 0 ? r / 100 : null
+  })()
+  // prefer each invoice's stored VAT/net split; fall back to the configured rate only when absent
+  const invVat = (i) => { const v = Number(i.vat_amount); if (v > 0) return v; return vatPct != null ? (i.total || 0) - (i.total || 0) / (1 + vatPct) : 0 }
+  const invNet = (i) => { const n = Number(i.net_amount); if (n > 0) return n; return vatPct != null ? (i.total || 0) / (1 + vatPct) : (i.total || 0) }
+
   const invoiced = invoices.reduce((s, i) => s + (i.total || 0), 0)
   const collected = invoices.reduce((s, i) => s + (i.paid || 0), 0)
   const receivables = invoiced - collected
   const ap = payables.reduce((s, p) => s + ((p.amount || 0) - (p.paid || 0)), 0)
-  const vat = Math.round(invoices.reduce((s, i) => s + ((i.total || 0) - (i.total || 0) / 1.15), 0))
-  const income = Math.round(invoices.reduce((s, i) => s + (i.total || 0) / 1.15, 0))
+  const vat = Math.round(invoices.reduce((s, i) => s + invVat(i), 0))
+  const income = Math.round(invoices.reduce((s, i) => s + invNet(i), 0))
   const expense = payables.reduce((s, p) => s + (p.amount || 0), 0)
 
   // live monthly trends from real store data
   const revenueExpense = zip(monthly(invoices, { value: 'total' }), monthly(payables, { value: 'amount' }), 'income', 'expense', k1000)
-  const cashFlow = zip(monthly(invoices, { value: 'paid' }), monthly(payments || [], { value: 'amount' }), 'inflow', 'outflow', k1000)
+  // real cash flow: customer receipts (inflow) vs supplier/expense payments (outflow), split by payment type
+  const received = (payments || []).filter((p) => p.type === 'Received')
+  const paidOut = (payments || []).filter((p) => p.type === 'Paid')
+  const cashFlow = zip(monthly(received, { value: 'amount' }), monthly(paidOut, { value: 'amount' }), 'inflow', 'outflow', k1000)
 
   return (
     <>
@@ -34,7 +48,7 @@ export default function FinanceDashboard() {
 
       <div className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
         {[
-          { label: 'VAT Collected (15%)', value: sar(vat) },
+          { label: `VAT Collected${vatPct != null ? ` (${Math.round(vatPct * 100)}%)` : ''}`, value: sar(vat) },
           { label: 'Net Income', value: sar(income) },
           { label: 'Total Expense', value: sar(expense) },
           { label: 'Payables (AP)', value: sar(ap) },

@@ -8,8 +8,16 @@ export const useData = () => useContext(DataCtx)
 const today = () => new Date().toISOString().slice(0, 10)
 const d10 = (r) => (r.created_at || '').slice(0, 10) || today()
 const me = () => { try { return JSON.parse(localStorage.getItem('culinova_user') || 'null') } catch { return null } }
-// owner_id (uuid) → readable name: show the logged-in user's name for records they own
-const ownerName = (id) => { const u = me(); return u && id === u.id ? u.name : (id ? 'Other' : '—') }
+// readable, reasonably-unique code when the user leaves a Code field blank (avoids a silent NULL in a shown column)
+const slugCode = (prefix, name) => `${prefix}-${(String(name || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 4).toUpperCase() || 'NEW')}-${String(Date.now()).slice(-4)}`
+// module-level resolver maps, refreshed by the store as reference data loads (projects / team / sales orders).
+// Mappers are pure module-level fns, so they read the latest id→label here rather than from React state.
+const _maps = { users: {}, projects: {}, salesOrders: {} }
+const userName = (id) => (id && _maps.users[id]?.name) || ''
+const projNumber = (id) => (id && _maps.projects[id]?.number) || '—'   // project_id (uuid) → readable number, never the raw uuid
+const soNumber = (id) => (id && _maps.salesOrders[id]?.number) || '—'
+// owner_id (uuid) → readable name via the users map; the logged-in user for their own rows; never the literal 'Other'
+const ownerName = (id) => { if (!id) return '—'; const n = userName(id); if (n) return n; const u = me(); return u && id === u.id ? u.name : '—' }
 
 // ── DB row → UI shape mappers (snake_case → the fields the pages read) ──
 const mapCustomer = (r) => ({ ...r, group: r.category || '—', business: r.business ?? 0, outstanding: Number(r.outstanding) || 0 })
@@ -21,11 +29,11 @@ const mapQuote = (r) => ({
   owner: ownerName(r.owner_id), date: d10(r), ref: r.number,
   items: (r.quotation_items || []).map((it) => ({ name: it.item_name, qty: it.qty, rate: it.rate })),
 })
-const mapSO = (r) => ({ ...r, amount: Number(r.amount) || 0, delivery: r.delivery_status, billing: r.billing_status, project: r.project_number || r.project_id, projectNo: r.project_number, boqDone: r.boq_done ?? 0, boqTotal: r.boq_total ?? 0, progress: r.progress ?? 0, date: d10(r), ref: r.number })
-const mapProject = (r) => ({ ...r, contractValue: Number(r.contract_value) || 0, actualCost: Number(r.actual_cost) || 0, committedCost: Number(r.committed_cost) || 0, billed: Number(r.billed) || 0, collected: Number(r.collected) || 0, progress: r.progress ?? 0, manager: r.manager || 'Unassigned', salesOrder: r.sales_order_id || '—', ref: r.number, boq: [], tasks: [], variations: [] })
+const mapSO = (r) => ({ ...r, amount: Number(r.amount) || 0, delivery: r.delivery_status, billing: r.billing_status, project: r.project_number || projNumber(r.project_id), projectNo: r.project_number || projNumber(r.project_id), boqDone: r.boq_done ?? 0, boqTotal: r.boq_total ?? 0, progress: r.progress ?? 0, date: d10(r), ref: r.number })
+const mapProject = (r) => ({ ...r, contractValue: Number(r.contract_value) || 0, actualCost: Number(r.actual_cost) || 0, committedCost: Number(r.committed_cost) || 0, billed: Number(r.billed) || 0, collected: Number(r.collected) || 0, progress: r.progress ?? 0, start: r.start_date || '', end: r.end_date || '', manager: userName(r.manager_id) || 'Unassigned', salesOrder: soNumber(r.sales_order_id), ref: r.number, boq: [], tasks: [], variations: [] })
 const mapSupplier = (r) => ({ ...r, onTime: r.on_time ?? 0, totalPOs: r.totalPOs ?? 0, rating: Number(r.rating) || 0 })
-const mapRFQ = (r) => ({ ...r, item: r.item_name, project: r.project_id, suppliers: r.suppliers || [], awarded: r.awarded_supplier, date: d10(r), ref: r.number })
-const mapPO = (r) => ({ ...r, item: r.item_name, project: r.project_id, amount: Number(r.amount) || 0, qty: Number(r.qty) || 1, date: d10(r), ref: r.number })
+const mapRFQ = (r) => ({ ...r, item: r.item_name, project: projNumber(r.project_id), suppliers: r.suppliers || [], awarded: r.awarded_supplier, date: d10(r), ref: r.number })
+const mapPO = (r) => ({ ...r, item: r.item_name, project: r.project_number || projNumber(r.project_id), amount: Number(r.amount) || 0, qty: Number(r.qty) || 1, date: d10(r), ref: r.number })
 const mapItem = (r) => ({ ...r, group: r.item_group, rate: Number(r.selling_rate) || 0, qty: r.qty ?? 0, reorder: Number(r.reorder_level) || 0 })
 // enriched stock (physical/reserved/available/incoming/aging) from /inventory/stock
 const mapStock = (r) => ({ code: r.code, name: r.item, group: r.group, warehouse: r.warehouse, uom: r.uom || 'Nos', qty: r.physical ?? 0, physical: r.physical ?? 0, reserved: r.reserved ?? 0, available: r.available ?? 0, incoming: r.incoming ?? 0, aging: r.aging_days ?? 0, reorder: r.reorder_level ?? 0, rate: Number(r.rate) || 0 })
@@ -152,6 +160,33 @@ export function DataProvider({ children }) {
     try { setPriceLists(await api('/masters/price-lists') || []) } catch { setPriceLists([]) }
   }, [])
 
+  // ── RESOLVER MAPS ── fill the module-level id→label maps so every mapper resolves project/owner/manager
+  // to a readable value regardless of which panel owns the source. lookups/* is readable by any internal role,
+  // so even a Stock/Procurement user (no projects panel) still gets project numbers instead of raw uuids.
+  const loadRefMaps = useCallback(async () => {
+    try {
+      const ps = await api('/lookups/projects')
+      _maps.projects = Object.fromEntries((ps || []).map((p) => [p.id, { number: p.ref, name: p.name }]))
+    } catch { /* keep last-known map */ }
+    try {
+      const tm = await api('/pm/team')
+      const m = {}; (tm || []).forEach((u) => { if (u?.id) m[u.id] = u })
+      const cur = me(); if (cur?.id) m[cur.id] = m[cur.id] || { id: cur.id, name: cur.name }
+      _maps.users = m
+    } catch { const cur = me(); if (cur?.id && !_maps.users[cur.id]) _maps.users = { ..._maps.users, [cur.id]: { id: cur.id, name: cur.name } } }
+  }, [])
+
+  // ── PAYROLL ── the run status is persisted (payroll_runs), so a completed run survives a page refresh.
+  const loadPayroll = useCallback(async () => {
+    if (!allowed('hr')) return
+    try {
+      const rows = await api('/payroll')
+      const period = today().slice(0, 7)
+      setPayrollStatus((rows || []).some((r) => r.period === period && r.status === 'Paid') ? 'Paid' : 'Pending')
+    } catch { /* keep current status */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panels])
+
   // ── COMPANY SETTINGS loader (defined before loadAll which depends on it) ──
   const loadSettings = useCallback(async () => {
     const [companies, branches, departments, currencies, vatSettings, numberingSeries] = await Promise.all([
@@ -163,9 +198,10 @@ export function DataProvider({ children }) {
   }, [])
 
   const loadAll = useCallback(async () => {
-    await Promise.all([...Object.keys(SOURCES).map((k) => reload(k)), loadProjects(), loadQuotations(), loadChat(), loadItems(), loadSettings()])
+    await loadRefMaps()   // populate id→label maps BEFORE the mappers run, so records resolve on first paint
+    await Promise.all([...Object.keys(SOURCES).map((k) => reload(k)), loadProjects(), loadQuotations(), loadChat(), loadItems(), loadSettings(), loadPayroll()])
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reload, loadProjects, loadQuotations, loadChat, loadItems, loadSettings])
+  }, [reload, loadProjects, loadQuotations, loadChat, loadItems, loadSettings, loadRefMaps, loadPayroll])
 
   // ── ITEM MASTER (ERPNext-style) ──
   const getItem = (id) => api(`/items/${id}`)
@@ -196,6 +232,14 @@ export function DataProvider({ children }) {
   const resAdd = (resource, body) => api(`/${resource}`, { method: 'POST', body })
   const resUpdate = (resource, id, body) => api(`/${resource}/${id}`, { method: 'PATCH', body })
   const resDelete = (resource, id) => api(`/${resource}/${id}`, { method: 'DELETE' })
+
+  // ── SHARED LOOKUPS ── cross-panel read-only pickers (any internal role); pages call these instead of
+  // hand-rolling URLs or reaching into a store they don't own. See server/src/modules/lookups.
+  const lookupProjects = () => resList('lookups/projects')
+  const lookupCustomers = () => resList('lookups/customers')
+  const lookupSuppliers = () => resList('lookups/suppliers')
+  const lookupItems = (sales = false) => resList('lookups/items', sales ? 'sales=1' : '')
+  const lookupWarehouses = () => resList('lookups/warehouses')
 
   // documents (with version history)
   const docList = (entityType, entityId) => api(`/documents${entityType ? `?entity_type=${entityType}${entityId ? `&entity_id=${entityId}` : ''}` : ''}`)
@@ -249,6 +293,12 @@ export function DataProvider({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, loadAll])
 
+  // keep the module-level resolver maps in sync with loaded state (sales-order numbers have no lookup endpoint,
+  // and projects/team refresh here too so the next reload cycle re-maps records with the latest labels)
+  useEffect(() => { _maps.salesOrders = Object.fromEntries((salesOrders || []).map((o) => [o.id, { number: o.number }])) }, [salesOrders])
+  useEffect(() => { if (projects?.length) _maps.projects = { ..._maps.projects, ...Object.fromEntries(projects.map((p) => [p.id, { number: p.ref || p.number, name: p.name }])) } }, [projects])
+  useEffect(() => { if (team?.length) { const m = { ..._maps.users }; team.forEach((u) => { if (u?.id) m[u.id] = u }); _maps.users = m } }, [team])
+
   // helpers
   const post = (ep, body) => api('/' + ep, { method: 'POST', body })
   const patch = (ep, id, body) => api(`/${ep}/${id}`, { method: 'PATCH', body })
@@ -269,7 +319,7 @@ export function DataProvider({ children }) {
   const wonOpportunity = async (id) => { await post(`sales/opportunities/${id}/won`, {}); await reload('opportunities') }
   // Customer interactions / meeting log (rule #12)
   const addInteraction = async (d) => { await post('interactions', { customer: d.customer, type: d.type, notes: d.notes, next_action: d.nextAction, user_id: me()?.id }); await reload('interactions') }
-  const addCustomer = async (d) => { await post('customers', { name: d.name, category: d.category, territory: d.territory, contact: d.contact, email: d.email, phone: d.phone }); await reload('customers') }
+  const addCustomer = async (d) => { await post('customers', { code: d.code || slugCode('CUST', d.name), name: d.name, category: d.category, territory: d.territory, contact: d.contact, email: d.email, phone: d.phone }); await reload('customers') }
   const convertLead = async (lead) => {
     // idempotent: a lead already converted/lost must NOT spawn another opportunity
     if (['Opportunity', 'Converted', 'Lost'].includes(lead.status)) return
@@ -295,13 +345,14 @@ export function DataProvider({ children }) {
   const acceptQuotation = async (id) => { const r = await post(`sales/quotations/${id}/accept`, {}); await Promise.all([loadQuotations(), reload('salesOrders'), loadProjects()]); return r }
   const lostQuotation = async (id, reason) => { await post(`sales/quotations/${id}/lost`, { reason }); await loadQuotations() }
   const addOrder = async (d) => {
-    const items = d.items || []
-    const net = items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0)
-    const amount = Math.round(net ? net * 1.15 : Number(d.amount) || 0)
-    const so = await post('sales-orders', { customer: d.customer, amount, quotation_id: d.quotationId })
-    await post('projects', { name: `${d.customer || 'Customer'} — ${d.projectName || 'Project'}`, customer: d.customer, contract_value: amount, sales_order_id: so.id, manager_id: me()?.id }).catch(() => {})
+    // ONE call creates the sales order + its linked project (+ BOQ from the items) — the server owns
+    // project creation now, so no separate projects insert (which would duplicate the project).
+    const items = (d.items || []).map((it) => ({ item_name: it.name || it.item_name, qty: Number(it.qty) || 1, rate: Number(it.rate) || 0, cost: Number(it.cost) || 0 }))
+    const net = items.reduce((s, it) => s + it.qty * it.rate, 0)
+    const amount = Math.round(net ? net * 1.15 : Number(d.amount) || 0)   // VAT-inclusive, matching the form's displayed total
+    const r = await post('sales/orders', { customer: d.customer, project_name: d.projectName || d.project, amount, quotation_id: d.quotationId, items })
     await Promise.all([reload('salesOrders'), loadProjects()])
-    return so
+    return r
   }
 
   // ── PROJECTS ──
@@ -320,13 +371,14 @@ export function DataProvider({ children }) {
     if (p.end) body.end_date = p.end
     await patch('projects', pid, body); await loadProjects()
   }
-  const addVariation = async (pid, vo) => { await post('variations', { project_id: pid, description: vo.desc || vo.description, amount: Number(vo.amount) || 0 }); await loadProjects() }
+  const addVariation = async (pid, vo) => { await post('variations', { project_id: pid, description: vo.desc || vo.description, amount: Number(vo.amount) || 0, status: vo.status || 'Pending' }); await loadProjects() }
 
   // ── PROCUREMENT ──
-  const addSupplier = async (d) => { await post('suppliers', { name: d.name, category: d.category }); await reload('suppliers') }
-  const addRFQ = async (d) => { await post('rfqs', { item_name: d.item, project_id: d.project, qty: Number(d.qty) || 1 }); await reload('rfqs') }
+  const addSupplier = async (d) => { await post('suppliers', { code: d.code || slugCode('SUPP', d.name), name: d.name, category: d.category }); await reload('suppliers') }
+  const addRFQ = async (d) => { await post('rfqs', { item_name: d.item, project_id: d.project || null, qty: Number(d.qty) || 1 }); await reload('rfqs') }
   const awardPO = async (rfq, chosen) => {
-    await post('purchase-orders', { supplier: chosen.name, item_name: rfq.item, project_id: rfq.project, qty: rfq.qty || 1, amount: chosen.quote })
+    // rfq.project is now the readable NUMBER (display); the uuid FK lives on rfq.project_id
+    await post('purchase-orders', { supplier: chosen.name, item_name: rfq.item, project_id: rfq.project_id || null, qty: rfq.qty || 1, amount: chosen.quote })
     await patch('rfqs', rfq.id, { status: 'Ordered', awarded_supplier: chosen.name })
     await Promise.all([reload('purchaseOrders'), reload('rfqs')])
   }
@@ -334,7 +386,12 @@ export function DataProvider({ children }) {
   const requestQuotes = async () => {}
 
   // ── SUPPLIER PORTAL (staff side) ──
-  const submitSupplierQuote = async () => {}
+  // records a supplier's quotation against an RFQ (server upserts + advances the RFQ to 'Quoted')
+  const submitSupplierQuote = async (rfqId, supplier, price) => {
+    if (!rfqId || !supplier) return
+    await post(`rfqs/${rfqId}/quotes`, { supplier, quote: Number(price) || 0 })
+    await reload('rfqs')
+  }
   const acceptPO = async (id) => { await patch('purchase-orders', id, { accepted: true }); await reload('purchaseOrders') }
   const setShipment = async (id, shipment) => { await patch('purchase-orders', id, { shipment }); await reload('purchaseOrders') }
 
@@ -375,20 +432,29 @@ export function DataProvider({ children }) {
   }
 
   // ── SITE ──
-  const addSnag = async (d) => { await post('snags', { project_id: d.project, item_name: d.item, description: d.description, severity: d.severity || 'Low' }); await reload('snags') }
+  const addSnag = async (d) => { await post('snags', { project_id: d.project || null, item_name: d.item, description: d.description, severity: d.severity || 'Low' }); await reload('snags') }
   const resolveSnag = async (id) => { await patch('snags', id, { status: 'Resolved' }); await reload('snags') }
   const updateTest = async (id, status) => { await patch('commissioning', id, { status }); await reload('commissioning') }
 
   // ── SERVICE ──
-  const addTicket = async (d) => { await post('service-tickets', { customer: d.customer, subject: d.subject, priority: d.priority || 'Medium' }); await reload('tickets') }
+  const addTicket = async (d) => { await post('service-tickets', { customer: d.customer, project_id: d.project || null, subject: d.subject, priority: d.priority || 'Medium' }); await reload('tickets') }
   const resolveTicket = async (id) => { await patch('service-tickets', id, { status: 'Resolved', sla: 'Met' }); await reload('tickets') }
   const completeVisit = async (id) => { await patch('maintenance-visits', id, { status: 'Completed' }); await reload('visits') }
 
   // ── HR ──
-  const addEmployee = async (d) => { await post('employees', { name: d.name, role: d.role, department: d.department, salary: Number(d.salary) || 0 }); await reload('employees') }
+  const addEmployee = async (d) => { await post('employees', { code: d.code || slugCode('EMP', d.name), name: d.name, role: d.role, department: d.department, salary: Number(d.salary) || 0 }); await reload('employees') }
   const setAttendance = async (id, status) => { await patch('employees', id, { today_status: status }); await reload('employees') }
   const approveLeave = async (id) => { await patch('leaves', id, { status: 'Approved' }); await reload('leaves') }
-  const runPayroll = () => setPayrollStatus('Paid')
+  // persist the run (payroll_runs — period/gross/net/status, NO number column) so it survives a refresh
+  const runPayroll = async () => {
+    const gross = employees.reduce((s, e) => s + (Number(e.salary) || 0), 0)
+    const net = gross - Math.round(gross * 0.1)
+    try {
+      await post('payroll', { period: today().slice(0, 7), gross, net, status: 'Paid' })
+      setPayrollStatus('Paid')
+    } catch (e) { alert(e?.message || 'Could not run payroll'); return }
+    await loadPayroll()
+  }
 
   // ── EMAIL (no backend table — local session) ──
   const gid = (p) => `${p}-${String(Math.floor(performance.now())).slice(-5)}`
@@ -411,6 +477,7 @@ export function DataProvider({ children }) {
     adminUsers, adminAddUser, adminUpdateUser, adminDeleteUser, adminResetPassword, adminRbac, adminAudit, adminApprovals, adminRequestApproval, adminDecideApproval,
     getParty, addPartyChild, deletePartyChild, partyCategories,
     resList, resGet, resAdd, resUpdate, resDelete, docList, docGet, docAdd, docNewVersion, docDelete,
+    lookupProjects, lookupCustomers, lookupSuppliers, lookupItems, lookupWarehouses,
     getPrefs, savePref,
     reload, loadAll,
     addLead, addOpportunity, lostOpportunity, wonOpportunity, addInteraction, addQuotation, updateQuotation, addOrder, addCustomer, convertLead, checkAvailability, getOrderItems,

@@ -1,11 +1,21 @@
 import { Router } from 'express'
 import { supabase } from '../config/supabase.js'
 import { authRequired } from '../middleware/auth.js'
-import { authorize, redactFinancials } from '../middleware/rbac.js'
+import { authorize, authorizeAny, redactFinancials } from '../middleware/rbac.js'
 import { isManagement } from '../rbac/permissions.js'
 import { asyncWrap } from '../middleware/error.js'
 import { logAudit } from './audit.js'
 import { nextNumber } from './numbering.js'
+import { recomputeProject } from './projectcost.js'
+
+// When a resource declares recomputeProject: true, any create/update/delete that carries a project_id
+// re-rolls that project's committed/actual cost (so raising a PO or a variation against a project keeps
+// projects.actual_cost live instead of frozen at 0). Best-effort: a recompute failure never fails the write.
+async function maybeRecompute(cfg, ...rows) {
+  if (!cfg.recomputeProject) return
+  const ids = new Set(rows.filter(Boolean).map((r) => r.project_id).filter(Boolean))
+  for (const id of ids) { try { await recomputeProject(id) } catch { /* recompute is best-effort */ } }
+}
 
 // Fields a client may NEVER set through generic CRUD (identity, audit trail, auth) — prevents
 // mass-assignment tampering (e.g. forging `number`, overwriting `password_hash`, spoofing timestamps).
@@ -48,9 +58,11 @@ export function crudRouter(name, cfg) {
   const r = Router()
   const t = cfg.table
   const passwordSafe = (row) => { if (row && row.password_hash) { const c = { ...row }; delete c.password_hash; return c } return row }
+  // reads may be allowed from several panels (cfg.readPanels); writes always require the owning panel
+  const canRead = cfg.readPanels ? authorizeAny(cfg.readPanels, 'read') : authorize(cfg.panel, 'read')
 
   // LIST
-  r.get('/', authRequired, authorize(cfg.panel, 'read'), asyncWrap(async (req, res) => {
+  r.get('/', authRequired, canRead, asyncWrap(async (req, res) => {
     let q = supabase.from(t).select('*').order(cfg.orderBy || 'created_at', { ascending: false })
     // simple equality filters via querystring (?status=Open) — but only on REAL columns, else an
     // unknown/typo'd param becomes a bogus Postgres filter and 500s the whole list.
@@ -64,7 +76,7 @@ export function crudRouter(name, cfg) {
   }))
 
   // GET one
-  r.get('/:id', authRequired, authorize(cfg.panel, 'read'), asyncWrap(async (req, res) => {
+  r.get('/:id', authRequired, canRead, asyncWrap(async (req, res) => {
     const { data, error } = await supabase.from(t).select('*').eq('id', req.params.id).single()
     if (error) return res.status(404).json({ error: 'Not found' })
     res.json(redactFinancials(req.user.role, passwordSafe(data)))
@@ -83,23 +95,30 @@ export function crudRouter(name, cfg) {
     const { data, error } = await supabase.from(t).insert(body).select().single()
     if (error) throw error
     await logAudit(req.user, name, data.id, 'created', body)
+    await maybeRecompute(cfg, data)
     res.status(201).json(redactFinancials(req.user.role, passwordSafe(data)))
   }))
 
   // UPDATE
   r.patch('/:id', authRequired, authorize(cfg.panel, 'update'), asyncWrap(async (req, res) => {
     const body = sanitizeBody(req.body, cfg, req.user.role)
+    // capture the pre-update row so re-parenting recomputes BOTH the old and the new project
+    const before = cfg.recomputeProject ? (await supabase.from(t).select('project_id').eq('id', req.params.id).maybeSingle()).data : null
     const { data, error } = await supabase.from(t).update(body).eq('id', req.params.id).select().single()
     if (error) throw error
     await logAudit(req.user, name, req.params.id, 'updated', body)
+    await maybeRecompute(cfg, data, before)
     res.json(redactFinancials(req.user.role, passwordSafe(data)))
   }))
 
   // DELETE
   r.delete('/:id', authRequired, authorize(cfg.panel, 'delete'), asyncWrap(async (req, res) => {
+    // capture project link BEFORE the row is gone, so the project can be re-rolled after
+    const before = cfg.recomputeProject ? (await supabase.from(t).select('project_id').eq('id', req.params.id).maybeSingle()).data : null
     const { error } = await supabase.from(t).delete().eq('id', req.params.id)
     if (error) throw error
     await logAudit(req.user, name, req.params.id, 'deleted')
+    await maybeRecompute(cfg, before)
     res.json({ ok: true })
   }))
 

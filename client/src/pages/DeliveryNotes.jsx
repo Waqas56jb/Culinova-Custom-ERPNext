@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Plus, FolderKanban, Truck } from 'lucide-react'
 import { PageHeader, Badge, statusTone } from '../components/ui.jsx'
 import { Modal, Field, Select, Row } from '../components/Modal.jsx'
@@ -6,17 +6,25 @@ import { sar } from '../data/mockData.js'
 import { useData } from '../store/DataContext.jsx'
 
 export default function DeliveryNotes() {
-  const { deliveryNotes, stockItems, createDeliveryNote, authorizeReturn, projects, customers } = useData()
-  const projectOpts = [{ value: '', label: '— Select project —' }, ...(projects || []).map((p) => ({ value: p.id, label: `${p.ref || ''} ${p.name || ''}`.trim() }))]
-  const customerOpts = ['', ...(customers || []).map((c) => c.name).filter(Boolean)]
+  const { deliveryNotes, stockItems, createDeliveryNote, authorizeReturn, resList } = useData()
+  // Project & Customer live in panels the Stock User does not own → self-fetch from shared lookups.
+  const [projs, setProjs] = useState([])
+  const [custs, setCusts] = useState([])
+  useEffect(() => {
+    resList('lookups/projects').then((r) => setProjs(Array.isArray(r) ? r : [])).catch(() => setProjs([]))
+    resList('lookups/customers').then((r) => setCusts(Array.isArray(r) ? r : [])).catch(() => setCusts([]))
+  }, [])
+  const projMap = Object.fromEntries(projs.map((p) => [p.id, p.label || `${p.ref || ''} ${p.name || ''}`.trim()]))
+  const projectOpts = [{ value: '', label: '— Select project —' }, ...projs.map((p) => ({ value: p.id, label: p.label || `${p.ref || ''} ${p.name || ''}`.trim() }))]
+  const customerOpts = [{ value: '', label: '— Select customer —' }, ...custs.map((c) => ({ value: c.name, label: c.label || c.name }))]
   const [modal, setModal] = useState(false)
   const [v, setV] = useState({ project: '', customer: '', item: '', qty: 1, area: '', position: '' })
   const itemOpts = stockItems.map((it) => ({ value: it.name, label: `${it.name} (${it.qty} in stock)` }))
-  const save = () => {
+  const save = async () => {
     if (!v.item) return
     const si = stockItems.find((x) => x.name === v.item)
     const value = (Number(si?.rate) || 0) * (Number(v.qty) || 1)
-    createDeliveryNote({ ...v, value })
+    try { await createDeliveryNote({ ...v, value }) } catch (e) { alert(e.message || 'Failed to create delivery note'); return }
     setV({ project: '', customer: '', item: '', qty: 1, area: '', position: '' }); setModal(false)
   }
 
@@ -40,8 +48,8 @@ export default function DeliveryNotes() {
                   <td className="td font-medium text-ink">{dn.item}</td>
                   <td className="td text-slate-600">{dn.qty}</td>
                   <td className="td text-slate-500">{[dn.area, dn.position].filter(Boolean).join(' · ') || '—'}</td>
-                  <td className="td"><span className="inline-flex items-center gap-1 text-xs font-semibold text-violet-600"><FolderKanban size={13} /> {dn.project}</span></td>
-                  <td className="td text-slate-600">{dn.customer}</td>
+                  <td className="td">{dn.project ? <span className="inline-flex items-center gap-1 text-xs font-semibold text-violet-600"><FolderKanban size={13} /> {projMap[dn.project] || dn.project}</span> : <span className="text-slate-300">—</span>}</td>
+                  <td className="td text-slate-600">{dn.customer || '—'}</td>
                   <td className="td font-semibold">{sar(dn.value)}</td>
                   <td className="td"><Badge tone={statusTone(dn.status)}>{dn.status}</Badge>{dn.rejection_reason && <span className="block text-[10px] text-rose-500">{dn.rejection_reason}</span>}</td>
                   <td className="td text-right">{dn.status === 'Return Requested' ? <button onClick={() => authorizeReturn(dn.id)} className="rounded-lg border border-amber-200 px-2.5 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-50">Authorize Return</button> : <span className="text-xs text-slate-300">—</span>}</td>

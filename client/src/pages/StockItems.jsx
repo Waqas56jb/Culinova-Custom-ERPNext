@@ -7,19 +7,31 @@ import { useData } from '../store/DataContext.jsx'
 const statusOf = (it) => (it.available <= 0 ? { t: 'Out of Stock', tone: 'red' } : it.available <= it.reorder ? { t: 'Low Stock', tone: 'amber' } : { t: 'In Stock', tone: 'green' })
 
 export default function StockItems() {
-  const { stockItems } = useData()
+  const { stockItems, items } = useData()
   const [q, setQ] = useState('')
   const [g, setG] = useState('All')
   const groups = ['All', ...new Set(stockItems.map((it) => it.group))]
   const rows = stockItems.filter((it) => (g === 'All' || it.group === g) && (it.name + it.code).toLowerCase().includes(q.toLowerCase()))
-  const totalValue = rows.reduce((s, it) => s + it.qty * it.rate, 0)
+  // Valuation basis = COST (accounting-correct), matching StockDashboard — NOT the selling rate.
+  // Cost lives on the Item Master; join by item name (same join StockDashboard uses). Cost is
+  // redacted (undefined) for non-financial roles → we show '—' rather than ever falling back to a
+  // selling-price number, so the two pages report ONE consistent stock value.
+  const itemByName = {}
+  for (const i of items || []) { const k = (i.item_name || '').toLowerCase(); if (!(k in itemByName)) itemByName[k] = i }
+  const costVisible = (items || []).some((i) => i.cost != null)
+  const valueOf = (it) => {
+    if (!costVisible) return null
+    const im = itemByName[(it.name || '').toLowerCase()]
+    return it.physical * (Number(im?.cost) || Number(im?.standard_rate) || 0)
+  }
+  const totalValue = costVisible ? rows.reduce((s, it) => s + (valueOf(it) || 0), 0) : null
 
   return (
     <>
       <PageHeader title="Stock / Items" subtitle="Live inventory balance & valuation" />
 
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat label="Stock Value" value={sar(totalValue)} tone="text-brand-600" />
+        <Stat label="Stock Value" value={totalValue == null ? '—' : sar(totalValue)} tone="text-brand-600" />
         <Stat label="Reserved (units)" value={stockItems.reduce((s, it) => s + (it.reserved || 0), 0)} tone="text-violet-600" />
         <Stat label="Available (units)" value={stockItems.reduce((s, it) => s + (it.available || 0), 0)} tone="text-emerald-600" />
         <Stat label="Low / Out" value={stockItems.filter((it) => it.available <= it.reorder).length} tone="text-amber-600" />
@@ -47,6 +59,7 @@ export default function StockItems() {
             <tbody>
               {rows.map((it) => {
                 const st = statusOf(it)
+                const val = valueOf(it)
                 return (
                   <tr key={it.code} className="hover:bg-slate-50/60">
                     <td className="td font-semibold text-brand-600">{it.code}</td>
@@ -57,7 +70,7 @@ export default function StockItems() {
                     <td className="td font-bold text-emerald-600">{it.available}</td>
                     <td className="td text-blue-600">{it.incoming}</td>
                     <td className="td text-slate-500">{it.aging}d</td>
-                    <td className="td font-semibold">{sar(it.physical * it.rate)}</td>
+                    <td className="td font-semibold">{val == null ? '—' : sar(val)}</td>
                     <td className="td"><Badge tone={st.tone}>{st.t}</Badge></td>
                   </tr>
                 )

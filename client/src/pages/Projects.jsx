@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Search, ArrowRight } from 'lucide-react'
 import { PageHeader, Badge, statusTone } from '../components/ui.jsx'
 import { sar } from '../data/mockData.js'
-import { gpPctOf } from '../data/projectData.js'
+import { gpPctOf, hasCost } from '../data/projectData.js'
 import { useData } from '../store/DataContext.jsx'
 
 const filters = ['All', 'On Track', 'At Risk', 'Delayed', 'Completed']
@@ -13,7 +13,7 @@ export default function Projects() {
   const { projects } = useData()
   const [f, setF] = useState('All')
   const [q, setQ] = useState('')
-  const rows = projects.filter((p) => (f === 'All' || p.status === f) && (p.id + p.name + p.customer + p.salesOrder).toLowerCase().includes(q.toLowerCase()))
+  const rows = projects.filter((p) => (f === 'All' || p.status === f) && ((p.ref || '') + (p.number || '') + p.id + p.name + p.customer + p.salesOrder).toLowerCase().includes(q.toLowerCase()))
 
   return (
     <>
@@ -53,13 +53,17 @@ export default function Projects() {
                 return (
                   <tr key={p.id} onClick={() => navigate(`/projects/${p.id}`)} className="group cursor-pointer hover:bg-slate-50/60">
                     <td className="td">
-                      <p className="font-semibold text-brand-600">{p.id}</p>
+                      <p className="font-semibold text-brand-600">{p.ref || p.number || p.id}</p>
                       <p className="text-xs text-muted">{p.name}</p>
                     </td>
                     <td className="td text-ink">{p.customer}</td>
                     <td className="td font-semibold">{sar(p.contractValue)}</td>
-                    <td className="td text-slate-600">{sar(p.actualCost)}</td>
-                    <td className="td"><span className={`chip ${gp < 20 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>{gp}%</span></td>
+                    <td className="td text-slate-600">{hasCost(p) ? sar(p.actualCost) : '—'}</td>
+                    <td className="td">
+                      {gp == null
+                        ? <span className="text-muted">—</span>
+                        : <span className={`chip ${gp < 20 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>{gp}%</span>}
+                    </td>
                     <td className="td">
                       <div className="flex items-center gap-2">
                         <div className="h-1.5 w-24 rounded-full bg-slate-100"><div className="h-1.5 rounded-full bg-brand-500" style={{ width: `${p.progress}%` }} /></div>

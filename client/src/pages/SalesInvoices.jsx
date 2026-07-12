@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Plus, ShieldCheck, FolderKanban, Coins } from 'lucide-react'
 import { PageHeader, Badge, statusTone } from '../components/ui.jsx'
 import { Modal, Field, Select, Row } from '../components/Modal.jsx'
@@ -6,17 +6,32 @@ import { sar } from '../data/mockData.js'
 import { useData } from '../store/DataContext.jsx'
 
 export default function SalesInvoices() {
-  const { invoices, createInvoice, recordPayment, customers, projects } = useData()
-  const customerOpts = ['', ...(customers || []).map((c) => c.name).filter(Boolean)]
-  const projectOpts = [{ value: '', label: '— None —' }, ...(projects || []).map((p) => ({ value: p.id, label: `${p.ref || ''} ${p.name || ''}`.trim() }))]
+  const { invoices, createInvoice, recordPayment, resList } = useData()
+  // Customer & Project belong to panels the Accounts User does not own → self-fetch from shared lookups.
+  const [custs, setCusts] = useState([])
+  const [projs, setProjs] = useState([])
+  useEffect(() => {
+    resList('lookups/customers').then((r) => setCusts(Array.isArray(r) ? r : [])).catch(() => setCusts([]))
+    resList('lookups/projects').then((r) => setProjs(Array.isArray(r) ? r : [])).catch(() => setProjs([]))
+  }, [])
+  const projMap = Object.fromEntries(projs.map((p) => [p.id, p.label || `${p.ref || ''} ${p.name || ''}`.trim()]))
+  const customerOpts = [{ value: '', label: '— Select customer —' }, ...custs.map((c) => ({ value: c.name, label: c.label || c.name }))]
+  const projectOpts = [{ value: '', label: '— None —' }, ...projs.map((p) => ({ value: p.id, label: p.label || `${p.ref || ''} ${p.name || ''}`.trim() }))]
   const [newModal, setNewModal] = useState(false)
   const [payModal, setPayModal] = useState(null)
   const [nv, setNv] = useState({ customer: '', project: '', total: '' })
   const [amt, setAmt] = useState('')
   const inv = invoices.find((i) => i.id === payModal)
 
-  const saveNew = () => { if (nv.customer && nv.total) createInvoice(nv); setNv({ customer: '', project: '', total: '' }); setNewModal(false) }
-  const savePay = () => { recordPayment(payModal, amt); setAmt(''); setPayModal(null) }
+  const saveNew = async () => {
+    if (!nv.customer || !nv.total) return
+    try { await createInvoice(nv) } catch (e) { alert(e.message || 'Failed to create invoice'); return }
+    setNv({ customer: '', project: '', total: '' }); setNewModal(false)
+  }
+  const savePay = async () => {
+    try { await recordPayment(payModal, amt) } catch (e) { alert(e.message || 'Failed to record payment'); return }
+    setAmt(''); setPayModal(null)
+  }
 
   return (
     <>
@@ -35,6 +50,7 @@ export default function SalesInvoices() {
               {invoices.map((i) => {
                 const net = Math.round(i.total / 1.15)
                 const bal = i.total - i.paid
+                const projLabel = i.project && i.project !== '—' ? (projMap[i.project] || i.project) : null
                 return (
                   <tr key={i.id} className="hover:bg-slate-50/60">
                     <td className="td">
@@ -42,7 +58,7 @@ export default function SalesInvoices() {
                       <span className="ml-2 inline-flex items-center gap-1 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600"><ShieldCheck size={11} /> ZATCA</span>
                     </td>
                     <td className="td font-medium text-ink">{i.customer}</td>
-                    <td className="td"><span className="inline-flex items-center gap-1 text-xs font-semibold text-violet-600"><FolderKanban size={12} /> {i.project}</span></td>
+                    <td className="td">{projLabel ? <span className="inline-flex items-center gap-1 text-xs font-semibold text-violet-600"><FolderKanban size={12} /> {projLabel}</span> : <span className="text-slate-300">—</span>}</td>
                     <td className="td text-slate-600">{sar(net)}</td>
                     <td className="td text-slate-600">{sar(i.total - net)}</td>
                     <td className="td font-semibold">{sar(i.total)}</td>

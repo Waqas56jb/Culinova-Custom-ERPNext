@@ -5,6 +5,14 @@ import MasterTable from '../components/MasterTable.jsx'
 import { useData } from '../store/DataContext.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
 
+// Canonical numbering doc types — must match the keys the server switches on
+// (values of TABLE_DOCTYPE in server/src/core/numbering.js). A free-text typo here
+// would silently disable numbering for that document, so this is a fixed Select.
+const NUMBERING_DOC_TYPES = [
+  'Sales Order', 'Invoice', 'Purchase Order', 'RFQ', 'Delivery Note', 'Goods Receipt',
+  'Project', 'Payment', 'Quotation', 'Purchase Requisition', 'BOQ', 'Cost Sheet',
+]
+
 export default function CompanySettings() {
   const d = useData()
   const { canSee } = useAuth()
@@ -103,7 +111,7 @@ export default function CompanySettings() {
           rows={s.numberingSeries || []}
           columns={[{ key: 'doc_type', label: 'Document', className: 'font-semibold text-ink' }, { key: 'prefix', label: 'Prefix', type: 'badge' }, { key: 'next_number', label: 'Next #' }, { key: 'padding', label: 'Padding' }, { key: 'include_year', label: 'Year', type: 'bool' }, { key: 'is_active', label: 'Active', type: 'bool' }]}
           fields={[
-            { key: 'doc_type', label: 'Document Type', required: true }, { key: 'prefix', label: 'Prefix', required: true },
+            { key: 'doc_type', label: 'Document Type', type: 'select', options: NUMBERING_DOC_TYPES, required: true }, { key: 'prefix', label: 'Prefix', required: true },
             { key: 'next_number', label: 'Next Number', type: 'number' }, { key: 'padding', label: 'Digits (padding)', type: 'number' },
             { key: 'separator', label: 'Separator', placeholder: '-' },
             { key: 'include_year', label: 'Include year', type: 'checkbox' }, { key: 'is_active', label: 'Active', type: 'checkbox' },

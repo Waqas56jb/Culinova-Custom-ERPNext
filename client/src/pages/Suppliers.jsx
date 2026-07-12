@@ -13,12 +13,29 @@ export default function Suppliers() {
   ;(purchaseOrders || []).forEach((p) => { if (p.supplier) poCount[p.supplier] = (poCount[p.supplier] || 0) + 1 })
   const [modal, setModal] = useState(false)
   const [v, setV] = useState({ name: '', category: '' })
-  const save = () => { addSupplier(v); setV({ name: '', category: '' }); setModal(false) }
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState('')
+  const closeModal = () => { setModal(false); setErr('') }
+  // The store/server generates the supplier code — we pass name + category through and let it assign one.
+  // Await the create so a rejection surfaces inline and the modal stays open (never close as if it worked).
+  const save = async () => {
+    if (!v.name.trim()) { setErr('Supplier name is required.'); return }
+    setSaving(true); setErr('')
+    try {
+      await addSupplier(v)
+      setV({ name: '', category: '' })
+      closeModal()
+    } catch (e) {
+      setErr(e?.message || 'Could not create supplier. Please try again.')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
     <>
       <PageHeader title="Suppliers" subtitle="Vendor master · performance & ratings">
-        <button className="btn-primary" onClick={() => setModal(true)}><Plus size={16} /> New Supplier</button>
+        <button className="btn-primary" onClick={() => { setErr(''); setModal(true) }}><Plus size={16} /> New Supplier</button>
       </PageHeader>
 
       <div className="card overflow-hidden">
@@ -34,7 +51,7 @@ export default function Suppliers() {
                   <td className="td">
                     <div className="flex items-center gap-2.5">
                       <span className="grid h-9 w-9 place-items-center rounded-lg bg-gradient-to-br from-navy-700 to-brand-600 text-[11px] font-bold text-white">{s.name.slice(0, 2).toUpperCase()}</span>
-                      <div><p className="font-semibold text-ink">{s.name}</p><p className="text-xs text-muted">{s.code}</p></div>
+                      <div><p className="font-semibold text-ink">{s.name}</p><p className="text-xs text-muted">{s.code || '—'}</p></div>
                     </div>
                   </td>
                   <td className="td text-slate-600">{s.category}</td>
@@ -54,10 +71,11 @@ export default function Suppliers() {
         </div>
       </div>
 
-      <Modal open={modal} onClose={() => setModal(false)} title="New Supplier" subtitle="Add a vendor to the master"
-        footer={<><button className="btn-ghost" onClick={() => setModal(false)}>Cancel</button><button className="btn-primary" onClick={save}>Create Supplier</button></>}>
+      <Modal open={modal} onClose={closeModal} title="New Supplier" subtitle="Add a vendor to the master"
+        footer={<><button className="btn-ghost" onClick={closeModal}>Cancel</button><button className="btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Create Supplier'}</button></>}>
         <Field label="Supplier Name" value={v.name} onChange={(e) => setV((s) => ({ ...s, name: e.target.value }))} placeholder="e.g. Gulf Kitchen Equip. Co." />
         <Select label="Category" value={v.category} onChange={(e) => setV((s) => ({ ...s, category: e.target.value }))} options={cats.length ? cats : ['Equipment', 'Fabrication', 'Local', 'Import']} />
+        {err && <p className="text-sm font-medium text-red-600">{err}</p>}
       </Modal>
     </>
   )

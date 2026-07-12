@@ -1,9 +1,20 @@
+import { useState, useEffect } from 'react'
 import { PageHeader, Badge, statusTone } from '../components/ui.jsx'
 import { useData } from '../store/DataContext.jsx'
 
 export default function Commissioning() {
-  const { commissioning, updateTest } = useData()
+  const d = useData()
+  const { commissioning, updateTest } = d
   const projects = [...new Set(commissioning.map((t) => t.project))]
+  // resolve project_id (uuid) → a readable "PRJ-… · Name" label via the shared lookup (any internal role)
+  const [projMap, setProjMap] = useState({})
+  useEffect(() => {
+    d.lookupProjects().then((rows) => {
+      const m = {}; for (const p of rows || []) m[p.id] = p.label || p.ref || p.name
+      setProjMap(m)
+    }).catch(() => setProjMap({}))
+  }, [d])
+  const projLabel = (pid) => projMap[pid] || (pid ? '—' : 'Unassigned')
 
   return (
     <>
@@ -23,7 +34,7 @@ export default function Commissioning() {
           return (
             <div key={pid} className="card overflow-hidden">
               <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/50 p-4">
-                <span className="font-display text-lg font-extrabold text-brand-600">{pid}</span>
+                <span className="font-display text-lg font-extrabold text-brand-600">{projLabel(pid)}</span>
                 <span className={`chip ${allPassed ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>{passed}/{tests.length} passed{allPassed ? ' · ready for handover' : ''}</span>
               </div>
               <div className="divide-y divide-slate-100">

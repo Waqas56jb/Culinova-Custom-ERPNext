@@ -32,7 +32,7 @@ export default function Documents() {
   const openVersions = async (doc) => { setVer({ doc, full: null, newUrl: '', note: '' }); const full = await d.docGet(doc.id); setVer((v) => ({ ...v, full })) }
   const addVersion = async () => {
     setBusy(true)
-    try { await d.docNewVersion(ver.doc.id, { file_url: ver.newUrl, note: ver.note }); const full = await d.docGet(ver.doc.id); setVer((v) => ({ ...v, full, newUrl: '', note: '' })); load() } finally { setBusy(false) }
+    try { await d.docNewVersion(ver.doc.id, { file_url: ver.newUrl, note: ver.note }); const full = await d.docGet(ver.doc.id); setVer((v) => ({ ...v, full, newUrl: '', note: '' })); load() } catch (e) { alert(e.message) } finally { setBusy(false) }
   }
   const remove = async (id) => { if (confirm('Delete this document and all versions?')) { await d.docDelete(id); load() } }
 
@@ -100,9 +100,11 @@ export default function Documents() {
               <div className="rounded-xl border border-brand-200 bg-brand-50/40 p-3">
                 <p className="mb-2 text-xs font-bold text-brand-700">Upload a new version</p>
                 <Field label="New file URL" value={ver.newUrl} onChange={(e) => setVer({ ...ver, newUrl: e.target.value })} placeholder="https://…" />
-                <div className="mt-2 flex gap-2">
-                  <input className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none" placeholder="Change note" value={ver.note} onChange={(e) => setVer({ ...ver, note: e.target.value })} />
-                  <button className="btn-primary !py-2" disabled={busy || !ver.newUrl} onClick={addVersion}>{busy ? <Loader2 size={14} className="animate-spin" /> : null} Add version</button>
+                <div className="mt-2 flex items-end gap-2">
+                  <div className="flex-1">
+                    <Field label="Change note" value={ver.note} onChange={(e) => setVer({ ...ver, note: e.target.value })} placeholder="e.g. updated pricing sheet" />
+                  </div>
+                  <button className="btn-primary !py-2 shrink-0" disabled={busy || !ver.newUrl} onClick={addVersion}>{busy ? <Loader2 size={14} className="animate-spin" /> : null} Add version</button>
                 </div>
               </div>
             )}

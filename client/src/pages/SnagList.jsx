@@ -1,14 +1,25 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Plus, CheckCircle2, FolderKanban } from 'lucide-react'
 import { PageHeader, Badge, statusTone } from '../components/ui.jsx'
 import { Modal, Field, Select, Row } from '../components/Modal.jsx'
 import { useData } from '../store/DataContext.jsx'
 
 export default function SnagList() {
-  const { snags, addSnag, resolveSnag } = useData()
+  const { snags, addSnag, resolveSnag, resList } = useData()
+  // Project is a uuid FK in a panel the Site Engineer does not own → self-fetch from the shared lookup.
+  const [projs, setProjs] = useState([])
+  useEffect(() => {
+    resList('lookups/projects').then((r) => setProjs(Array.isArray(r) ? r : [])).catch(() => setProjs([]))
+  }, [])
+  const projMap = Object.fromEntries(projs.map((p) => [p.id, p.label || `${p.ref || ''} ${p.name || ''}`.trim()]))
+  const projectOpts = [{ value: '', label: '— none —' }, ...projs.map((p) => ({ value: p.id, label: p.label || `${p.ref || ''} ${p.name || ''}`.trim() }))]
   const [modal, setModal] = useState(false)
   const [v, setV] = useState({ project: '', item: '', description: '', severity: 'Low' })
-  const save = () => { if (v.description) addSnag(v); setV({ project: '', item: '', description: '', severity: 'Low' }); setModal(false) }
+  const save = async () => {
+    if (!v.description) return
+    try { await addSnag(v) } catch (e) { alert(e.message || 'Failed to add snag'); return }
+    setV({ project: '', item: '', description: '', severity: 'Low' }); setModal(false)
+  }
 
   return (
     <>
@@ -32,9 +43,9 @@ export default function SnagList() {
             <tbody>
               {snags.map((s) => (
                 <tr key={s.id} className="hover:bg-slate-50/60">
-                  <td className="td font-semibold text-brand-600">{s.id}</td>
-                  <td className="td"><span className="inline-flex items-center gap-1 text-xs font-semibold text-violet-600"><FolderKanban size={12} /> {s.project}</span></td>
-                  <td className="td text-slate-600">{s.item}</td>
+                  <td className="td font-semibold text-brand-600">{s.ref || s.number || s.id}</td>
+                  <td className="td">{s.project ? <span className="inline-flex items-center gap-1 text-xs font-semibold text-violet-600"><FolderKanban size={12} /> {projMap[s.project] || s.project}</span> : <span className="text-slate-300">—</span>}</td>
+                  <td className="td text-slate-600">{s.item || '—'}</td>
                   <td className="td text-slate-700">{s.description}</td>
                   <td className="td"><Badge tone={statusTone(s.severity)}>{s.severity}</Badge></td>
                   <td className="td"><Badge tone={statusTone(s.status)}>{s.status}</Badge></td>
@@ -45,6 +56,7 @@ export default function SnagList() {
                   </td>
                 </tr>
               ))}
+              {snags.length === 0 && <tr><td className="td text-slate-400" colSpan={7}>No snags logged yet.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -53,7 +65,7 @@ export default function SnagList() {
       <Modal open={modal} onClose={() => setModal(false)} title="Add Snag" subtitle="Log a site defect"
         footer={<><button className="btn-ghost" onClick={() => setModal(false)}>Cancel</button><button className="btn-primary" onClick={save}>Add Snag</button></>}>
         <Row>
-          <Field label="Project" value={v.project} onChange={(e) => setV((s) => ({ ...s, project: e.target.value }))} placeholder="PRJ-0042" />
+          <Select label="Project" value={v.project} onChange={(e) => setV((s) => ({ ...s, project: e.target.value }))} options={projectOpts} />
           <Field label="Item" value={v.item} onChange={(e) => setV((s) => ({ ...s, item: e.target.value }))} placeholder="Exhaust Hood" />
         </Row>
         <Field label="Description" value={v.description} onChange={(e) => setV((s) => ({ ...s, description: e.target.value }))} placeholder="Describe the defect" />

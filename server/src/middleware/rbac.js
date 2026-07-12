@@ -18,6 +18,19 @@ export function internalOnly(req, res, next) {
   next()
 }
 
+// Guard a route that is legitimately reachable from MORE THAN ONE panel (e.g. a Stock User reads
+// purchase orders to receive them, while Procurement owns writing them). Passes if the role can access
+// ANY of the listed panels AND its access level allows the action.
+export function authorizeAny(panels, action) {
+  const list = Array.isArray(panels) ? panels : [panels]
+  return (req, res, next) => {
+    const { role, access_level } = req.user || {}
+    if (!list.some((p) => canAccessPanel(role, p))) return res.status(403).json({ error: `No access to ${list.join('/')} panel` })
+    if (!canDoAction(access_level, action)) return res.status(403).json({ error: `Your access level cannot ${action}` })
+    next()
+  }
+}
+
 // Strip cost/profit/supplier-price fields from responses for roles outside Management / Operations /
 // Finance (Sales rules #4/#20 — Sales and Engineering must never see cost or margin).
 // Recurses into nested objects/arrays so line items (e.g. quotation_items[].cost) are stripped too.

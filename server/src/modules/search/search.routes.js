@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { supabase } from '../../config/supabase.js'
 import { authRequired } from '../../middleware/auth.js'
 import { asyncWrap } from '../../middleware/error.js'
-import { canAccessPanel } from '../../rbac/permissions.js'
+import { canAccessPanel, isInternal } from '../../rbac/permissions.js'
 
 const r = Router()
 
@@ -20,8 +20,11 @@ r.get('/', authRequired, asyncWrap(async (req, res) => {
   const lim = 6
   const can = (panel) => canAccessPanel(req.user.role, panel)
 
-  // each searchable entity → the panel that owns it (null = catalogue, everyone). Only entities the
-  // caller may access are queried at all.
+  // An external (zero-panel) role such as a portal Customer searches nothing.
+  if (!isInternal(req.user.role)) return res.json({ query: raw, results: [] })
+
+  // each searchable entity → the panel that owns it (null = shared catalogue, every INTERNAL role).
+  // Only entities the caller may access are queried at all.
   const sources = {
     items: { panel: null, run: () => supabase.from('items').select('id, item_code, item_name, brand').or(`item_name.ilike.${like},item_code.ilike.${like},brand.ilike.${like}`).limit(8), map: (x) => ({ type: 'Item', id: x.id, label: x.item_name, sub: [x.item_code, x.brand].filter(Boolean).join(' · '), route: '/stock/item-master' }) },
     customers: { panel: 'sales', run: () => supabase.from('customers').select('id, name').ilike('name', like).limit(lim), map: (x) => ({ type: 'Customer', id: x.id, label: x.name, sub: '', route: '/sales/customers' }) },

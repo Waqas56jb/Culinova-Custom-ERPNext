@@ -5,7 +5,7 @@ import {
 import { FolderKanban, Wallet, TrendingUp, AlertTriangle, Download } from 'lucide-react'
 import { PageHeader, KpiCard, ChartCard, Badge, statusTone } from '../components/ui.jsx'
 import { sar } from '../data/mockData.js'
-import { gpOf, gpPctOf } from '../data/projectData.js'
+import { gpOf, gpPctOf, hasCost } from '../data/projectData.js'
 import { monthly } from '../data/agg.js'
 import { useData } from '../store/DataContext.jsx'
 
@@ -15,20 +15,27 @@ export default function ProjectDashboard() {
   const { projects } = useData()
   const active = projects.filter((p) => p.status !== 'Completed').length
   const totalCV = projects.reduce((s, p) => s + p.contractValue, 0)
-  const totalGP = projects.reduce((s, p) => s + gpOf(p), 0)
-  const avgGP = totalCV > 0 ? Math.round((totalGP / totalCV) * 100) : 0
+  // cost & GP are redacted server-side for non-management roles → presence-based only.
+  // Aggregate GP over projects whose cost is actually present; if NONE are, GP/cost is unknown ('—'),
+  // never a fabricated 0% margin or "SAR 0" committed cost.
+  const costProjects = projects.filter(hasCost)
+  const costVisible = costProjects.length > 0
+  const totalGP = costProjects.reduce((s, p) => s + (gpOf(p) || 0), 0)
+  const gpBase = costProjects.reduce((s, p) => s + p.contractValue, 0)
+  const avgGP = gpBase > 0 ? Math.round((totalGP / gpBase) * 100) : null
   const delayed = projects.filter((p) => p.status === 'Delayed').length
   const totalBilled = projects.reduce((s, p) => s + p.billed, 0)
   const totalCollected = projects.reduce((s, p) => s + p.collected, 0)
-  const totalCommitted = projects.reduce((s, p) => s + p.committedCost, 0)
+  const totalCommitted = costProjects.reduce((s, p) => s + p.committedCost, 0)
   const avgProgress = projects.length ? Math.round(projects.reduce((s, p) => s + p.progress, 0) / projects.length) : 0
 
   const short = (p) => String(p.ref || p.number || '').replace('PRJ-', '#') || (p.name || '').slice(0, 10)
   const statusDist = ['On Track', 'At Risk', 'Delayed', 'Completed'].map((s) => ({
     name: s, value: projects.filter((p) => p.status === s).length, color: statusColors[s],
   }))
-  const budgetVsActual = projects.map((p) => ({ name: short(p), budget: Math.round(p.contractValue / 1000), actual: Math.round(p.actualCost / 1000) }))
-  const profitability = projects.map((p) => ({ name: short(p), gp: gpPctOf(p) }))
+  const budgetVsActual = projects.map((p) => ({ name: short(p), budget: Math.round(p.contractValue / 1000), actual: hasCost(p) ? Math.round(p.actualCost / 1000) : null }))
+  // only projects whose cost is visible produce a GP bar; empty ⇒ honest "cost hidden" state
+  const profitability = costProjects.map((p) => ({ name: short(p), gp: gpPctOf(p) }))
   // live "projects started" trend (real monthly count) — replaces the empty planned-vs-actual mock series
   const progressTrend = monthly(projects, { count: true }).map((b) => ({ m: b.m, started: b.v }))
 
@@ -41,7 +48,7 @@ export default function ProjectDashboard() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard label="Active Projects" value={active} sub={`${projects.length} total`} icon={FolderKanban} accent="brand" />
         <KpiCard label="Total Contract Value" value={sar(totalCV)} sub="all projects" icon={Wallet} accent="violet" />
-        <KpiCard label="Avg Gross Profit" value={`${avgGP}%`} sub={sar(totalGP)} icon={TrendingUp} accent="emerald" />
+        <KpiCard label="Avg Gross Profit" value={avgGP == null ? '—' : `${avgGP}%`} sub={avgGP == null ? 'cost hidden for your role' : sar(totalGP)} icon={TrendingUp} accent="emerald" />
         <KpiCard label="Delayed Projects" value={delayed} sub="need attention" icon={AlertTriangle} accent="gold" />
       </div>
 
@@ -49,7 +56,7 @@ export default function ProjectDashboard() {
         {[
           { label: 'Total Billed', value: sar(totalBilled) },
           { label: 'Collected', value: sar(totalCollected) },
-          { label: 'Committed Cost', value: sar(totalCommitted) },
+          { label: 'Committed Cost', value: costVisible ? sar(totalCommitted) : '—' },
           { label: 'Avg Progress', value: `${avgProgress}%` },
         ].map((s) => (
           <div key={s.label} className="card card-pad animate-fade-up">
@@ -69,7 +76,7 @@ export default function ProjectDashboard() {
               <Tooltip cursor={{ fill: '#f8fafc' }} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
               <Bar dataKey="budget" name="Contract Value" radius={[6, 6, 0, 0]} barSize={18} fill="#0EA99A" isAnimationActive={false} />
-              <Bar dataKey="actual" name="Actual Cost" radius={[6, 6, 0, 0]} barSize={18} fill="#E0A82E" isAnimationActive={false} />
+              {costVisible && <Bar dataKey="actual" name="Actual Cost" radius={[6, 6, 0, 0]} barSize={18} fill="#E0A82E" isAnimationActive={false} />}
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -97,15 +104,17 @@ export default function ProjectDashboard() {
 
       <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
         <ChartCard title="Profitability by Project" subtitle="Gross Profit %">
-          <ResponsiveContainer width="100%" height={230}>
-            <BarChart data={profitability} margin={{ left: -18, right: 6 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#eef2f6" vertical={false} />
-              <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: '#94a3b8' }} />
-              <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: '#94a3b8' }} />
-              <Tooltip cursor={{ fill: '#f8fafc' }} />
-              <Bar dataKey="gp" name="GP %" radius={[6, 6, 0, 0]} barSize={22} fill="#6366f1" isAnimationActive={false} />
-            </BarChart>
-          </ResponsiveContainer>
+          {profitability.length ? (
+            <ResponsiveContainer width="100%" height={230}>
+              <BarChart data={profitability} margin={{ left: -18, right: 6 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#eef2f6" vertical={false} />
+                <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                <Tooltip cursor={{ fill: '#f8fafc' }} />
+                <Bar dataKey="gp" name="GP %" radius={[6, 6, 0, 0]} barSize={22} fill="#6366f1" isAnimationActive={false} />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : <p className="py-16 text-center text-sm text-slate-400">Cost &amp; profitability data is hidden for your role</p>}
         </ChartCard>
 
         <ChartCard title="Projects Started" subtitle="New projects per month" className="xl:col-span-2">
@@ -135,7 +144,7 @@ export default function ProjectDashboard() {
             <tbody>
               {projects.filter((p) => p.status === 'Delayed' || p.status === 'At Risk').map((p) => (
                 <tr key={p.id} className="hover:bg-slate-50/60">
-                  <td className="td font-semibold text-brand-600">{p.id}</td>
+                  <td className="td font-semibold text-brand-600">{p.ref || p.number || p.id}</td>
                   <td className="td text-ink">{p.customer}</td>
                   <td className="td">
                     <div className="flex items-center gap-2">
@@ -143,7 +152,7 @@ export default function ProjectDashboard() {
                       <span className="text-xs text-muted">{p.progress}%</span>
                     </div>
                   </td>
-                  <td className="td font-semibold">{gpPctOf(p)}%</td>
+                  <td className="td font-semibold">{gpPctOf(p) == null ? '—' : `${gpPctOf(p)}%`}</td>
                   <td className="td"><Badge tone={statusTone(p.status)}>{p.status}</Badge></td>
                 </tr>
               ))}

@@ -10,13 +10,15 @@ export const resources = {
   interactions: { table: 'customer_interactions', panel: 'sales' },
   // projects  — contract_value is financial: only Management may change it
   projects: { table: 'projects', panel: 'projects', protect: ['contract_value', 'budget_cost', 'committed_cost'] },
-  'project-boq': { table: 'project_boq', panel: 'projects', orderBy: 'id' },
+  'project-boq': { table: 'project_boq', panel: 'projects', orderBy: 'id', recomputeProject: true },
   'project-tasks': { table: 'project_tasks', panel: 'projects', orderBy: 'id' },
-  variations: { table: 'variation_orders', panel: 'projects', orderBy: 'id' },
+  variations: { table: 'variation_orders', panel: 'projects', orderBy: 'id', recomputeProject: true },
   // procurement
   suppliers: { table: 'suppliers', panel: 'procurement' },
   rfqs: { table: 'rfqs', panel: 'procurement' },
-  'purchase-orders': { table: 'purchase_orders', panel: 'procurement' },
+  // a PO raised against a project re-rolls that project's actual cost; the Stock User (warehouse)
+  // must be able to READ pending POs to receive them (readPanels), while writes stay procurement-only.
+  'purchase-orders': { table: 'purchase_orders', panel: 'procurement', readPanels: ['procurement', 'warehouse'], recomputeProject: true },
   // warehouse
   // items: handled by the dedicated Item Master module (modules/item) — not generic CRUD
   warehouses: { table: 'warehouses', panel: 'warehouse' },

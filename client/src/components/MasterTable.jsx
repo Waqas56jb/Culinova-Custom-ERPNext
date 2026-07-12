@@ -23,7 +23,12 @@ export default function MasterTable({
     setBusy(true); setErr('')
     try {
       const payload = {}
-      for (const f of fields) { let v = modal.values[f.key]; if (f.type === 'number') v = v === '' || v == null ? null : Number(v); payload[f.key] = v }
+      for (const f of fields) {
+        let v = modal.values[f.key]
+        if (f.type === 'number') v = v === '' || v == null ? null : Number(v)
+        else if (f.type !== 'checkbox' && typeof v === 'string' && v.trim() === '') v = null // blank select/text/date → null, not '' (avoids CHECK/uuid/date 500s)
+        payload[f.key] = v
+      }
       if (modal.editing) await onUpdate(modal.editing, payload); else await onAdd(payload)
       setModal(null)
     } catch (e) { setErr(e.message) } finally { setBusy(false) }

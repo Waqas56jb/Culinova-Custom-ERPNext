@@ -26,6 +26,7 @@ import { boqRouter } from '../modules/boq/boq.routes.js'                     // 
 import { prRouter, procurementReportsRouter } from '../modules/procurement/pr.routes.js' // M7 Procurement
 import { equipmentRouter } from '../modules/pm/equipment.routes.js'          // M8 Project Equipment
 import { aiRouter } from '../modules/ai/ai.routes.js'                        // M9 AI Business Intelligence
+import { lookupsRouter } from '../modules/lookups/lookups.routes.js'         // shared cross-panel pickers
 import { resources } from '../core/resources.js'
 import { crudRouter } from '../core/crud.js'
 import { rolePanels } from '../rbac/permissions.js'
@@ -69,6 +70,7 @@ api.use('/purchase-requisitions', prRouter())   // M7 Purchase Requisitions + su
 api.use('/procurement', procurementReportsRouter()) // M7 delivery-tracking + supplier-performance reports
 api.use('/project-equipment', equipmentRouter())// M8 Project Equipment (assign · status workflow · summary)
 api.use('/ai', aiRouter())                      // M9 AI Business Intelligence (real analytics + optional narrative)
+api.use('/lookups', lookupsRouter())            // shared read-only pickers (projects/customers/suppliers/items/warehouses)
 
 // STOCK MOVEMENT — these intercept POST at the same paths as the generic CRUD so creating a
 // document ALSO moves real stock (stock_balances + stock_ledger). Other verbs fall through.

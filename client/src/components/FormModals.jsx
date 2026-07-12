@@ -41,6 +41,60 @@ function AvailabilityHint({ name, qty, check }) {
   )
 }
 
+// ── Shared master-driven dropdown sources ──────────────────────────────────
+// Load options from a shared read-only lookup endpoint. These endpoints are
+// readable by EVERY internal role, so a dropdown works even when the current
+// role's own store (e.g. customers) is empty because it lacks that panel.
+function useLookup(d, resource, open) {
+  const [rows, setRows] = useState([])
+  useEffect(() => {
+    if (!open) return
+    let alive = true
+    d.resList(resource).then((r) => { if (alive) setRows(Array.isArray(r) ? r : []) }).catch(() => { if (alive) setRows([]) })
+    return () => { alive = false }
+  }, [d, resource, open])
+  return rows
+}
+
+// Customer typeahead — suggestions come from the Customer Master (lookups/customers),
+// but these forms store the customer as free text, so a brand-new name can still be
+// typed and is never blocked. Drives the OPTIONS from the master; keeps submit logic.
+function CustomerField({ d, open, value, onChange, label = 'Customer', placeholder = 'Pick a customer or type a new name', ...rest }) {
+  const rows = useLookup(d, 'lookups/customers', open)
+  return (
+    <div>
+      <Field label={label} value={value} onChange={onChange} list="lookup-customers" placeholder={placeholder} autoComplete="off" {...rest} />
+      <datalist id="lookup-customers">{rows.map((c) => <option key={c.id} value={c.name} />)}</datalist>
+    </div>
+  )
+}
+
+// Territory options — data-driven: distinct territories already on customers + company
+// branch cities, merged with KSA-region defaults so the list is never empty and new
+// territories flow in. Used as a typeahead so a new territory can be typed (mirrors the
+// free-text Territory box on the Customer Master — one column, one behaviour).
+const TERRITORY_DEFAULTS = ['Riyadh', 'Jeddah', 'Eastern', 'Makkah', 'Madinah', 'Dammam', 'Al Khobar', 'Other']
+function useTerritoryOptions(d) {
+  return useMemo(() => {
+    const set = new Set()
+    for (const c of d.customers || []) { const t = String(c.territory || '').trim(); if (t && t !== '—') set.add(t) }
+    for (const b of d.settings?.branches || []) { const t = String(b.city || '').trim(); if (t) set.add(t) }
+    for (const t of TERRITORY_DEFAULTS) set.add(t)
+    return [...set]
+  }, [d.customers, d.settings])
+}
+
+// Lead-source options — distinct sources already in the DB merged with defaults, so the
+// business can introduce a new source just by typing it (no code change required).
+const LEAD_SOURCE_DEFAULTS = ['Website', 'Referral', 'Exhibition', 'Cold Call', 'WhatsApp', 'Social Media']
+function useLeadSourceOptions(d) {
+  return useMemo(() => {
+    const set = new Set(LEAD_SOURCE_DEFAULTS)
+    for (const l of d.leads || []) { const s = String(l.source || '').trim(); if (s) set.add(s) }
+    return [...set]
+  }, [d.leads])
+}
+
 export default function FormModals() {
   const d = useData()
   const t = d.form.type
@@ -70,7 +124,7 @@ function InteractionModal({ open, d }) {
     <Modal open={open} onClose={d.closeForm} title="Log Activity" subtitle="Record a call, meeting or visit (interaction log)"
       footer={<><button className="btn-ghost" onClick={d.closeForm}>Cancel</button><SaveButton onClick={save}>Save Activity</SaveButton></>}>
       <Row>
-        <Field label="Customer" value={v.customer} onChange={on('customer')} placeholder="Customer name" />
+        <CustomerField d={d} open={open} value={v.customer} onChange={on('customer')} />
         <Select label="Type" value={v.type} onChange={on('type')} options={['Call', 'Meeting', 'Email', 'WhatsApp', 'Site Visit']} />
       </Row>
       <Field label="Notes" value={v.notes} onChange={on('notes')} placeholder="What was discussed?" />
@@ -105,6 +159,7 @@ function LeadModal({ open, d }) {
   useEffect(() => { if (open) setV({ name: prefill?.name || '', company: prefill?.company || '', source: 'Website', value: '' }) }, [open, prefill])
   const on = (k) => (e) => setV((s) => ({ ...s, [k]: e.target.value }))
   const reset = () => setV({ name: '', company: '', source: 'Website', value: '' })
+  const sources = useLeadSourceOptions(d)
   const save = async () => { try { await d.addLead(v) } catch (e) { alert(e.message); return } reset(); d.closeForm() }
   return (
     <Modal open={open} onClose={d.closeForm} title="New Lead" subtitle="Capture a new customer enquiry"
@@ -112,7 +167,10 @@ function LeadModal({ open, d }) {
       <Field label="Contact Name" value={v.name} onChange={on('name')} placeholder="e.g. Mohammed Khalid" />
       <Field label="Company" value={v.company} onChange={on('company')} placeholder="e.g. Riyadh Grand Hotel" />
       <Row>
-        <Select label="Source" value={v.source} onChange={on('source')} options={['Website', 'Referral', 'Exhibition', 'Cold Call']} />
+        <div>
+          <Field label="Source" value={v.source} onChange={on('source')} list="lead-sources" placeholder="e.g. Website (pick or type new)" autoComplete="off" />
+          <datalist id="lead-sources">{sources.map((s) => <option key={s} value={s} />)}</datalist>
+        </div>
         <Field label="Estimated Value (SAR)" type="number" value={v.value} onChange={on('value')} placeholder="850000" />
       </Row>
       <OwnerField />
@@ -131,7 +189,7 @@ function OpportunityModal({ open, d }) {
   return (
     <Modal open={open} onClose={d.closeForm} title="New Opportunity" subtitle="Create a qualified deal"
       footer={<><button className="btn-ghost" onClick={d.closeForm}>Cancel</button><SaveButton onClick={save}>Create Opportunity</SaveButton></>}>
-      <Field label="Customer" value={v.customer} onChange={on('customer')} placeholder="Customer name" />
+      <CustomerField d={d} open={open} value={v.customer} onChange={on('customer')} />
       <Row>
         <Select label="Stage" value={v.stage} onChange={on('stage')} options={['Prospecting', 'Quotation', 'Negotiation', 'Won']} />
         <Field label="Deal Value (SAR)" type="number" value={v.value} onChange={on('value')} placeholder="850000" />
@@ -229,7 +287,7 @@ function QuotationModal({ open, d }) {
         </>
       )}>
       <Row>
-        <Field label="Customer" value={v.customer} onChange={on('customer')} placeholder="Customer name" />
+        <CustomerField d={d} open={open} value={v.customer} onChange={on('customer')} />
         <Field label="Customer Email" type="email" value={v.email} onChange={on('email')} placeholder="customer@email.com" />
       </Row>
       <Row>
@@ -314,7 +372,7 @@ function OrderModal({ open, d }) {
     <Modal open={open} onClose={d.closeForm} size="lg" title="New Sales Order" subtitle="Capture full data — a linked Project + required items are created automatically"
       footer={<><button className="btn-ghost" onClick={d.closeForm}>Cancel</button><SaveButton onClick={save}>Create Order &amp; Project</SaveButton></>}>
       <Row>
-        <Field label="Customer" value={v.customer} onChange={on('customer')} placeholder="e.g. Riyadh Grand Hotel" />
+        <CustomerField d={d} open={open} value={v.customer} onChange={on('customer')} placeholder="e.g. Riyadh Grand Hotel (pick or type new)" />
         <Field label="Project Name" value={v.projectName} onChange={on('projectName')} placeholder="e.g. Commercial Kitchen" />
       </Row>
 
@@ -356,6 +414,7 @@ function OrderModal({ open, d }) {
 function CustomerModal({ open, d }) {
   const [v, on, reset] = useFormState({ name: '', group: '', territory: 'Riyadh', contact: '', email: '', phone: '' })
   const [cats, setCats] = useState([])
+  const territories = useTerritoryOptions(d)
   useEffect(() => { if (open) d.partyCategories('customer').then((c) => setCats((c || []).map((x) => x.name))).catch(() => setCats([])) }, [open, d])
   const save = async () => { try { await d.addCustomer({ name: v.name, category: v.group, territory: v.territory, contact: v.contact, email: v.email, phone: v.phone }) } catch (e) { alert(e.message); return } reset(); d.closeForm() }
   return (
@@ -364,7 +423,10 @@ function CustomerModal({ open, d }) {
       <Field label="Customer Name" value={v.name} onChange={on('name')} placeholder="e.g. Jeddah Hilton" />
       <Row>
         <Select label="Group / Category" value={v.group} onChange={on('group')} options={cats.length ? cats : ['Hotel', 'Restaurant', 'Catering', 'Hospital', 'Contractor']} />
-        <Select label="Territory" value={v.territory} onChange={on('territory')} options={['Riyadh', 'Jeddah', 'Eastern', 'Makkah', 'Madinah', 'Other']} />
+        <div>
+          <Field label="Territory" value={v.territory} onChange={on('territory')} list="cust-territories" placeholder="e.g. Riyadh (pick or type new)" autoComplete="off" />
+          <datalist id="cust-territories">{territories.map((t) => <option key={t} value={t} />)}</datalist>
+        </div>
       </Row>
       <Row>
         <Field label="Contact Person" value={v.contact} onChange={on('contact')} placeholder="e.g. Ahmed Ali" />

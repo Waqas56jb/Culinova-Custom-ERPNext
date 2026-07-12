@@ -39,6 +39,9 @@ export default function QuickItemForm({ open, onClose }) {
   }
   const brand = (d.brands || []).find((b) => b.brand === v.brand)
   const autoName = [v.brand, v.model, v.product_family].filter(Boolean).join(' ')
+  // Category options = fixed ERP defaults + distinct categories from the product-families master
+  const catNames = [...new Set([...CATEGORIES, ...(d.productFamilies || []).map((f) => f.category).filter(Boolean)])]
+  const catOpts = v.category && !catNames.includes(v.category) ? ['', ...catNames, v.category] : ['', ...catNames]
 
   const save = async () => {
     setErr('')
@@ -58,7 +61,7 @@ export default function QuickItemForm({ open, onClose }) {
           <Field label="Model *" value={v.model} onChange={on('model')} placeholder="e.g. C-G941" />
         </Row>
         <Row>
-          <Select label="Category" value={v.category} onChange={on('category')} options={['', ...CATEGORIES]} />
+          <Select label="Category" value={v.category} onChange={on('category')} options={catOpts} />
           <Field label="Sub Category" value={v.sub_category} onChange={on('sub_category')} placeholder="e.g. Cooking Equipment" />
         </Row>
         <Row>

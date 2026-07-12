@@ -164,9 +164,14 @@ export function computeChain(item = {}, ctx = {}) {
 }
 
 // Resolve everything an item needs from the DB, then run the chain. This is what routes call.
+// A landed-cost template is applied ONLY when the item explicitly references one (landed_template_id),
+// or the caller forces it (opts.useTemplate) — never silently to every item. This keeps the CEO's
+// original chain (supplier × exchange × price_factor × margin × offer) intact for items that have not
+// opted into a full landed-cost breakdown, while the Pricing Engine can opt in per item.
 export async function priceItem(item, opts = {}) {
+  const wantTemplate = item.landed_template_id || opts.useTemplate
   const [tpl, disc] = await Promise.all([
-    landedTemplate(item.landed_template_id),
+    wantTemplate ? landedTemplate(item.landed_template_id) : Promise.resolve(null),
     opts.applyDiscount === false ? Promise.resolve({ pct: 0, rule: null }) : discountFor(item),
   ])
   const fx = await fxRate(item.currency)
