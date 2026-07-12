@@ -22,6 +22,15 @@ export const resources = {
   warehouses: { table: 'warehouses', panel: 'warehouse' },
   stock: { table: 'stock_balances', panel: 'warehouse', orderBy: 'id' },
   'delivery-notes': { table: 'delivery_notes', panel: 'warehouse' },
+  'warehouse-locations': { table: 'warehouse_locations', panel: 'warehouse' },
+  'stock-categories': { table: 'stock_categories', panel: 'warehouse', orderBy: 'name' },
+  'stock-transfers': { table: 'stock_transfers', panel: 'warehouse' },
+  'stock-adjustments': { table: 'stock_adjustments', panel: 'warehouse' },
+  'stock-ledger': { table: 'stock_ledger', panel: 'warehouse', orderBy: 'created_at', readOnly: true },
+  // pricing engine (structure — cost/landing/margin engine wired later)
+  'price-lists': { table: 'price_lists', panel: 'warehouse' },
+  'price-list-rates': { table: 'price_list_rates', panel: 'warehouse', orderBy: 'created_at' },
+  'discount-rules': { table: 'discount_rules', panel: 'warehouse' },
   // finance
   invoices: { table: 'invoices', panel: 'finance' },
   payments: { table: 'payments', panel: 'finance' },

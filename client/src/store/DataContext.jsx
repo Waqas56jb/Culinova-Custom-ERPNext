@@ -78,6 +78,7 @@ export function DataProvider({ children }) {
   const [productFamilies, setProductFamilies] = useState([])
   const [priceLists, setPriceLists] = useState([])
   const [payrollStatus, setPayrollStatus] = useState('Pending')
+  const [settings, setSettings] = useState({ companies: [], branches: [], departments: [], currencies: [], vatSettings: [], numberingSeries: [] })
 
   // resource registry: key → { ep, set, map, panel }
   const SOURCES = {
@@ -151,10 +152,20 @@ export function DataProvider({ children }) {
     try { setPriceLists(await api('/masters/price-lists') || []) } catch { setPriceLists([]) }
   }, [])
 
+  // ── COMPANY SETTINGS loader (defined before loadAll which depends on it) ──
+  const loadSettings = useCallback(async () => {
+    const [companies, branches, departments, currencies, vatSettings, numberingSeries] = await Promise.all([
+      api('/settings/companies').catch(() => []), api('/settings/branches').catch(() => []),
+      api('/settings/departments').catch(() => []), api('/settings/currencies').catch(() => []),
+      api('/settings/vat-settings').catch(() => []), api('/settings/numbering-series').catch(() => []),
+    ])
+    setSettings({ companies, branches, departments, currencies, vatSettings, numberingSeries })
+  }, [])
+
   const loadAll = useCallback(async () => {
-    await Promise.all([...Object.keys(SOURCES).map((k) => reload(k)), loadProjects(), loadQuotations(), loadChat(), loadItems()])
+    await Promise.all([...Object.keys(SOURCES).map((k) => reload(k)), loadProjects(), loadQuotations(), loadChat(), loadItems(), loadSettings()])
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reload, loadProjects, loadQuotations, loadChat, loadItems])
+  }, [reload, loadProjects, loadQuotations, loadChat, loadItems, loadSettings])
 
   // ── ITEM MASTER (ERPNext-style) ──
   const getItem = (id) => api(`/items/${id}`)
@@ -174,6 +185,45 @@ export function DataProvider({ children }) {
   const getAlternatives = (id) => api(`/items/${id}/alternatives`)
 
   // ── CULINOVA EOS (engineering knowledge base) → Item Master import/sync ──
+  // ── COMPANY SETTINGS mutations (loadSettings is defined above, before loadAll) ──
+  const settingsAdd = async (entity, body) => { const r = await api(`/settings/${entity}`, { method: 'POST', body }); await loadSettings(); return r }
+  const settingsUpdate = async (entity, id, body) => { const r = await api(`/settings/${entity}/${id}`, { method: 'PATCH', body }); await loadSettings(); return r }
+  const settingsDelete = async (entity, id) => { await api(`/settings/${entity}/${id}`, { method: 'DELETE' }); await loadSettings() }
+
+  // ── GENERIC RESOURCE HELPERS (config-driven CRUD; pages manage their own local state) ──
+  const resList = (resource, params = '') => api(`/${resource}${params ? `?${params}` : ''}`)
+  const resGet = (resource, id) => api(`/${resource}/${id}`)
+  const resAdd = (resource, body) => api(`/${resource}`, { method: 'POST', body })
+  const resUpdate = (resource, id, body) => api(`/${resource}/${id}`, { method: 'PATCH', body })
+  const resDelete = (resource, id) => api(`/${resource}/${id}`, { method: 'DELETE' })
+
+  // documents (with version history)
+  const docList = (entityType, entityId) => api(`/documents${entityType ? `?entity_type=${entityType}${entityId ? `&entity_id=${entityId}` : ''}` : ''}`)
+  const docGet = (id) => api(`/documents/${id}`)
+  const docAdd = (body) => api('/documents', { method: 'POST', body })
+  const docNewVersion = (id, body) => api(`/documents/${id}/version`, { method: 'POST', body })
+  const docDelete = (id) => api(`/documents/${id}`, { method: 'DELETE' })
+
+  // ── GLOBAL SEARCH ──
+  const globalSearch = (q) => api(`/search?q=${encodeURIComponent(q)}`)
+
+  // ── ADMIN (users · RBAC · audit · approvals) — page-driven (admin only) ──
+  const adminUsers = () => api('/users')
+  const adminAddUser = (b) => api('/users', { method: 'POST', body: b })
+  const adminUpdateUser = (id, b) => api(`/users/${id}`, { method: 'PATCH', body: b })
+  const adminDeleteUser = (id) => api(`/users/${id}`, { method: 'DELETE' })
+  const adminResetPassword = (id, newPassword) => api(`/users/${id}/reset-password`, { method: 'POST', body: { newPassword } })
+  const adminRbac = () => api('/admin/rbac')
+  const adminAudit = (params = '') => api('/admin/audit' + (params ? `?${params}` : ''))
+  const adminApprovals = (params = '') => api('/admin/approvals' + (params ? `?${params}` : ''))
+  const adminRequestApproval = (b) => api('/admin/approvals', { method: 'POST', body: b })
+  const adminDecideApproval = (id, decision, note) => api(`/admin/approvals/${id}/decide`, { method: 'POST', body: { decision, note } })
+  // party (customer/supplier) detail + children
+  const getParty = (party, id) => api(`/${party}s/${id}`)
+  const addPartyChild = (party, id, child, body) => api(`/${party}s/${id}/${child}`, { method: 'POST', body })
+  const deletePartyChild = (party, child, cid) => api(`/${party}s/${child}/${cid}`, { method: 'DELETE' })
+  const partyCategories = (party) => api(`/party-categories?party=${party}`)
+
   const eosCatalog = (query = '', page = 1) => api(`/eos/catalog?query=${encodeURIComponent(query)}&page=${page}`)
   const eosDetail = (id) => api(`/eos/catalog/${id}`)
   const eosImport = async (ids) => { const r = await api('/eos/import', { method: 'POST', body: { ids } }); await loadItems(); return r }
@@ -329,6 +379,11 @@ export function DataProvider({ children }) {
     items, itemGroups, brands, itemAttributes, productFamilies, priceLists,
     getItem, createItem, updateItem, deleteItem, generateVariants, importItems, addItemPrice, deleteItemPrice, addItemGroup, addBrand, updateBrand, addItemAttribute, addProductFamily, addPriceList, getAlternatives,
     eosCatalog, eosDetail, eosImport, eosSync,
+    settings, loadSettings, settingsAdd, settingsUpdate, settingsDelete,
+    globalSearch,
+    adminUsers, adminAddUser, adminUpdateUser, adminDeleteUser, adminResetPassword, adminRbac, adminAudit, adminApprovals, adminRequestApproval, adminDecideApproval,
+    getParty, addPartyChild, deletePartyChild, partyCategories,
+    resList, resGet, resAdd, resUpdate, resDelete, docList, docGet, docAdd, docNewVersion, docDelete,
     reload, loadAll,
     addLead, addOpportunity, lostOpportunity, wonOpportunity, addInteraction, addQuotation, updateQuotation, addOrder, addCustomer, convertLead, checkAvailability, getOrderItems,
     approveQuotation, rejectQuotation, sendQuotation, acceptQuotation, lostQuotation,

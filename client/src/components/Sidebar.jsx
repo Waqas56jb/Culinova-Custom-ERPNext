@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Users2, Target, FileText, ClipboardList, Building2,
   FolderKanban, ShoppingCart, Boxes, Wallet, HardHat, Wrench,
-  X, Sparkles, MessageSquare, Truck, Receipt, BarChart3, Coins, Ticket, CalendarClock, UserCheck, Lock, Package,
+  X, Sparkles, MessageSquare, Truck, Receipt, BarChart3, Coins, Ticket, CalendarClock, UserCheck, Lock, Package, Settings, ShieldCheck, Contact, Tags, ArrowLeftRight,
 } from 'lucide-react'
 import { useData } from '../store/DataContext.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
@@ -14,6 +14,7 @@ const sections = [
     { to: '/sales/opportunities', label: 'Opportunities', icon: Target },
     { to: '/sales/quotations', label: 'Quotations / Estimation', icon: FileText },
     { to: '/sales/orders', label: 'Sales Orders', icon: ClipboardList },
+    { to: '/sales/customers', label: 'Customers', icon: Contact },
     { to: '/sales/chat', label: 'Chat', icon: MessageSquare },
   ] },
   { title: 'Project Management', panel: 'projects', items: [
@@ -27,6 +28,7 @@ const sections = [
     { to: '/procurement/rfq', label: 'RFQs', icon: FileText },
     { to: '/procurement/po', label: 'Purchase Orders', icon: ShoppingCart },
     { to: '/procurement/suppliers', label: 'Suppliers', icon: Building2 },
+    { to: '/procurement/supplier-master', label: 'Supplier Master', icon: Contact },
   ] },
   { title: 'Warehouse / Stock', panel: 'warehouse', items: [
     { to: '/stock/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -34,6 +36,8 @@ const sections = [
     { to: '/stock/receipts', label: 'Goods Receipt', icon: Truck },
     { to: '/stock/delivery', label: 'Delivery Notes', icon: ClipboardList },
     { to: '/stock/warehouses', label: 'Warehouses', icon: Building2 },
+    { to: '/stock/operations', label: 'Operations', icon: ArrowLeftRight },
+    { to: '/stock/pricing', label: 'Pricing Engine', icon: Tags },
   ] },
   { title: 'Finance & Accounting', panel: 'finance', items: [
     { to: '/finance/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -58,6 +62,11 @@ const sections = [
     { to: '/hr/employees', label: 'Employees', icon: Users2 },
     { to: '/hr/attendance', label: 'Attendance & Leave', icon: UserCheck },
     { to: '/hr/payroll', label: 'Payroll', icon: Wallet },
+  ] },
+  { title: 'Administration', panel: 'admin', items: [
+    { to: '/admin/panel', label: 'Users & Security', icon: ShieldCheck },
+    { to: '/admin/settings', label: 'Company Settings', icon: Settings },
+    { to: '/admin/documents', label: 'Documents', icon: FileText },
   ] },
 ]
 

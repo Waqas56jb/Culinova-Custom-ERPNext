@@ -22,6 +22,7 @@ const NUMBER_PREFIX = {
   projects: 'PRJ', sales_orders: 'SO', invoices: 'INV', rfqs: 'RFQ', purchase_orders: 'PO',
   delivery_notes: 'DN', goods_receipts: 'GRN', service_tickets: 'TKT', maintenance_visits: 'MV',
   service_contracts: 'SC', payments: 'PMT', payables: 'BILL', payroll_runs: 'PR',
+  stock_transfers: 'ST', stock_adjustments: 'ADJ',
 }
 const genNumber = (pfx) => `${pfx}-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`
 

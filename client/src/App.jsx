@@ -41,6 +41,12 @@ import HRDashboard from './pages/HRDashboard.jsx'
 import Employees from './pages/Employees.jsx'
 import Attendance from './pages/Attendance.jsx'
 import Payroll from './pages/Payroll.jsx'
+import CompanySettings from './pages/CompanySettings.jsx'
+import AdminPanel from './pages/AdminPanel.jsx'
+import WarehouseOps from './pages/WarehouseOps.jsx'
+import PricingEngine from './pages/PricingEngine.jsx'
+import Documents from './pages/Documents.jsx'
+import PartyMaster from './pages/PartyMaster.jsx'
 import FormModals from './components/FormModals.jsx'
 import Login from './pages/Login.jsx'
 import { useAuth } from './auth/AuthContext.jsx'
@@ -60,6 +66,7 @@ export default function App() {
           <Route path="/sales/opportunities" element={<Opportunities />} />
           <Route path="/sales/quotations" element={<Quotations />} />
           <Route path="/sales/orders" element={<SalesOrders />} />
+          <Route path="/sales/customers" element={<PartyMaster party="customer" />} />
           <Route path="/sales/chat" element={<Chat />} />
 
           {/* Project Management */}
@@ -74,6 +81,7 @@ export default function App() {
           <Route path="/procurement/rfq" element={<RFQs />} />
           <Route path="/procurement/po" element={<PurchaseOrders />} />
           <Route path="/procurement/suppliers" element={<Suppliers />} />
+          <Route path="/procurement/supplier-master" element={<PartyMaster party="supplier" />} />
 
           {/* Supplier Portal (external) */}
           <Route path="/supplier/dashboard" element={<SupplierDashboard />} />
@@ -88,6 +96,8 @@ export default function App() {
           <Route path="/stock/receipts" element={<GoodsReceipt />} />
           <Route path="/stock/delivery" element={<DeliveryNotes />} />
           <Route path="/stock/warehouses" element={<Warehouses />} />
+          <Route path="/stock/operations" element={<WarehouseOps />} />
+          <Route path="/stock/pricing" element={<PricingEngine />} />
 
           {/* Finance & Accounting */}
           <Route path="/finance/dashboard" element={<FinanceDashboard />} />
@@ -112,6 +122,11 @@ export default function App() {
           <Route path="/hr/employees" element={<Employees />} />
           <Route path="/hr/attendance" element={<Attendance />} />
           <Route path="/hr/payroll" element={<Payroll />} />
+
+          {/* Administration */}
+          <Route path="/admin/panel" element={<AdminPanel />} />
+          <Route path="/admin/settings" element={<CompanySettings />} />
+          <Route path="/admin/documents" element={<Documents />} />
 
           <Route path="*" element={<Navigate to="/sales/dashboard" replace />} />
         </Route>

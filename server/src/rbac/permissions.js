@@ -25,7 +25,7 @@ export const rolePanels = {
 }
 
 // access level → allowed actions
-const levelActions = {
+export const levelActions = {
   'View Only': ['read'],
   Create: ['read', 'create'],
   Edit: ['read', 'create', 'update'],

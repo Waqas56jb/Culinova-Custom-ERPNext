@@ -9,6 +9,12 @@ import inventoryRoutes from '../modules/inventory/inventory.routes.js'
 import itemRoutes from '../modules/item/item.routes.js'
 import mastersRoutes from '../modules/item/masters.routes.js'
 import eosRoutes from '../modules/eos/eos.routes.js'
+import settingsRoutes from '../modules/settings/settings.routes.js'
+import searchRoutes from '../modules/search/search.routes.js'
+import { partyRouter, partyCategoriesRouter } from '../modules/parties/party.routes.js'
+import adminRoutes from '../modules/admin/admin.routes.js'
+import filesRoutes from '../modules/files/files.routes.js'
+import prefsRoutes from '../modules/prefs/prefs.routes.js'
 import { resources } from '../core/resources.js'
 import { crudRouter } from '../core/crud.js'
 import { rolePanels } from '../rbac/permissions.js'
@@ -34,6 +40,17 @@ api.use('/inventory', inventoryRoutes)
 api.use('/items', itemRoutes)        // full ERPNext-style Item Master (replaces generic)
 api.use('/masters', mastersRoutes)   // item-groups / brands / item-attributes
 api.use('/eos', eosRoutes)           // CULINOVA EOS knowledge base → Item Master import/sync
+api.use('/settings', settingsRoutes) // Company Settings: company/branches/departments/currencies/VAT/numbering
+api.use('/search', searchRoutes)     // Global cross-entity search
+api.use('/admin', adminRoutes)       // Admin: audit trail · RBAC matrix · approval workflow
+api.use('/documents', filesRoutes)   // File/Document management with version history
+api.use('/preferences', prefsRoutes) // Per-user preferences (dashboard layout etc.)
+
+// Customer / Supplier enrichment (detail + contacts/addresses/documents) — layered BEFORE the
+// generic CRUD so /:id and child routes take precedence; base list/create/update stays generic.
+api.use('/customers', partyRouter('customer', 'sales'))
+api.use('/suppliers', partyRouter('supplier', 'procurement'))
+api.use('/party-categories', partyCategoriesRouter())
 
 // Generic config-driven REST for every resource/panel
 for (const [name, cfg] of Object.entries(resources)) {

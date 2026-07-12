@@ -1,40 +1,51 @@
+import { useState, useEffect } from 'react'
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts'
 import { Wallet, TrendingUp, FolderKanban, Users2, ArrowRight } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { PageHeader, KpiCard, ChartCard, Badge } from '../components/ui.jsx'
-import { company, revenueTrend, moduleStats, sar } from '../data/adminData.js'
+import { sar } from '../data/adminData.js'
+import { api } from '../api.js'
 import { useAdmin } from '../store/AdminContext.jsx'
+
+const ZERO = { revenue: 0, netProfit: 0, procurementSpend: 0, receivables: 0, stockValue: 0, activeProjects: 0, totalProjects: 0, openTickets: 0, trend: [] }
 
 export default function Dashboard() {
   const navigate = useNavigate()
   const { users } = useAdmin()
+  const [c, setC] = useState(ZERO)
+  const [mods, setMods] = useState([])
+
+  useEffect(() => {
+    api('/admin/company-stats').then((d) => setC({ ...ZERO, ...d })).catch(() => {})
+    api('/admin/module-stats').then((m) => setMods(Array.isArray(m) ? m : [])).catch(() => {})
+  }, [])
 
   return (
     <>
       <PageHeader title="Executive Dashboard" subtitle="Company-wide overview — all panels at a glance" />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="Total Revenue" value={sar(company.revenue)} sub="all sales" icon={Wallet} accent="brand" />
-        <KpiCard label="Net Profit" value={sar(company.netProfit)} sub="income − expense" icon={TrendingUp} accent="emerald" />
-        <KpiCard label="Active Projects" value={company.activeProjects} sub={`${company.totalProjects} total`} icon={FolderKanban} accent="violet" />
+        <KpiCard label="Total Revenue" value={sar(c.revenue)} sub="from sales orders" icon={Wallet} accent="brand" />
+        <KpiCard label="Net (Rev − Procurement)" value={sar(c.netProfit)} sub="gross of costing" icon={TrendingUp} accent="emerald" />
+        <KpiCard label="Active Projects" value={c.activeProjects} sub={`${c.totalProjects} total`} icon={FolderKanban} accent="violet" />
         <KpiCard label="Employees" value={users.length} sub="registered users" icon={Users2} accent="gold" />
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
         {[
-          { label: 'Stock Value', value: sar(company.stockValue) },
-          { label: 'Procurement Spend', value: sar(company.procurementSpend) },
-          { label: 'Receivables', value: sar(company.receivables) },
-          { label: 'Open Tickets', value: company.openTickets },
+          { label: 'Stock Value', value: sar(c.stockValue) },
+          { label: 'Procurement Spend', value: sar(c.procurementSpend) },
+          { label: 'Receivables', value: sar(c.receivables) },
+          { label: 'Open Tickets', value: c.openTickets },
         ].map((s) => (
           <div key={s.label} className="card card-pad animate-fade-up"><p className="text-xs text-muted">{s.label}</p><p className="mt-1 text-xl font-bold text-ink">{s.value}</p></div>
         ))}
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
-        <ChartCard title="Revenue & Profit" subtitle="SAR '000 per month" className="xl:col-span-2">
+        <ChartCard title="Revenue & Net" subtitle="SAR '000 per month (last 6)" className="xl:col-span-2">
           <ResponsiveContainer width="100%" height={280}>
-            <AreaChart data={revenueTrend} margin={{ left: -16, right: 6, top: 6 }}>
+            <AreaChart data={c.trend} margin={{ left: -16, right: 6, top: 6 }}>
               <defs>
                 <linearGradient id="rev" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#0EA99A" stopOpacity={0.3} /><stop offset="100%" stopColor="#0EA99A" stopOpacity={0} /></linearGradient>
                 <linearGradient id="pro" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#E0A82E" stopOpacity={0.25} /><stop offset="100%" stopColor="#E0A82E" stopOpacity={0} /></linearGradient>
@@ -44,19 +55,20 @@ export default function Dashboard() {
               <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 12, fill: '#94a3b8' }} />
               <Tooltip /><Legend wrapperStyle={{ fontSize: 12 }} />
               <Area type="monotone" dataKey="revenue" name="Revenue" stroke="#0EA99A" strokeWidth={2.5} fill="url(#rev)" isAnimationActive={false} />
-              <Area type="monotone" dataKey="profit" name="Profit" stroke="#E0A82E" strokeWidth={2} fill="url(#pro)" isAnimationActive={false} />
+              <Area type="monotone" dataKey="profit" name="Net" stroke="#E0A82E" strokeWidth={2} fill="url(#pro)" isAnimationActive={false} />
             </AreaChart>
           </ResponsiveContainer>
         </ChartCard>
 
         <ChartCard title="All Modules" subtitle="Live snapshot" action={<button onClick={() => navigate('/modules')} className="text-xs font-semibold text-brand-600">View all</button>}>
           <div className="space-y-2">
-            {moduleStats.slice(0, 6).map((m) => (
+            {mods.slice(0, 6).map((m) => (
               <div key={m.name} className="flex items-center gap-3 rounded-xl border border-slate-100 p-2.5">
                 <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-ink">{m.name}</p><p className="text-xs text-muted">{m.sub}</p></div>
                 <span className="text-sm font-bold text-brand-600">{m.metric}</span>
               </div>
             ))}
+            {mods.length === 0 && <p className="py-4 text-center text-sm text-muted">Loading…</p>}
           </div>
         </ChartCard>
       </div>
@@ -75,6 +87,7 @@ export default function Dashboard() {
                   <td className="td"><Badge tone="blue">{u.access}</Badge></td>
                 </tr>
               ))}
+              {users.length === 0 && <tr><td className="td text-slate-400" colSpan={5}>No users.</td></tr>}
             </tbody>
           </table>
         </div>
