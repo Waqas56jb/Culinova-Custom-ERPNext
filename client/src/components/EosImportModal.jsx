@@ -17,31 +17,39 @@ const SECTIONS = [
 ]
 
 // Browse the CULINOVA EOS engineering knowledge base (source of truth for approved products),
-// preview any model's full engineering record, and import approved entries into the ERP Item Master.
+// preview any model's full engineering record, and import ONLY approved entries into the ERP Item
+// Master. The list is the "pending to import" queue — an entry drops out the moment it is imported,
+// so an item you've already picked never shows again ("jo select kar chuka hu wo nazar nahi aani chahiye").
 export default function EosImportModal({ open, onClose }) {
   const d = useData()
   const dRef = useRef(d); dRef.current = d // keep a stable handle so re-renders never re-trigger loading
 
   const [q, setQ] = useState('')
-  const [rows, setRows] = useState([])
+  const [rows, setRows] = useState([])          // marked EOS entries (imported:true/false)
   const [mode, setMode] = useState('')
-  const [total, setTotal] = useState(0)
+  const [total, setTotal] = useState(0)          // total approved on the loaded page
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState('')
   const [sel, setSel] = useState(() => new Set())
   const [busy, setBusy] = useState(false)
-  const [result, setResult] = useState(null)
+  const [result, setResult] = useState(null)     // import summary
+  const [syncing, setSyncing] = useState(false)
+  const [syncReport, setSyncReport] = useState(null)
 
   // preview panel
   const [active, setActive] = useState(null)          // active row (identity)
   const [detail, setDetail] = useState(null)          // full detail payload
   const [detailLoading, setDetailLoading] = useState(false)
 
+  // Load the pending queue (approved EOS entries, each marked imported:true/false).
   async function loadList(query) {
     setLoading(true); setErr('')
     try {
-      const r = await dRef.current.eosCatalog(query || '')
-      setRows(r.items || []); setMode(r.mode); setTotal(r.total || (r.items || []).length)
+      const params = `query=${encodeURIComponent(query || '')}&page=1`
+      const r = await dRef.current.resList('eos/pending', params)
+      setRows(r.entries || [])
+      setMode(r.mode || '')
+      setTotal(r.total ?? (r.entries || []).length)
     } catch (e) { setErr(e.message); setRows([]) }
     finally { setLoading(false) }
   }
@@ -50,20 +58,19 @@ export default function EosImportModal({ open, onClose }) {
   // otherwise the 12s real-time refresh would restart loading over and over).
   useEffect(() => {
     if (!open) return
-    setSel(new Set()); setResult(null); setQ(''); setActive(null); setDetail(null)
+    setSel(new Set()); setResult(null); setSyncReport(null); setQ(''); setActive(null); setDetail(null)
     loadList('')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
   async function openPreview(row) {
     setActive(row); setDetail(null); setDetailLoading(true)
-    try { setDetail(await dRef.current.eosDetail(row.id)) }
+    try { setDetail(await dRef.current.resGet('eos/detail', row.id)) }
     catch (e) { setDetail({ error: e.message }) }
     finally { setDetailLoading(false) }
   }
 
   // Only show approved EOS models NOT yet in the Item Master — a "pending to import" queue.
-  // Once imported, an item drops out of this list (it lives in the Item Master from then on).
   const pending = rows.filter((r) => !r.imported)
   const importedCount = rows.length - pending.length
   const allSelected = pending.length > 0 && pending.every((r) => sel.has(r.id))
@@ -72,13 +79,25 @@ export default function EosImportModal({ open, onClose }) {
 
   async function runImport(ids) {
     if (!ids.length) return
-    setBusy(true); setErr(''); setResult(null)
+    setBusy(true); setErr(''); setResult(null); setSyncReport(null)
     try {
-      const r = await dRef.current.eosImport(ids)
+      const r = await dRef.current.eosImport(ids) // POST /eos/import (also reloads the Item Master store)
       setResult(r); setSel(new Set()); setActive(null); setDetail(null) // imported items leave the list
       await loadList(q)
     } catch (e) { setErr(e.message) }
     finally { setBusy(false) }
+  }
+
+  // Re-pull EVERY EOS-linked item — refresh engineering data, keep ERP pricing. Reports what moved.
+  async function syncAll() {
+    setSyncing(true); setErr(''); setResult(null); setSyncReport(null)
+    try {
+      const rep = await dRef.current.resAdd('eos/sync', {}) // POST /eos/sync → syncLinkedItems report
+      setSyncReport(rep)
+      await dRef.current.loadAll() // refresh the whole store so updated items reflect everywhere
+      await loadList(q)
+    } catch (e) { setErr(e.message) }
+    finally { setSyncing(false) }
   }
 
   return (
@@ -88,6 +107,9 @@ export default function EosImportModal({ open, onClose }) {
         <span className="mr-auto text-xs text-muted">
           {importedCount} of {total} approved already in Item Master · <b className="text-ink">{pending.length} to import</b>{sel.size ? ` · ${sel.size} selected` : ''}
         </span>
+        <button className="btn-ghost" disabled={syncing || busy} onClick={syncAll} title="Re-pull engineering data for every EOS-linked item">
+          {syncing ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />} Sync all from EOS
+        </button>
         <button className="btn-ghost" onClick={onClose}>Close</button>
         <button className="btn-primary" disabled={!sel.size || busy} onClick={() => runImport([...sel])}>
           {busy ? <Loader2 size={16} className="animate-spin" /> : <Database size={16} />} Import {sel.size || ''} to Item Master
@@ -99,20 +121,27 @@ export default function EosImportModal({ open, onClose }) {
           <form className="relative min-w-[220px] flex-1" onSubmit={(e) => { e.preventDefault(); loadList(q) }}>
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input className="w-full rounded-xl border border-slate-200 bg-slate-50/60 py-2.5 pl-9 pr-3 text-sm outline-none focus:border-brand-400 focus:bg-white focus:ring-2 focus:ring-brand-500/15"
-              placeholder="Search approved EOS models — brand, model, specification…" value={q} onChange={(e) => setQ(e.target.value)} />
+              aria-label="Search approved EOS models" placeholder="Search approved EOS models — brand, model, specification…" value={q} onChange={(e) => setQ(e.target.value)} />
           </form>
           <button type="button" className="btn-ghost !py-2" onClick={() => loadList(q)}>Search</button>
           <label className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-2 text-xs font-semibold text-slate-600">
             <input type="checkbox" checked={allSelected} onChange={toggleAll} disabled={!pending.length} className="h-4 w-4 accent-brand-500" />
-            Select all ({pending.length})
+            Select all pending ({pending.length})
           </label>
         </div>
 
         {mode === 'semantic' && <div className="w-max rounded bg-brand-50 px-2 py-0.5 text-[10px] font-bold text-brand-600">AI semantic search</div>}
         {result && (
           <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">
-            Done ✓ — {result.created} created · {result.updated + result.linked} updated/linked{result.failed ? ` · ${result.failed} failed` : ''}.
-            {result.failed > 0 && <div className="mt-1 font-normal text-rose-600">{(result.errors || []).map((e) => e.error).join('; ')}</div>}
+            Import done ✓ — {result.created} created · {result.linked} linked · {result.updated} updated · {result.unchanged} unchanged{result.failed ? ` · ${result.failed} failed` : ''}.
+            {result.failed > 0 && <div className="mt-1 font-normal text-rose-600">{(result.errors || []).map((e) => `${e.id}: ${e.error}`).join('; ')}</div>}
+          </div>
+        )}
+        {syncReport && (
+          <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700">
+            Sync done ✓ — {syncReport.checked} linked items checked · {syncReport.updated} updated · {syncReport.unchanged} already current{syncReport.failed ? ` · ${syncReport.failed} failed` : ''}.
+            {syncReport.updated > 0 && <div className="mt-1 font-normal text-blue-600">{(syncReport.changes || []).map((c) => `${c.item_name} → v${c.version}`).join(' · ')}</div>}
+            {syncReport.failed > 0 && <div className="mt-1 font-normal text-rose-600">{(syncReport.errors || []).map((e) => `${e.item_name}: ${e.error}`).join('; ')}</div>}
           </div>
         )}
         {err && <div className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600">{err}</div>}
@@ -122,11 +151,11 @@ export default function EosImportModal({ open, onClose }) {
           {/* LIST */}
           <div className="max-h-[56vh] min-h-[300px] space-y-1.5 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50/40 p-2">
             {loading && <div className="grid place-items-center gap-2 py-12 text-sm text-muted"><Loader2 className="animate-spin" /> Loading EOS catalogue…</div>}
-            {!loading && !rows.length && <div className="py-12 text-center text-sm text-muted">No approved EOS models found.</div>}
+            {!loading && !rows.length && <div className="py-12 text-center text-sm text-muted">No approved EOS models found{q ? ' for this search' : ''}.</div>}
             {!loading && rows.length > 0 && !pending.length && (
               <div className="grid place-items-center gap-2 py-12 text-center text-sm text-emerald-600">
                 <CheckCircle2 size={26} />
-                <div className="font-semibold">All {total} approved EOS models are in your Item Master.</div>
+                <div className="font-semibold">All approved EOS items are already imported ✓</div>
                 <div className="text-xs text-muted">New approvals in EOS will appear here automatically to import.</div>
               </div>
             )}
@@ -140,7 +169,7 @@ export default function EosImportModal({ open, onClose }) {
                     <div className="truncate text-sm font-semibold text-ink">{it.title}</div>
                     <div className="truncate text-[11px] text-muted">
                       <span className="font-mono">{it.code || it.model_number || '—'}</span>
-                      {it.category ? ` · ${it.category}` : ''}{it.equipment_type ? ` · ${it.equipment_type}` : ''}
+                      {it.brand ? ` · ${it.brand}` : ''}{it.category ? ` · ${it.category}` : ''}{it.equipment_type ? ` · ${it.equipment_type}` : ''}
                     </div>
                   </div>
                   <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold text-amber-700">TO IMPORT</span>
@@ -158,9 +187,10 @@ export default function EosImportModal({ open, onClose }) {
         </div>
 
         <p className="text-[11px] leading-relaxed text-muted">
-          This list shows only approved EOS models <b>not yet in your Item Master</b> — your pending-import queue. Selecting and
-          importing lands a model in the Item Master (identity, dimensions, datasheet & full engineering specs — <b>you add
-          pricing there</b>) and removes it from this list. When it's empty, every approved model has been imported.
+          This list shows only approved EOS models <b>not yet in your Item Master</b> — your pending-import queue. Importing lands a
+          model in the Item Master (identity, dimensions, datasheet & full engineering specs — <b>you add pricing there</b>) and removes
+          it from this list. Engineering fields stay <b>read-only</b> in the ERP and re-sync from EOS. When the list is empty, every
+          approved model has been imported.
         </p>
       </div>
     </Modal>

@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Users2, Target, FileText, ClipboardList, Building2,
   FolderKanban, ShoppingCart, Boxes, Wallet, HardHat, Wrench,
-  X, Sparkles, MessageSquare, Truck, Receipt, BarChart3, Coins, Ticket, CalendarClock, UserCheck, Lock, Package, Settings, ShieldCheck, Contact, Tags, ArrowLeftRight,
+  X, Sparkles, MessageSquare, Truck, Receipt, BarChart3, Coins, Ticket, CalendarClock, UserCheck, Lock, Package, Settings, ShieldCheck, Contact, Tags, ArrowLeftRight, Calculator, FileSpreadsheet,
 } from 'lucide-react'
 import { useData } from '../store/DataContext.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
@@ -21,13 +21,18 @@ const sections = [
     { to: '/projects/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { to: '/projects/all', label: 'Projects', icon: FolderKanban },
     { to: '/projects/board', label: 'Task Board', icon: ClipboardList },
+    { to: '/projects/equipment', label: 'Project Equipment', icon: Boxes },
+    { to: '/projects/boq', label: 'BOQ / Estimation', icon: FileSpreadsheet },
+    { to: '/projects/cost-engine', label: 'Cost Engine', icon: Calculator },
+    { to: '/projects/ai-insights', label: 'AI Insights', icon: Sparkles },
   ] },
   { title: 'Procurement', panel: 'procurement', items: [
     { to: '/procurement/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { to: '/procurement/requests', label: 'Material Requests', icon: FileText },
+    { to: '/procurement/requests', label: 'Purchase Requisitions', icon: FileText },
     { to: '/procurement/rfq', label: 'RFQs', icon: FileText },
     { to: '/procurement/po', label: 'Purchase Orders', icon: ShoppingCart },
     { to: '/procurement/suppliers', label: 'Suppliers', icon: Building2 },
+    { to: '/procurement/supplier-performance', label: 'Supplier Performance', icon: BarChart3 },
     { to: '/procurement/supplier-master', label: 'Supplier Master', icon: Contact },
   ] },
   { title: 'Warehouse / Stock', panel: 'warehouse', items: [

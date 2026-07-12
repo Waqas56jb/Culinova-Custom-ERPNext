@@ -31,8 +31,13 @@ export default function StockDashboard() {
     return { code: i.item_code, name: i.item_name, group: i.product_family || i.category || 'Other', qty: b.physical, available: b.available, rate: Number(i.cost) || Number(i.standard_rate) || 0, reorder: Number(i.reorder_level) || 0, uom: i.stock_uom || 'Nos', warehouse: b.whs.size ? [...b.whs].join(', ') : '—' }
   })
   const totalValue = skus.reduce((s, it) => s + it.qty * it.rate, 0)
-  const low = skus.filter((it) => it.qty > 0 && it.qty <= it.reorder)
-  const out = skus.filter((it) => it.qty <= 0)
+  // an item only belongs on the reorder watchlist once it is actually stock-managed (reorder level set).
+  // without this guard every catalogue SKU that was never stocked reads as "Out of Stock" — a false alarm.
+  const managed = skus.filter((it) => it.reorder > 0)
+  const low = managed.filter((it) => it.qty > 0 && it.qty <= it.reorder)
+  const out = managed.filter((it) => it.qty <= 0)
+  const noCost = skus.filter((it) => !it.rate).length
+  const noReorder = skus.length - managed.length
 
   const byGroup = Object.values(skus.reduce((acc, it) => {
     acc[it.group] = acc[it.group] || { name: it.group, value: 0 }
@@ -45,10 +50,10 @@ export default function StockDashboard() {
       <PageHeader title="Stock Dashboard" subtitle="Inventory value, movement & reorder alerts" />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="Total Stock Value" value={sar(totalValue)} sub={`${skus.length} items`} icon={Boxes} accent="brand" />
+        <KpiCard label="Total Stock Value" value={sar(totalValue)} sub={noCost ? `${noCost} of ${skus.length} items have no cost` : `${skus.length} items`} icon={Boxes} accent="brand" />
         <KpiCard label="Stock Items" value={skus.length} sub="active SKUs" icon={Layers} accent="violet" />
         <KpiCard label="Warehouses" value={warehouses.length} sub="locations" icon={Building2} accent="emerald" />
-        <KpiCard label="Low / Out of Stock" value={low.length + out.length} sub="need reorder" icon={AlertTriangle} accent="gold" />
+        <KpiCard label="Low / Out of Stock" value={low.length + out.length} sub={managed.length ? `of ${managed.length} reorder-managed` : 'no reorder levels set'} icon={AlertTriangle} accent="gold" />
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
@@ -98,7 +103,13 @@ export default function StockDashboard() {
                   <td className="td"><Badge tone={it.qty === 0 ? 'red' : 'amber'}>{it.qty === 0 ? 'Out of Stock' : 'Low Stock'}</Badge></td>
                 </tr>
               ))}
-              {out.length + low.length === 0 && <tr><td className="td text-slate-400" colSpan={5}>All items above reorder level ✓</td></tr>}
+              {out.length + low.length === 0 && (
+                <tr><td className="td text-slate-400" colSpan={5}>
+                  {noReorder === skus.length
+                    ? <>No reorder levels configured yet — set <b>Reorder Level</b> on an item in the Item Master to start tracking it here.</>
+                    : 'All reorder-managed items are above their reorder level ✓'}
+                </td></tr>
+              )}
             </tbody>
           </table>
         </div>

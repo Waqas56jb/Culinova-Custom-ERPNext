@@ -1,10 +1,13 @@
 import { Router } from 'express'
 import { supabase } from '../../config/supabase.js'
 import { authRequired } from '../../middleware/auth.js'
-import { authorize } from '../../middleware/rbac.js'
+import { authorize, redactFinancials, internalOnly } from '../../middleware/rbac.js'
 import { asyncWrap } from '../../middleware/error.js'
 
 const r = Router()
+// Item Master reference data (groups, brands, UOMs, families, attributes) is shared across internal
+// roles but must not be enumerable by a portal Customer.
+r.use(authRequired, internalOnly)
 
 // ── ITEM GROUPS (hierarchical tree) ──
 r.get('/item-groups', authRequired, asyncWrap(async (req, res) => {
@@ -26,9 +29,12 @@ r.delete('/item-groups/:id', authRequired, authorize('warehouse', 'delete'), asy
 }))
 
 // ── BRANDS ──
+// Brand NAMES are needed by everyone (Item Master dropdowns), but exchange_factor / price_factor are
+// financial (restrictedFields) — redact them for Sales/Engineering so pricing factors never leak.
 r.get('/brands', authRequired, asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('brands').select('*').order('brand')
-  if (error) throw error; res.json(data || [])
+  if (error) throw error
+  res.json(redactFinancials(req.user.role, data || []))
 }))
 r.post('/brands', authRequired, authorize('warehouse', 'create'), asyncWrap(async (req, res) => {
   const b = req.body

@@ -20,17 +20,25 @@ export const resources = {
   // warehouse
   // items: handled by the dedicated Item Master module (modules/item) — not generic CRUD
   warehouses: { table: 'warehouses', panel: 'warehouse' },
-  stock: { table: 'stock_balances', panel: 'warehouse', orderBy: 'id' },
+  // stock_balances is moved ONLY through the stock engine (move_stock RPC + ledger). Direct writes here
+  // would desync balance vs ledger, so it is read-only — POST/PATCH/DELETE go through stock.routes.js.
+  stock: { table: 'stock_balances', panel: 'warehouse', orderBy: 'id', readOnly: true },
   'delivery-notes': { table: 'delivery_notes', panel: 'warehouse' },
   'warehouse-locations': { table: 'warehouse_locations', panel: 'warehouse' },
   'stock-categories': { table: 'stock_categories', panel: 'warehouse', orderBy: 'name' },
   'stock-transfers': { table: 'stock_transfers', panel: 'warehouse' },
   'stock-adjustments': { table: 'stock_adjustments', panel: 'warehouse' },
   'stock-ledger': { table: 'stock_ledger', panel: 'warehouse', orderBy: 'created_at', readOnly: true },
-  // pricing engine (structure — cost/landing/margin engine wired later)
+  // pricing engine — the chain itself lives in core/pricing.js + modules/pricing; these are its masters
   'price-lists': { table: 'price_lists', panel: 'warehouse' },
   'price-list-rates': { table: 'price_list_rates', panel: 'warehouse', orderBy: 'created_at' },
   'discount-rules': { table: 'discount_rules', panel: 'warehouse' },
+  'landed-cost-templates': { table: 'landed_cost_templates', panel: 'warehouse' },
+  'exchange-rates': { table: 'exchange_rates', panel: 'warehouse', orderBy: 'valid_from' },
+  // quotation commercial terms (Phase 2)
+  'commercial-terms': { table: 'commercial_terms', panel: 'sales' },
+  // item version history — written by the EOS import/sync, never edited by hand
+  'item-versions': { table: 'item_versions', panel: 'warehouse', orderBy: 'created_at', readOnly: true },
   // finance
   invoices: { table: 'invoices', panel: 'finance' },
   payments: { table: 'payments', panel: 'finance' },

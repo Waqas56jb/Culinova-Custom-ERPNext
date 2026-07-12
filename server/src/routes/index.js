@@ -17,6 +17,15 @@ import filesRoutes from '../modules/files/files.routes.js'
 import prefsRoutes from '../modules/prefs/prefs.routes.js'
 import procurementRoutes from '../modules/procurement/procurement.routes.js'
 import { adjustmentsRouter, transfersRouter, deliveryNotesRouter, receiptsRouter } from '../modules/stock/stock.routes.js'
+// ── Phase 2 modules ──
+import { pricingRouter } from '../modules/pricing/pricing.routes.js'         // M2 Pricing Engine
+import { costingRouter } from '../modules/costing/costing.routes.js'         // M3 Cost Engine
+import { rfqRouter } from '../modules/procurement/rfq.routes.js'             // M4 RFQ Management
+import { quotationRouter } from '../modules/sales/quotation.routes.js'       // M5 Quotation System
+import { boqRouter } from '../modules/boq/boq.routes.js'                     // M6 BOQ Management
+import { prRouter, procurementReportsRouter } from '../modules/procurement/pr.routes.js' // M7 Procurement
+import { equipmentRouter } from '../modules/pm/equipment.routes.js'          // M8 Project Equipment
+import { aiRouter } from '../modules/ai/ai.routes.js'                        // M9 AI Business Intelligence
 import { resources } from '../core/resources.js'
 import { crudRouter } from '../core/crud.js'
 import { rolePanels } from '../rbac/permissions.js'
@@ -48,6 +57,18 @@ api.use('/admin', adminRoutes)       // Admin: audit trail · RBAC matrix · app
 api.use('/documents', filesRoutes)   // File/Document management with version history
 api.use('/preferences', prefsRoutes) // Per-user preferences (dashboard layout etc.)
 api.use('/procurement', procurementRoutes) // RFQs enriched with supplier quotes
+
+// ── Phase 2 modules (mounted BEFORE the generic CRUD so their specific verbs win; unmatched
+//    verbs like plain list/patch/delete fall through to the generic resource where one exists) ──
+api.use('/pricing', pricingRouter())            // M2 Pricing Engine (landed cost chain · FX · templates)
+api.use('/cost-sheets', costingRouter())        // M3 Cost Engine (cost sheets + profitability)
+api.use('/rfqs', rfqRouter())                   // M4 RFQ create/detail/send/quote/compare/award (list falls through)
+api.use('/quotations', quotationRouter())       // M5 Quotation builder (lines · EOS spec snapshot · terms · revisions)
+api.use('/boqs', boqRouter())                   // M6 BOQ Management (grouping · cost summary · export)
+api.use('/purchase-requisitions', prRouter())   // M7 Purchase Requisitions + supplier allocation
+api.use('/procurement', procurementReportsRouter()) // M7 delivery-tracking + supplier-performance reports
+api.use('/project-equipment', equipmentRouter())// M8 Project Equipment (assign · status workflow · summary)
+api.use('/ai', aiRouter())                      // M9 AI Business Intelligence (real analytics + optional narrative)
 
 // STOCK MOVEMENT — these intercept POST at the same paths as the generic CRUD so creating a
 // document ALSO moves real stock (stock_balances + stock_ledger). Other verbs fall through.

@@ -3,25 +3,32 @@ import { LayoutGrid, Check, Settings2, Package, FileText, ClipboardList, FolderK
 import { PageHeader, Badge } from '../components/ui.jsx'
 import { Modal } from '../components/Modal.jsx'
 import { useData } from '../store/DataContext.jsx'
+import { useAuth } from '../auth/AuthContext.jsx'
 
 // Configurable widgets framework: the user picks which KPI widgets to show; the choice is
 // persisted to their user preferences (server-side). Widget values come from live store data.
+// each widget declares the panel its data comes from — widgets for panels the user cannot access
+// are hidden (otherwise a warehouse user would see "0 Quotations", which is misleading, not real).
 const CATALOG = [
-  { key: 'items', label: 'Items', icon: Package, accent: 'from-brand-500 to-brand-600', get: (d) => (d.items || []).length },
-  { key: 'quotations', label: 'Quotations', icon: FileText, accent: 'from-violet-500 to-indigo-600', get: (d) => (d.quotations || []).length },
-  { key: 'orders', label: 'Sales Orders', icon: ClipboardList, accent: 'from-emerald-500 to-teal-600', get: (d) => (d.salesOrders || []).length },
-  { key: 'projects', label: 'Projects', icon: FolderKanban, accent: 'from-blue-500 to-blue-600', get: (d) => (d.projects || []).length },
-  { key: 'customers', label: 'Customers', icon: Users2, accent: 'from-gold-500 to-gold-600', get: (d) => (d.customers || []).length },
-  { key: 'suppliers', label: 'Suppliers', icon: Building2, accent: 'from-amber-500 to-gold-600', get: (d) => (d.suppliers || []).length },
-  { key: 'pos', label: 'Purchase Orders', icon: ShoppingCart, accent: 'from-cyan-500 to-teal-600', get: (d) => (d.purchaseOrders || []).length },
-  { key: 'warehouses', label: 'Warehouses', icon: Boxes, accent: 'from-rose-500 to-rose-600', get: (d) => (d.warehouses || []).length },
-  { key: 'leads', label: 'Leads', icon: Target, accent: 'from-indigo-500 to-violet-600', get: (d) => (d.leads || []).length },
-  { key: 'opportunities', label: 'Opportunities', icon: Target, accent: 'from-teal-500 to-emerald-600', get: (d) => (d.opportunities || []).length },
+  { key: 'items', label: 'Items', panel: null, icon: Package, accent: 'from-brand-500 to-brand-600', get: (d) => (d.items || []).length },
+  { key: 'warehouses', label: 'Warehouses', panel: 'warehouse', icon: Boxes, accent: 'from-rose-500 to-rose-600', get: (d) => (d.warehouses || []).length },
+  { key: 'stock', label: 'Stock Balances', panel: 'warehouse', icon: Boxes, accent: 'from-emerald-500 to-teal-600', get: (d) => (d.stockItems || []).length },
+  { key: 'quotations', label: 'Quotations', panel: 'sales', icon: FileText, accent: 'from-violet-500 to-indigo-600', get: (d) => (d.quotations || []).length },
+  { key: 'orders', label: 'Sales Orders', panel: 'sales', icon: ClipboardList, accent: 'from-emerald-500 to-teal-600', get: (d) => (d.salesOrders || []).length },
+  { key: 'customers', label: 'Customers', panel: 'sales', icon: Users2, accent: 'from-gold-500 to-gold-600', get: (d) => (d.customers || []).length },
+  { key: 'leads', label: 'Leads', panel: 'sales', icon: Target, accent: 'from-indigo-500 to-violet-600', get: (d) => (d.leads || []).length },
+  { key: 'opportunities', label: 'Opportunities', panel: 'sales', icon: Target, accent: 'from-teal-500 to-emerald-600', get: (d) => (d.opportunities || []).length },
+  { key: 'projects', label: 'Projects', panel: 'projects', icon: FolderKanban, accent: 'from-blue-500 to-blue-600', get: (d) => (d.projects || []).length },
+  { key: 'suppliers', label: 'Suppliers', panel: 'procurement', icon: Building2, accent: 'from-amber-500 to-gold-600', get: (d) => (d.suppliers || []).length },
+  { key: 'pos', label: 'Purchase Orders', panel: 'procurement', icon: ShoppingCart, accent: 'from-cyan-500 to-teal-600', get: (d) => (d.purchaseOrders || []).length },
 ]
-const DEFAULT = ['items', 'quotations', 'orders', 'projects', 'customers', 'suppliers']
 
 export default function MyDashboard() {
   const d = useData()
+  const { canSee } = useAuth()
+  // only widgets whose panel this role can actually access (their data is loaded)
+  const allowed = CATALOG.filter((w) => !w.panel || canSee(w.panel))
+  const DEFAULT = allowed.slice(0, 6).map((w) => w.key)
   const [visible, setVisible] = useState(DEFAULT)
   const [customize, setCustomize] = useState(false)
   const [loaded, setLoaded] = useState(false)
@@ -34,7 +41,8 @@ export default function MyDashboard() {
   const toggle = (key) => setVisible((v) => (v.includes(key) ? v.filter((k) => k !== key) : [...v, key]))
   const save = async () => { try { await d.savePref('dashboard_widgets', visible) } catch { /* ignore */ } setCustomize(false) }
 
-  const widgets = CATALOG.filter((w) => visible.includes(w.key))
+  // saved prefs may contain widgets from a panel the role lost access to — intersect with allowed
+  const widgets = allowed.filter((w) => visible.includes(w.key))
 
   return (
     <>
@@ -63,7 +71,7 @@ export default function MyDashboard() {
       <Modal open={customize} onClose={() => setCustomize(false)} title="Customize Widgets" subtitle="Pick the widgets you want on your dashboard"
         footer={<><button className="btn-ghost" onClick={() => setCustomize(false)}>Cancel</button><button className="btn-primary" onClick={save}>Save</button></>}>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {CATALOG.map((w) => {
+          {allowed.map((w) => {
             const on = visible.includes(w.key)
             return (
               <button key={w.key} onClick={() => toggle(w.key)} className={`flex items-center justify-between rounded-lg border px-3 py-2.5 text-left text-sm transition ${on ? 'border-brand-400 bg-brand-50/50' : 'border-slate-200 hover:bg-slate-50'}`}>

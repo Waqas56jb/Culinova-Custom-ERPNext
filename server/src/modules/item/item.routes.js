@@ -1,11 +1,34 @@
 import { Router } from 'express'
 import { supabase } from '../../config/supabase.js'
 import { authRequired } from '../../middleware/auth.js'
-import { authorize } from '../../middleware/rbac.js'
+import { authorize, internalOnly } from '../../middleware/rbac.js'
 import { asyncWrap } from '../../middleware/error.js'
 import { canAccessPanel, isManagement } from '../../rbac/permissions.js'
 import { logAudit } from '../../core/audit.js'
-import { resolveItemAuto } from '../../core/itempricing.js'
+import { resolveItemAuto, getBrand, supplierPriceFor } from '../../core/itempricing.js'
+import { priceItem, persistable } from '../../core/pricing.js'
+import { stripEosOwned, recordVersion } from '../../core/eosfields.js'
+
+// Resolve an item's pricing inputs (brand factors + price-list supplier price are the fallbacks the
+// CEO's chain relies on), then run THE pricing chain (core/pricing.js) over the merged item.
+// Returns the columns to persist, or {} when the item still has no cost to price from.
+async function repriceItem(merged) {
+  const brandRec = await getBrand(merged.brand)
+  const blank = (v) => (v === '' || v === undefined ? null : v)
+  const supplier = blank(merged.supplier_price) ?? (await supplierPriceFor(merged.brand, merged.model))
+  const resolved = {
+    ...merged,
+    supplier_price: supplier,
+    exchange_factor: blank(merged.exchange_factor) ?? brandRec?.exchange_factor ?? null,
+    price_factor: blank(merged.price_factor) ?? brandRec?.price_factor ?? null,
+    currency: merged.currency || brandRec?.currency || null,
+  }
+  const chain = await priceItem(resolved)
+  if (!chain.priced) return {}
+  const cols = persistable(chain)
+  cols.standard_rate = chain.selling_price // the rest of the app reads standard_rate as the sell rate
+  return cols
+}
 
 const r = Router()
 
@@ -50,8 +73,8 @@ const num = () => `ITM-${new Date().getFullYear()}-${String(Date.now()).slice(-6
 // form fields arrive as '' for blanks — Postgres rejects '' for numeric/date columns, so null them out
 const nullEmpty = (o) => { for (const k of Object.keys(o)) if (o[k] === '') o[k] = null; return o }
 
-// ── LIST (everyone with a panel can read & select; cost redacted by role) ──
-r.get('/', authRequired, asyncWrap(async (req, res) => {
+// ── LIST (every INTERNAL role can read & select; cost redacted by role; Customers blocked) ──
+r.get('/', authRequired, internalOnly, asyncWrap(async (req, res) => {
   let q = supabase.from('items').select('*').order('created_at', { ascending: false })
   if (req.query.active === '1') q = q.eq('disabled', false)          // IM-009 hide disabled
   if (req.query.sales === '1') q = q.eq('is_sales_item', true).eq('has_variants', false)
@@ -61,7 +84,7 @@ r.get('/', authRequired, asyncWrap(async (req, res) => {
 }))
 
 // ── GET ONE (full item + all child tables) ──
-r.get('/:id', authRequired, asyncWrap(async (req, res) => {
+r.get('/:id', authRequired, internalOnly, asyncWrap(async (req, res) => {
   const { data: item, error } = await supabase.from('items').select('*').eq('id', req.params.id).single()
   if (error) return res.status(404).json({ error: 'Item not found' })
   const children = await loadChildren(item.id)
@@ -109,10 +132,9 @@ r.post('/', authRequired, authorize('warehouse', 'create'), asyncWrap(async (req
     if (dup) return res.status(409).json({ error: `Barcode ${b.barcode} already used by another item` })
   }
   const { ...cols } = stripChildren(p)
-  // when a supplier price exists → auto cost/selling/GP; else keep user-entered (manual) values
-  const pricing = auto.supplier_price != null
-    ? { supplier_price: auto.supplier_price, landed_cost: auto.landed_cost, cost: auto.landed_cost, calculated_sale_price: auto.calculated_sale_price, selling_price: auto.selling_price, standard_rate: auto.selling_price, gp_percent: auto.gp_percent }
-    : {}
+  // run the FULL landed-cost chain (core/pricing.js) — covers supplier price, brand factors, and any
+  // freight/insurance/customs the user entered. When no supplier price is resolvable, keep manual values.
+  const pricing = await repriceItem({ ...p, item_name: name })
   const row = nullEmpty({ ...cols, ...pricing, item_code, code: item_code, name, item_name: name })
   const { data: item, error } = await supabase.from('items').insert(row).select().single()
   if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: error.message })
@@ -141,6 +163,13 @@ r.patch('/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async 
   const p = req.body
   const { data: cur } = await supabase.from('items').select('*').eq('id', req.params.id).single()
   if (!cur) return res.status(404).json({ error: 'Item not found' })
+  // EOS owns engineering data: once an item is linked to an EOS entry, those fields are read-only in
+  // the ERP (a manual edit would be overwritten by the next sync and split the two systems). Block the
+  // change instead of silently discarding it, so the user understands why. Commercial fields pass through.
+  const { patch: allowed, blocked } = stripEosOwned(p, cur)
+  if (blocked.length) return res.status(409).json({ error: `These fields come from EOS and are read-only in the ERP: ${blocked.join(', ')}. Edit them in EOS, then Sync.`, blocked })
+  req.body = allowed // downstream reads from p, so also narrow the local reference
+  Object.keys(p).forEach((k) => { if (!(k in allowed)) delete p[k] })
   const locked = await hasStock(cur.id)
   if (locked) {
     const guard = ['is_stock_item', 'has_serial_no', 'has_batch_no', 'stock_uom']
@@ -152,23 +181,11 @@ r.patch('/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async 
   if (p.item_name || p.name) { cols.name = p.item_name || p.name; cols.item_name = p.item_name || p.name }
   // (#pricing) recompute the whole pricing chain whenever any pricing input changes — otherwise
   // editing supplier price / a factor leaves landed/selling/GP stale. Uses current values for
-  // whatever the edit didn't touch. Only overrides when a supplier price is resolvable (auto path).
-  const PRICE_INPUTS = ['supplier_price', 'exchange_factor', 'price_factor', 'add_margin_pct', 'special_offer_pct', 'brand', 'model']
+  // whatever the edit didn't touch. The full landed-cost chain lives in core/pricing.js.
+  const PRICE_INPUTS = ['supplier_price', 'exchange_factor', 'price_factor', 'add_margin_pct', 'special_offer_pct', 'brand', 'model', 'currency', 'factory_cost', 'freight_cost', 'insurance_cost', 'customs_duty', 'local_transport', 'other_landed_cost', 'markup_factor', 'landed_template_id']
   if (PRICE_INPUTS.some((f) => p[f] !== undefined)) {
-    const auto = await resolveItemAuto({
-      brand: p.brand ?? cur.brand, model: p.model ?? cur.model,
-      product_family: p.product_family ?? cur.product_family, item_name: cols.item_name ?? cur.item_name,
-      supplier_price: p.supplier_price ?? cur.supplier_price,
-      exchange_factor: p.exchange_factor ?? cur.exchange_factor, price_factor: p.price_factor ?? cur.price_factor,
-      add_margin_pct: p.add_margin_pct ?? cur.add_margin_pct, special_offer_pct: p.special_offer_pct ?? cur.special_offer_pct,
-    })
-    if (auto.supplier_price != null) {
-      Object.assign(cols, {
-        supplier_price: auto.supplier_price, landed_cost: auto.landed_cost, cost: auto.landed_cost,
-        calculated_sale_price: auto.calculated_sale_price, selling_price: auto.selling_price,
-        standard_rate: auto.selling_price, gp_percent: auto.gp_percent,
-      })
-    }
+    const priced = await repriceItem({ ...cur, ...cols })
+    Object.assign(cols, priced)
   }
   const { data: item, error } = await supabase.from('items').update(nullEmpty(cols)).eq('id', cur.id).select().single()
   if (error) throw error
@@ -184,6 +201,8 @@ r.patch('/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async 
     await supabase.from('item_prices').update({ price_list_rate: Number(item.standard_rate) }).eq('item_id', item.id).eq('price_list', 'Standard Selling').eq('selling', true)
   }
   await logAudit(req.user, 'item', item.id, 'updated', {})
+  // keep a version snapshot of the PRE-edit state so every change is auditable/reversible (not just EOS syncs)
+  try { await recordVersion(cur.id, { source: 'erp-edit', changed_by: req.user.id, change_note: 'Manual edit', snapshot: cur }) } catch { /* versioning is best-effort */ }
   res.json({ ...item, ...(await loadChildren(item.id)) })
 }))
 

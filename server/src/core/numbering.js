@@ -5,6 +5,8 @@ export const TABLE_DOCTYPE = {
   sales_orders: 'Sales Order', invoices: 'Invoice', purchase_orders: 'Purchase Order', rfqs: 'RFQ',
   delivery_notes: 'Delivery Note', goods_receipts: 'Goods Receipt', projects: 'Project', payments: 'Payment',
   quotations: 'Quotation',
+  // Phase 2
+  purchase_requisitions: 'Purchase Requisition', boqs: 'BOQ', cost_sheets: 'Cost Sheet',
 }
 
 // Consume the next document number. Uses the editable numbering_series table when a series exists

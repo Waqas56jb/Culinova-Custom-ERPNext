@@ -8,6 +8,7 @@
 import { env } from '../config/env.js'
 import { supabase } from '../config/supabase.js'
 import { getBrand } from './itempricing.js'
+import { eosHash, recordVersion } from './eosfields.js'
 
 const EOS = env.eosApiUrl
 
@@ -108,39 +109,55 @@ export async function importEosEntry(id, user) {
   if (detail.entry.current_status !== 'approved') throw new Error('Only approved EOS entries can be imported')
   const mapped = mapEosToItem(detail)
   await ensureMasters(mapped)
-  const f = mapped.fields
+  const f = { ...mapped.fields, eos_status: detail.entry.current_status }
+  const hash = eosHash(f)
 
   // 1) already linked to this EOS entry?
-  let { data: existing } = await supabase.from('items').select('id').eq('eos_entry_id', id).maybeSingle()
+  let { data: existing } = await supabase.from('items').select('*').eq('eos_entry_id', id).maybeSingle()
   let mode = 'updated'
   // 2) else match an existing item by brand + model (link it instead of duplicating)
   if (!existing && f.brand && f.model) {
-    const { data: byModel } = await supabase.from('items').select('id').ilike('brand', f.brand).ilike('model', f.model).limit(1).maybeSingle()
+    const { data: byModel } = await supabase.from('items').select('*').ilike('brand', f.brand).ilike('model', f.model).limit(1).maybeSingle()
     if (byModel) { existing = byModel; mode = 'linked' }
   }
 
   if (existing) {
+    // nothing changed upstream → don't churn a new version, just report it
+    if (mode === 'updated' && existing.eos_last_hash === hash) {
+      return { mode: 'unchanged', item: existing }
+    }
     // refresh engineering data + link, but PRESERVE identity & pricing:
     //  - item_name / name are NOT changed — sales quotations resolve item cost BY NAME, renaming breaks them
     //  - item_code and all pricing fields are untouched (EOS carries no price)
     const patch = { ...f }
     delete patch.name; delete patch.item_name
+    patch.eos_version = (Number(existing.eos_version) || 0) + 1
+    patch.eos_last_hash = hash
     const { data, error } = await supabase.from('items').update(patch).eq('id', existing.id).select().single()
     if (error) throw new Error(error.message)
+    // snapshot the PREVIOUS state so an EOS change is always auditable and reversible
+    await recordVersion(existing.id, {
+      source: mode === 'linked' ? 'eos-link' : 'eos-sync',
+      changed_by: user?.id || null,
+      change_note: `EOS entry ${id} → v${patch.eos_version}`,
+      snapshot: existing,
+    })
     return { mode, item: data }
   }
 
   // 3) create new
   const item_code = num()
-  const row = { ...f, item_code, code: item_code, stock_uom: 'Nos', is_stock_item: true, is_sales_item: true, is_purchase_item: true }
+  const row = { ...f, item_code, code: item_code, stock_uom: 'Nos', is_stock_item: true, is_sales_item: true, is_purchase_item: true, eos_version: 1, eos_last_hash: hash }
   const { data, error } = await supabase.from('items').insert(row).select().single()
-  if (error) throw new Error(error.code === '23505' ? 'Item already exists' : error.message)
+  // the unique index on eos_entry_id is the last line of defence against a duplicate import
+  if (error) throw new Error(error.code === '23505' ? 'This EOS entry has already been imported' : error.message)
+  await recordVersion(data.id, { source: 'eos-import', changed_by: user?.id || null, change_note: `Imported from EOS entry ${id}`, snapshot: data })
   return { mode: 'created', item: data }
 }
 
 // Import a batch; returns a per-id result summary.
 export async function importEosEntries(ids = [], user) {
-  const results = { created: 0, updated: 0, linked: 0, failed: 0, items: [], errors: [] }
+  const results = { created: 0, updated: 0, linked: 0, unchanged: 0, failed: 0, items: [], errors: [] }
   for (const id of ids) {
     try {
       const r = await importEosEntry(id, user)
@@ -149,4 +166,38 @@ export async function importEosEntries(ids = [], user) {
     } catch (e) { results.failed++; results.errors.push({ id, error: e.message }) }
   }
   return results
+}
+
+// ── SYNC ─────────────────────────────────────────────────────────────────────
+// Re-pull every EOS-linked item from EOS. Items whose engineering payload is unchanged are skipped,
+// so a sync is cheap and its report only lists what actually moved.
+export async function syncLinkedItems(user, { ids } = {}) {
+  let q = supabase.from('items').select('id, item_name, eos_entry_id, eos_version').not('eos_entry_id', 'is', null)
+  if (ids?.length) q = q.in('id', ids)
+  const { data: linked, error } = await q
+  if (error) throw new Error(error.message)
+
+  const report = { checked: linked.length, updated: 0, unchanged: 0, failed: 0, changes: [], errors: [] }
+  for (const it of linked) {
+    try {
+      const r = await importEosEntry(it.eos_entry_id, user)
+      if (r.mode === 'unchanged') { report.unchanged++; continue }
+      report.updated++
+      report.changes.push({ item_id: it.id, item_name: r.item.item_name, version: r.item.eos_version })
+    } catch (e) {
+      report.failed++
+      report.errors.push({ item_id: it.id, item_name: it.item_name, error: e.message })
+    }
+  }
+  return report
+}
+
+// Which approved EOS entries are NOT yet in the ERP — the pending import queue Ali works through.
+export async function eosPending({ query = '', page = 1, limit = 60 } = {}) {
+  const cat = await eosCatalog({ query, page, limit })
+  const rows = cat?.entries || cat?.items || cat?.data || []
+  const { data: linked } = await supabase.from('items').select('eos_entry_id').not('eos_entry_id', 'is', null)
+  const have = new Set((linked || []).map((r) => String(r.eos_entry_id)))
+  const marked = rows.map((r) => ({ ...r, imported: have.has(String(r.id)) }))
+  return { ...cat, entries: marked, pending: marked.filter((r) => !r.imported).length, imported: marked.filter((r) => r.imported).length }
 }

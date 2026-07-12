@@ -4,7 +4,7 @@ import { authRequired } from '../../middleware/auth.js'
 import { authorize } from '../../middleware/rbac.js'
 import { asyncWrap } from '../../middleware/error.js'
 import { logAudit } from '../../core/audit.js'
-import { rolePanels, PANELS, levelActions } from '../../rbac/permissions.js'
+import { rolePanels, PANELS, levelActions, canAccessPanel } from '../../rbac/permissions.js'
 
 const r = Router()
 
@@ -90,11 +90,13 @@ r.get('/rbac', authRequired, authorize('admin', 'read'), (req, res) => {
 })
 
 // ── APPROVAL WORKFLOW (generic) ──
-// list — approvers/admin see pending; anyone sees their own requests
+// list — admin/management see every request; everyone else sees ONLY their own (a Customer or a
+// Sales user must never be able to enumerate the whole approval queue).
 r.get('/approvals', authRequired, asyncWrap(async (req, res) => {
   let q = supabase.from('approvals').select('*').order('created_at', { ascending: false }).limit(200)
   if (req.query.status) q = q.eq('status', req.query.status)
-  if (req.query.mine === '1') q = q.eq('requested_by', req.user.id)
+  const isApprover = canAccessPanel(req.user.role, 'admin')
+  if (!isApprover || req.query.mine === '1') q = q.eq('requested_by', req.user.id)
   const { data, error } = await q
   if (error) throw error
   res.json(data || [])

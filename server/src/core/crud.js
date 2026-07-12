@@ -11,21 +11,37 @@ import { nextNumber } from './numbering.js'
 // mass-assignment tampering (e.g. forging `number`, overwriting `password_hash`, spoofing timestamps).
 const IMMUTABLE = ['id', 'created_at', 'updated_at', 'number', 'password_hash']
 // Strip immutable + (for non-management) any resource-declared protected fields (e.g. contract_value).
+// Also coerce empty strings to null: a blank <input>/<select> submits '', which Postgres rejects for
+// uuid / numeric / date / enum columns (22P02) — and because the store swallows errors, the form
+// silently fails. Coercing '' → null lets optional fields be left blank across EVERY generic form.
 function sanitizeBody(body, cfg, role) {
   const out = { ...body }
   for (const f of IMMUTABLE) delete out[f]
   if (!isManagement(role)) for (const f of cfg.protect || []) delete out[f]
+  for (const k of Object.keys(out)) if (out[k] === '') out[k] = null
   return out
 }
 
-// Tables with a NOT NULL unique `number` — auto-generate a human reference on create.
+// Tables with a `number` column — auto-generate a human reference on create.
+// (payroll_runs deliberately omitted: it has NO `number` column, so injecting one 500s the insert.)
 const NUMBER_PREFIX = {
   projects: 'PRJ', sales_orders: 'SO', invoices: 'INV', rfqs: 'RFQ', purchase_orders: 'PO',
   delivery_notes: 'DN', goods_receipts: 'GRN', service_tickets: 'TKT', maintenance_visits: 'MV',
-  service_contracts: 'SC', payments: 'PMT', payables: 'BILL', payroll_runs: 'PR',
+  service_contracts: 'SC', payments: 'PMT', payables: 'BILL',
   stock_transfers: 'ST', stock_adjustments: 'ADJ',
 }
-const genNumber = (pfx) => `${pfx}-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`
+
+// Cache each table's real column set (from a probe row) so list-filtering and number-injection only
+// ever touch columns that actually exist. Cached for the process lifetime.
+const _colCache = new Map()
+async function tableColumns(table) {
+  if (_colCache.has(table)) return _colCache.get(table)
+  const { data } = await supabase.from(table).select('*').limit(1)
+  const cols = new Set(data && data[0] ? Object.keys(data[0]) : [])
+  // an empty table tells us nothing — don't cache an empty set as authoritative
+  if (cols.size) _colCache.set(table, cols)
+  return cols
+}
 
 // Build a full REST router for a resource with RBAC + audit + field redaction.
 export function crudRouter(name, cfg) {
@@ -36,8 +52,10 @@ export function crudRouter(name, cfg) {
   // LIST
   r.get('/', authRequired, authorize(cfg.panel, 'read'), asyncWrap(async (req, res) => {
     let q = supabase.from(t).select('*').order(cfg.orderBy || 'created_at', { ascending: false })
-    // simple equality filters via querystring (?status=Open)
-    Object.entries(req.query).forEach(([k, v]) => { if (!['limit', 'offset'].includes(k)) q = q.eq(k, v) })
+    // simple equality filters via querystring (?status=Open) — but only on REAL columns, else an
+    // unknown/typo'd param becomes a bogus Postgres filter and 500s the whole list.
+    const cols = await tableColumns(t)
+    Object.entries(req.query).forEach(([k, v]) => { if (!['limit', 'offset'].includes(k) && cols.has(k)) q = q.eq(k, v) })
     if (req.query.limit) q = q.limit(Number(req.query.limit))
     const { data, error } = await q
     if (error) throw error

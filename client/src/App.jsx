@@ -48,6 +48,12 @@ import PricingEngine from './pages/PricingEngine.jsx'
 import Documents from './pages/Documents.jsx'
 import PartyMaster from './pages/PartyMaster.jsx'
 import MyDashboard from './pages/MyDashboard.jsx'
+// Phase 2 pages
+import CostEngine from './pages/CostEngine.jsx'
+import BOQ from './pages/BOQ.jsx'
+import ProjectEquipment from './pages/ProjectEquipment.jsx'
+import SupplierPerformance from './pages/SupplierPerformance.jsx'
+import AIInsights from './pages/AIInsights.jsx'
 import FormModals from './components/FormModals.jsx'
 import Login from './pages/Login.jsx'
 import { useAuth } from './auth/AuthContext.jsx'
@@ -75,6 +81,10 @@ export default function App() {
           <Route path="/projects/dashboard" element={<ProjectDashboard />} />
           <Route path="/projects/all" element={<Projects />} />
           <Route path="/projects/board" element={<Tasks />} />
+          <Route path="/projects/equipment" element={<ProjectEquipment />} />
+          <Route path="/projects/boq" element={<BOQ />} />
+          <Route path="/projects/cost-engine" element={<CostEngine />} />
+          <Route path="/projects/ai-insights" element={<AIInsights />} />
           <Route path="/projects/:id" element={<ProjectDetail />} />
 
           {/* Procurement */}
@@ -83,6 +93,7 @@ export default function App() {
           <Route path="/procurement/rfq" element={<RFQs />} />
           <Route path="/procurement/po" element={<PurchaseOrders />} />
           <Route path="/procurement/suppliers" element={<Suppliers />} />
+          <Route path="/procurement/supplier-performance" element={<SupplierPerformance />} />
           <Route path="/procurement/supplier-master" element={<PartyMaster party="supplier" />} />
 
           {/* Supplier Portal (external) */}

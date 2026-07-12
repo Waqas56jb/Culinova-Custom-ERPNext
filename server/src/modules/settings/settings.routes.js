@@ -1,11 +1,15 @@
 import { Router } from 'express'
 import { supabase } from '../../config/supabase.js'
 import { authRequired } from '../../middleware/auth.js'
-import { authorize } from '../../middleware/rbac.js'
+import { authorize, internalOnly } from '../../middleware/rbac.js'
 import { asyncWrap } from '../../middleware/error.js'
 import { logAudit } from '../../core/audit.js'
 
 const r = Router()
+// Company Settings are shared reference data for every INTERNAL role (currencies/VAT feed pricing,
+// branches/departments feed forms) — but a portal Customer must not read the company's CR/VAT number,
+// branches or numbering. Gate the whole module to internal staff; writes stay admin-only below.
+r.use(authRequired, internalOnly)
 
 // Company Settings master data. Reads: any authenticated user (currencies/VAT/company are needed
 // across modules for display + pricing). Writes: admin panel only (Management / System Admin).
@@ -48,9 +52,9 @@ for (const [name, cfg] of Object.entries(ENTITIES)) {
 }
 
 // Atomically consume the next document number for a doc_type (used by other modules later).
-r.post('/numbering-series/:docType/next', authRequired, asyncWrap(async (req, res) => {
-  const { data: s } = await supabase.from('numbering_series').select('*').eq('doc_type', req.params.docType).maybeSingle()
-  if (!s) return res.status(404).json({ error: 'No series for this document type' })
+r.post('/numbering-series/:docType/next', asyncWrap(async (req, res) => {
+  const { data: s } = await supabase.from('numbering_series').select('*').eq('doc_type', req.params.docType).eq('is_active', true).maybeSingle()
+  if (!s) return res.status(404).json({ error: 'No active series for this document type' })
   const n = Number(s.next_number) || 1
   await supabase.from('numbering_series').update({ next_number: n + 1 }).eq('id', s.id)
   const year = new Date().getFullYear()

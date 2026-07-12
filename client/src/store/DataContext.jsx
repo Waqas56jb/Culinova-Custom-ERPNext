@@ -339,7 +339,12 @@ export function DataProvider({ children }) {
   const setShipment = async (id, shipment) => { await patch('purchase-orders', id, { shipment }); await reload('purchaseOrders') }
 
   // ── WAREHOUSE ──
-  const addWarehouse = async (d) => { await post('warehouses', { name: d.name, location: d.location, type: d.type || 'Storage' }); await reload('warehouses') }
+  // code is auto-derived from the name when the user leaves it blank (WH-<first word>)
+  const addWarehouse = async (d) => {
+    const code = (d.code || '').trim() || `WH-${String(d.name || '').trim().split(/\s+/)[0].toUpperCase().slice(0, 6)}`
+    await post('warehouses', { code, name: d.name, location: d.location || null, type: d.type || 'Store' })
+    await reload('warehouses')
+  }
   // receiving a PO now actually brings stock IN (creates a GRN + posts to the stock ledger)
   const receivePO = async (poId) => {
     const r = await api(`/goods-receipt/receive-po/${poId}`, { method: 'POST' })
