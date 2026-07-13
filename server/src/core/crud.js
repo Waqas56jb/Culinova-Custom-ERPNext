@@ -39,6 +39,7 @@ const NUMBER_PREFIX = {
   delivery_notes: 'DN', goods_receipts: 'GRN', service_tickets: 'TKT', maintenance_visits: 'MV',
   service_contracts: 'SC', payments: 'PMT', payables: 'BILL',
   stock_transfers: 'ST', stock_adjustments: 'ADJ',
+  leads: 'LEAD', opportunities: 'OPP',
 }
 
 // Cache each table's real column set (from a probe row) so list-filtering and number-injection only

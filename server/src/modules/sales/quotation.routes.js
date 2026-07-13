@@ -26,7 +26,25 @@ import { asyncWrap } from '../../middleware/error.js'
 import { logAudit } from '../../core/audit.js'
 import { nextNumber } from '../../core/numbering.js'
 import { priceItem, discountFor, baseCurrency } from '../../core/pricing.js'
-import { discountSource } from './quotation.rules.js'
+import { discountSource, evaluateApproval, effectiveDiscountPct, RULES } from './quotation.rules.js'
+import { ensureLeadAndOpportunity, advanceOpportunity } from '../../core/crmflow.js'
+import { notifyManagementApproval } from '../../core/notify.js'
+
+// The builder must obey EXACTLY the same discount rules as the legacy create route — otherwise a
+// salesperson could route around their own limit simply by using the newer screen. Two gates apply:
+//   1. the ITEM cap  (discount_rules + the item's own max_discount column)
+//   2. the ROLE gate (per-role direct limit → approval; above RULES.MAX_DISCOUNT → blocked outright)
+// Returns { blocked, reason, needsApproval, status, approval_status }.
+function approvalFor({ net, discount_pct, discount_fixed, role }) {
+  const discount_amount = (n0(net) * n0(discount_pct)) / 100 + n0(discount_fixed)
+  const decision = evaluateApproval({ net_amount: n0(net), discount_amount }, role)
+  if (decision.blocked) return decision
+  return {
+    ...decision,
+    status: decision.needsApproval ? 'Pending Approval' : 'Draft',
+    approval_status: decision.needsApproval ? 'Pending' : 'Not Required',
+  }
+}
 
 // ── coercion helpers (blank string must NEVER reach a numeric/uuid/date column → 22P02) ──
 const round = (n) => Math.round((Number(n) || 0) * 100) / 100
@@ -191,13 +209,17 @@ export function quotationRouter() {
       built.push(await buildLine(li, i))
     }
 
-    // discount cap: the header discount must not exceed the items' max_discount cap
+    // GATE 1 — the item cap: the header discount must not exceed the items' max_discount cap
     const cap = await discountCapFor(built.map((l) => l.item_id))
     const net = round(built.reduce((s, l) => s + lineAmount(l), 0))
     const eff = effectivePct(net, p.discount_pct, p.discount_fixed)
     if (cap != null && eff > cap + 0.001) {
       return res.status(422).json({ error: `Discount ${eff}% exceeds the maximum ${cap}% allowed for the items on this quotation` })
     }
+    // GATE 2 — the role gate: over the role's own limit → Management approval; over the absolute
+    // ceiling → refused. Without this the builder would let a salesperson issue any discount they liked.
+    const decision = approvalFor({ net, discount_pct: p.discount_pct, discount_fixed: p.discount_fixed, role: req.user.role })
+    if (decision.blocked) return res.status(422).json({ error: decision.reason })
 
     const validity = num(p.validity_days) ?? 30
     const header = {
@@ -217,8 +239,8 @@ export function quotationRouter() {
       discount_fixed: Math.max(0, n0(p.discount_fixed)),
       discount_source: discountSource(req.user.role),
       notes: clean(p.notes),
-      status: 'Draft',
-      approval_status: 'Not Required',
+      status: decision.status,                 // 'Pending Approval' when over the role's limit
+      approval_status: decision.approval_status,
       revision: 0,
       owner_id: req.user.id,
       created_by: req.user.id,
@@ -236,8 +258,18 @@ export function quotationRouter() {
       quotation_id: q.id, revision: 0, changed_by: req.user.id,
       changes: { action: 'created', by: req.user.name, snapshot: snapshotOf(full, full.quotation_items) },
     })
-    await logAudit(req.user, 'quotation', q.id, 'created', { number: q.number, lines: built.length })
-    res.status(201).json(redactFinancials(req.user.role, full))
+    // CRM automation — the same chain the legacy route runs: make sure the customer has a lead +
+    // opportunity, then move that opportunity to the Quotation stage. Best-effort: a CRM hiccup must
+    // never lose the quotation the salesperson just built.
+    try {
+      await ensureLeadAndOpportunity({ name: full.customer, email: full.customer_email })
+      await advanceOpportunity(full.customer, 'Quotation')
+    } catch { /* CRM automation is best-effort */ }
+    // over the role's limit → tell Management there is something to approve
+    if (decision.needsApproval) { try { await notifyManagementApproval(full, req.user.name) } catch { /* notify is best-effort */ } }
+
+    await logAudit(req.user, 'quotation', q.id, 'created', { number: q.number, lines: built.length, status: decision.status })
+    res.status(201).json({ ...redactFinancials(req.user.role, full), _approval: { needsApproval: !!decision.needsApproval } })
   }))
 
   // ── active commercial terms (for the terms picker) — registered BEFORE '/:id' ──
@@ -289,6 +321,7 @@ export function quotationRouter() {
 
     // optional full replacement of the lines (re-snapshotting; keeps any snapshot the client sends)
     let replaced = false
+    let needsApproval = false
     if (Array.isArray(p.items)) {
       const built = []
       for (let i = 0; i < p.items.length; i++) {
@@ -303,6 +336,11 @@ export function quotationRouter() {
       const dFixed = patch.discount_fixed != null ? patch.discount_fixed : existing.discount_fixed
       const eff = effectivePct(net, dPct, dFixed)
       if (cap != null && eff > cap + 0.001) return res.status(422).json({ error: `Discount ${eff}% exceeds the maximum ${cap}% allowed for the items on this quotation` })
+      // role gate on the resulting discount
+      const d = approvalFor({ net, discount_pct: dPct, discount_fixed: dFixed, role: req.user.role })
+      if (d.blocked) return res.status(422).json({ error: d.reason })
+      patch.status = d.status; patch.approval_status = d.approval_status; needsApproval = d.needsApproval
+
       await supabase.from('quotation_items').delete().eq('quotation_id', existing.id)
       if (built.length) {
         const { error: le } = await supabase.from('quotation_items').insert(built.map((l) => ({ ...l, quotation_id: existing.id })))
@@ -311,7 +349,7 @@ export function quotationRouter() {
       replaced = true
     }
 
-    // header discount cap check (when discount changed without replacing lines)
+    // header discount cap + role gate (when the discount changed without replacing lines)
     if (!replaced && (p.discount_pct !== undefined || p.discount_fixed !== undefined)) {
       const ids = (existing.quotation_items || []).map((l) => l.item_id)
       const cap = await discountCapFor(ids)
@@ -320,6 +358,9 @@ export function quotationRouter() {
       const dFixed = patch.discount_fixed != null ? patch.discount_fixed : existing.discount_fixed
       const eff = effectivePct(net, dPct, dFixed)
       if (cap != null && eff > cap + 0.001) return res.status(422).json({ error: `Discount ${eff}% exceeds the maximum ${cap}% allowed for the items on this quotation` })
+      const d = approvalFor({ net, discount_pct: dPct, discount_fixed: dFixed, role: req.user.role })
+      if (d.blocked) return res.status(422).json({ error: d.reason })
+      patch.status = d.status; patch.approval_status = d.approval_status; needsApproval = d.needsApproval
     }
 
     if (Object.keys(patch).length) {
@@ -327,8 +368,9 @@ export function quotationRouter() {
       if (error) return res.status(422).json({ error: error.message })
     }
     const full = await recomputeTotals(existing.id)
+    if (needsApproval) { try { await notifyManagementApproval(full, req.user.name) } catch { /* best-effort */ } }
     await logAudit(req.user, 'quotation', existing.id, 'edited', { fields: Object.keys(patch), replaced_lines: replaced })
-    res.json(redactFinancials(req.user.role, full))
+    res.json({ ...redactFinancials(req.user.role, full), _approval: { needsApproval: !!needsApproval } })
   }))
 
   // ── add ONE line (snapshot specs) → recompute ──
@@ -406,11 +448,20 @@ export function quotationRouter() {
     if (cap != null && eff > cap + 0.001) {
       return res.status(422).json({ error: `Discount ${eff}% exceeds the maximum ${cap}% allowed for the items on this quotation` })
     }
-    const { error } = await supabase.from('quotations').update({ discount_pct: dPct, discount_fixed: dFixed, discount_source: discountSource(req.user.role) }).eq('id', q.id)
+    // the role gate applies here too — a salesperson must not be able to raise the discount past their
+    // own limit by applying it after the quotation was created
+    const decision = approvalFor({ net, discount_pct: dPct, discount_fixed: dFixed, role: req.user.role })
+    if (decision.blocked) return res.status(422).json({ error: decision.reason })
+
+    const { error } = await supabase.from('quotations').update({
+      discount_pct: dPct, discount_fixed: dFixed, discount_source: discountSource(req.user.role),
+      status: decision.status, approval_status: decision.approval_status,
+    }).eq('id', q.id)
     if (error) return res.status(422).json({ error: error.message })
     const full = await recomputeTotals(q.id)
-    await logAudit(req.user, 'quotation', q.id, 'discount-applied', { effective_pct: eff, cap })
-    res.json(redactFinancials(req.user.role, full))
+    if (decision.needsApproval) { try { await notifyManagementApproval(full, req.user.name) } catch { /* best-effort */ } }
+    await logAudit(req.user, 'quotation', q.id, 'discount-applied', { effective_pct: eff, cap, needs_approval: !!decision.needsApproval })
+    res.json({ ...redactFinancials(req.user.role, full), _approval: { needsApproval: !!decision.needsApproval } })
   }))
 
   // ── bump the revision, capture the diff, keep the quotation editable ──

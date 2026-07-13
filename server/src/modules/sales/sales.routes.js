@@ -77,6 +77,28 @@ r.get('/orders', authRequired, authorize('sales', 'read'), asyncWrap(async (req,
   res.json(out)
 }))
 
+// ── TOP CUSTOMERS by outstanding balance (sales-readable) ──
+// The invoices table is finance-panel-gated, so a salesperson could never populate this chart from
+// /invoices. This returns ONLY the aggregate a salesperson legitimately needs — customer + outstanding
+// — and no cost, margin or per-invoice detail.
+r.get('/top-customers', authRequired, authorize('sales', 'read'), asyncWrap(async (req, res) => {
+  const { data: invs, error } = await supabase.from('invoices').select('customer, total, paid, status')
+  if (error) throw error
+  const by = {}
+  for (const i of invs || []) {
+    const name = (i.customer || '').trim()
+    if (!name) continue
+    const outstanding = (Number(i.total) || 0) - (Number(i.paid) || 0)
+    if (outstanding <= 0) continue                  // fully paid → nothing outstanding
+    by[name] = (by[name] || 0) + outstanding
+  }
+  const rows = Object.entries(by)
+    .map(([customer, outstanding]) => ({ customer, outstanding: Math.round(outstanding * 100) / 100 }))
+    .sort((a, b) => b.outstanding - a.outstanding)
+    .slice(0, 8)
+  res.json(rows)
+}))
+
 // ── CREATE a direct Sales Order (walk-in / phone order not raised from a quotation) ──
 // Mirrors the accept-chain: creates the sales_order + an auto-linked Project (+ BOQ lines when items
 // are supplied) in ONE call, so the "New Sales Order" button actually persists everything.

@@ -7,6 +7,8 @@ export const TABLE_DOCTYPE = {
   quotations: 'Quotation',
   // Phase 2
   purchase_requisitions: 'Purchase Requisition', boqs: 'BOQ', cost_sheets: 'Cost Sheet',
+  // CRM — leads/opportunities are documents too; without a number the UI had to print the raw uuid
+  leads: 'Lead', opportunities: 'Opportunity',
 }
 
 // Consume the next document number. Uses the editable numbering_series table when a series exists

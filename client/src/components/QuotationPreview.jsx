@@ -1,15 +1,25 @@
 import { X, Printer, Download, FileText } from 'lucide-react'
 import { sar } from '../data/mockData.js'
+import { useData } from '../store/DataContext.jsx'
 
 export default function QuotationPreview({ open, onClose, quotation }) {
+  const { settings } = useData()
   if (!open || !quotation) return null
+  // company identity + VAT rate come from Company Settings — never hardcoded into the document
+  const company = (settings?.companies || [])[0] || {}
+  const vs = settings?.vatSettings || []
+  const vatPct = Number(vs.find((v) => v.is_active && v.is_default)?.rate ?? vs.find((v) => v.is_active)?.rate ?? 15)
+
   // Use the ACTUAL BOQ items entered by the salesperson (no auto-invented items)
   const src = quotation.items?.length
     ? quotation.items
-    : [{ name: 'As per attached BOQ', qty: 1, rate: (Number(quotation.amount) || 0) / 1.15 }]
+    : [{ name: 'As per attached BOQ', qty: 1, rate: Number(quotation.net_amount) || 0 }]
   const items = src.map((it, i) => ({
     idx: i + 1, name: it.name, qty: Number(it.qty) || 0, rate: Number(it.rate) || 0,
-    amount: (Number(it.qty) || 0) * (Number(it.rate) || 0),
+    brand: it.brand, model: it.model, uom: it.uom,
+    // trust the server's stored line amount (it already applied any per-line discount); only fall
+    // back to qty × rate for a legacy line that has none
+    amount: it.amount != null ? Number(it.amount) : (Number(it.qty) || 0) * (Number(it.rate) || 0),
   }))
   const ref = quotation.ref || quotation.number || 'Quotation'
   const disc = Math.max(0, Number(quotation.discount) || 0)
@@ -18,8 +28,10 @@ export default function QuotationPreview({ open, onClose, quotation }) {
   const discountAmount = quotation.discount_amount != null ? Number(quotation.discount_amount) : (net * disc) / 100
   const effDisc = net > 0 ? Math.round((discountAmount / net) * 100) : disc
   const netAfter = net - discountAmount
-  const vat = netAfter * 0.15
-  const total = netAfter + vat
+  const vat = quotation.vat_amount != null ? Number(quotation.vat_amount) : (netAfter * vatPct) / 100
+  const total = quotation.total_amount != null ? Number(quotation.total_amount) : netAfter + vat
+  // the date the quotation was actually raised — not "today"
+  const issued = quotation.date || (quotation.created_at || '').slice(0, 10) || '—'
 
   return (
     <div className="fixed inset-0 z-[90] flex items-start justify-center overflow-y-auto bg-navy-900/60 backdrop-blur-sm p-3 sm:p-6">
@@ -65,11 +77,11 @@ export default function QuotationPreview({ open, onClose, quotation }) {
                 <p className="text-xs text-slate-500">Kingdom of Saudi Arabia</p>
               </div>
               <div className="text-right text-xs text-slate-500">
-                <p><span className="font-semibold text-ink">Date:</span> {new Date().toISOString().slice(0, 10)}</p>
-                <p><span className="font-semibold text-ink">Valid Till:</span> {quotation.validity_days ? `${quotation.validity_days} days` : '—'}</p>
+                <p><span className="font-semibold text-ink">Date:</span> {issued}</p>
+                <p><span className="font-semibold text-ink">Valid Till:</span> {quotation.valid_till || '—'}</p>
                 {quotation.delivery_date && <p><span className="font-semibold text-ink">Delivery By:</span> {quotation.delivery_date}</p>}
                 <p><span className="font-semibold text-ink">Prepared By:</span> {quotation.owner || '—'}</p>
-                <p><span className="font-semibold text-ink">VAT No:</span> 3001234567800003</p>
+                {company.vat_number && <p><span className="font-semibold text-ink">VAT No:</span> {company.vat_number}</p>}
               </div>
             </div>
 
@@ -102,7 +114,7 @@ export default function QuotationPreview({ open, onClose, quotation }) {
               <div className="w-64 space-y-1.5 text-sm">
                 <div className="flex justify-between text-slate-600"><span>Subtotal (Net)</span><span>{sar(Math.round(net))}</span></div>
                 {discountAmount > 0 && <div className="flex justify-between text-rose-600"><span>Discount ({effDisc}%)</span><span>− {sar(Math.round(discountAmount))}</span></div>}
-                <div className="flex justify-between text-slate-600"><span>VAT (15%)</span><span>{sar(Math.round(vat))}</span></div>
+                <div className="flex justify-between text-slate-600"><span>VAT ({vatPct}%)</span><span>{sar(Math.round(vat))}</span></div>
                 <div className="mt-1 flex justify-between rounded-lg bg-brand-50 px-3 py-2 text-base font-extrabold text-brand-700">
                   <span>Total</span><span>{sar(total)}</span>
                 </div>
@@ -120,7 +132,8 @@ export default function QuotationPreview({ open, onClose, quotation }) {
             {/* terms */}
             <div className="mt-7 border-t border-slate-100 pt-4 text-[11px] leading-relaxed text-slate-500">
               <p className="mb-1 font-semibold text-ink">Terms &amp; Conditions</p>
-              <p>• Prices are in SAR and inclusive of 15% VAT. • Validity: {quotation.validity_days || 30} days from quotation date. • Payment: {quotation.payment_terms || '50% advance, 50% on delivery'}. {quotation.delivery_date ? `• Required delivery by ${quotation.delivery_date}.` : '• Delivery & installation as per agreed schedule.'} • Warranty: 12 months on supplied equipment.</p>
+              <p>• Prices are in {quotation.currency || 'SAR'} and inclusive of {vatPct}% VAT. • Validity: {quotation.validity_days || 30} days from quotation date{quotation.valid_till ? ` (until ${quotation.valid_till})` : ''}. • Payment: {quotation.payment_terms || '50% advance, 50% on delivery'}. {quotation.delivery_date ? `• Required delivery by ${quotation.delivery_date}.` : '• Delivery & installation as per agreed schedule.'} • Warranty: 12 months on supplied equipment.</p>
+              {quotation.terms_text && <p className="mt-2 whitespace-pre-wrap">{quotation.terms_text}</p>}
               <p className="mt-3 text-slate-400">This is a system-generated quotation by CULINOVA ERP. ZATCA-compliant tax invoice will be issued on order confirmation.</p>
             </div>
           </div>

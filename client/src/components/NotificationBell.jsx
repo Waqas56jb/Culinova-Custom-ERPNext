@@ -14,17 +14,38 @@ export default function NotificationBell() {
   const [open, setOpen] = useState(false)
   const [items, setItems] = useState([])
   const [unread, setUnread] = useState(0)
+  const [err, setErr] = useState('')
   const ref = useRef(null)
 
-  const load = async () => { try { const r = await api('/notifications'); setItems(r.items || []); setUnread(r.unread || 0) } catch { /* not authed */ } }
+  // a failed poll must not wipe the list to "0 unread" — keep what we have and say the refresh failed
+  const load = async () => {
+    try { const r = await api('/notifications'); setItems(r.items || []); setUnread(r.unread || 0); setErr('') }
+    catch (e) { setErr(e?.message || 'Could not refresh notifications') }
+  }
   useEffect(() => { load(); const id = setInterval(load, 15000); return () => clearInterval(id) }, [])
   useEffect(() => {
     const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
     document.addEventListener('mousedown', h); return () => document.removeEventListener('mousedown', h)
   }, [])
 
-  const markAll = async () => { try { await api('/notifications/read-all', { method: 'POST' }); setItems((p) => p.map((n) => ({ ...n, read: true }))); setUnread(0) } catch {} }
-  const markOne = async (n) => { if (n.read) return; try { await api(`/notifications/${n.id}/read`, { method: 'POST' }); setItems((p) => p.map((x) => (x.id === n.id ? { ...x, read: true } : x))); setUnread((u) => Math.max(0, u - 1)) } catch {} }
+  // Mark-as-read is persisted server-side. Only drop the badge once the server confirms, and re-sync
+  // from the server afterwards, so the count can never disagree with what is actually stored.
+  const markAll = async () => {
+    try {
+      await api('/notifications/read-all', { method: 'POST' })
+      setItems((p) => p.map((n) => ({ ...n, read: true }))); setUnread(0); setErr('')
+      load()
+    } catch (e) { setErr(e?.message || 'Could not mark as read') }
+  }
+  const markOne = async (n) => {
+    if (n.read) return
+    try {
+      await api(`/notifications/${n.id}/read`, { method: 'POST' })
+      setItems((p) => p.map((x) => (x.id === n.id ? { ...x, read: true } : x)))
+      setUnread((u) => Math.max(0, u - 1)); setErr('')
+      load()
+    } catch (e) { setErr(e?.message || 'Could not mark as read') }
+  }
 
   return (
     <div className="relative" ref={ref}>
@@ -38,6 +59,7 @@ export default function NotificationBell() {
             <p className="text-sm font-bold text-ink">Notifications {unread > 0 && <span className="ml-1 rounded-full bg-rose-100 px-1.5 text-[11px] font-bold text-rose-600">{unread}</span>}</p>
             {unread > 0 && <button onClick={markAll} className="text-xs font-semibold text-brand-600 hover:underline">Mark all read</button>}
           </div>
+          {err && <div className="border-b border-amber-100 bg-amber-50 px-4 py-2 text-[12px] text-amber-800">{err}</div>}
           <div className="max-h-[60vh] overflow-y-auto">
             {items.length === 0 && <div className="px-4 py-12 text-center text-sm text-slate-400">You're all caught up 🎉</div>}
             {items.map((n) => (

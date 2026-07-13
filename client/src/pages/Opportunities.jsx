@@ -1,4 +1,5 @@
-import { Plus } from 'lucide-react'
+import { useState } from 'react'
+import { Plus, Trophy, X, Loader2 } from 'lucide-react'
 import { PageHeader, Badge, statusTone } from '../components/ui.jsx'
 import { sar } from '../data/mockData.js'
 import { useData } from '../store/DataContext.jsx'
@@ -7,8 +8,20 @@ const stages = ['Prospecting', 'Quotation', 'Negotiation', 'Won']
 const stageColor = { Prospecting: '#94a3b8', Quotation: '#3b82f6', Negotiation: '#E0A82E', Won: '#0EA99A' }
 
 export default function Opportunities() {
-  const { opportunities, salesOrders, openForm } = useData()
+  const { opportunities, salesOrders, openForm, wonOpportunity, lostOpportunity } = useData()
   const lost = opportunities.filter((o) => o.stage === 'Lost')
+  const [busy, setBusy] = useState(null)
+
+  // Won / Lost were only ever set automatically (by the accept / reject chain). A deal that is won or
+  // lost outside the portal — on the phone, in a meeting — had no way to be recorded at all.
+  const run = async (id, fn) => { setBusy(id); try { await fn() } catch (e) { alert(e.message) } finally { setBusy(null) } }
+  const markWon = (o) => { if (window.confirm(`Mark ${o.customer} as WON?`)) run(o.id, () => wonOpportunity(o.id)) }
+  const markLost = (o) => {
+    const reason = window.prompt(`Mark ${o.customer} as LOST — reason (required):`)
+    if (reason == null) return
+    if (!reason.trim()) { alert('A reason is required to mark an opportunity as Lost.'); return }
+    run(o.id, () => lostOpportunity(o.id, reason.trim()))
+  }
 
   return (
     <>
@@ -48,6 +61,18 @@ export default function Opportunities() {
                     <div className="mt-2 h-1.5 w-full rounded-full bg-slate-100">
                       <div className="h-1.5 rounded-full" style={{ width: `${o.prob}%`, background: stageColor[stage] }} />
                     </div>
+                    {stage !== 'Won' && (
+                      <div className="mt-3 flex gap-1.5 border-t border-slate-100 pt-2.5">
+                        <button onClick={() => markWon(o)} disabled={busy === o.id}
+                          className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg bg-emerald-50 px-2 py-1.5 text-[11px] font-bold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-50">
+                          {busy === o.id ? <Loader2 size={12} className="animate-spin" /> : <Trophy size={12} />} Won
+                        </button>
+                        <button onClick={() => markLost(o)} disabled={busy === o.id}
+                          className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg bg-rose-50 px-2 py-1.5 text-[11px] font-bold text-rose-700 transition hover:bg-rose-100 disabled:opacity-50">
+                          <X size={12} /> Lost
+                        </button>
+                      </div>
+                    )}
                     {stage === 'Won' && (() => {
                       const order = salesOrders.find((s) => s.customer === o.customer)
                       if (!order || !order.boqTotal) return <p className="mt-2 text-[11px] font-semibold text-emerald-600">🏆 Won — project starting</p>

@@ -21,13 +21,15 @@ const ownerName = (id) => { if (!id) return '—'; const n = userName(id); if (n
 
 // ── DB row → UI shape mappers (snake_case → the fields the pages read) ──
 const mapCustomer = (r) => ({ ...r, group: r.category || '—', business: r.business ?? 0, outstanding: Number(r.outstanding) || 0 })
-const mapLead = (r) => ({ ...r, value: Number(r.est_value) || 0, owner: ownerName(r.owner_id), date: d10(r) })
-const mapOpp = (r) => ({ ...r, value: Number(r.value) || 0, prob: r.probability ?? 0, close: r.next_action_date || '', owner: ownerName(r.owner_id) })
+const mapLead = (r) => ({ ...r, value: Number(r.est_value) || 0, owner: ownerName(r.owner_id), date: d10(r), ref: r.number })
+const mapOpp = (r) => ({ ...r, value: Number(r.value) || 0, prob: r.probability ?? 0, close: r.next_action_date || '', owner: ownerName(r.owner_id), ref: r.number })
 const mapQuote = (r) => ({
   ...r, amount: Number(r.total_amount) || 0, gp: Number(r.gp_percent) || 0, discount: Number(r.discount_pct) || 0,
   validity: r.validity_days, approval: r.approval_status, email: r.customer_email,
   owner: ownerName(r.owner_id), date: d10(r), ref: r.number,
-  items: (r.quotation_items || []).map((it) => ({ name: it.item_name, qty: it.qty, rate: it.rate })),
+  // keep the WHOLE snapshotted line (brand/model/uom/specs/image/datasheet/discount_pct/amount) —
+  // dropping it made the PDF reprice discounted lines itself and disagree with the server's net_amount
+  items: (r.quotation_items || []).map((it) => ({ ...it, name: it.item_name })),
 })
 const mapSO = (r) => ({ ...r, amount: Number(r.amount) || 0, delivery: r.delivery_status, billing: r.billing_status, project: r.project_number || projNumber(r.project_id), projectNo: r.project_number || projNumber(r.project_id), boqDone: r.boq_done ?? 0, boqTotal: r.boq_total ?? 0, progress: r.progress ?? 0, date: d10(r), ref: r.number })
 const mapProject = (r) => ({ ...r, contractValue: Number(r.contract_value) || 0, actualCost: Number(r.actual_cost) || 0, committedCost: Number(r.committed_cost) || 0, billed: Number(r.billed) || 0, collected: Number(r.collected) || 0, progress: r.progress ?? 0, start: r.start_date || '', end: r.end_date || '', manager: userName(r.manager_id) || 'Unassigned', salesOrder: soNumber(r.sales_order_id), ref: r.number, boq: [], tasks: [], variations: [] })
@@ -86,6 +88,9 @@ export function DataProvider({ children }) {
   const [productFamilies, setProductFamilies] = useState([])
   const [priceLists, setPriceLists] = useState([])
   const [payrollStatus, setPayrollStatus] = useState('Pending')
+  // true when the last refresh could not reach the backend — the UI shows a banner instead of
+  // pretending every KPI is genuinely zero
+  const [offline, setOffline] = useState(false)
   const [settings, setSettings] = useState({ companies: [], branches: [], departments: [], currencies: [], vatSettings: [], numberingSeries: [] })
 
   // resource registry: key → { ep, set, map, panel }
@@ -113,52 +118,69 @@ export function DataProvider({ children }) {
     interactions: { ep: 'interactions', set: setInteractions, map: (r) => ({ ...r, date: d10(r) }), panel: 'sales' },
   }
 
+  // A failed fetch must NEVER wipe good data to zero — that turns a dropped connection into a screen
+  // full of confident "0"s (an outright lie). keep() applies the result only on success, and records
+  // the failure so the UI can say "can't reach the server" instead of silently showing an empty ERP.
+  // A 403 is NOT a connection problem: the role legitimately has no access, so we let it fall through
+  // as a normal empty result (the panel gate above already handles that case).
+  const keep = useCallback(async (fetcher, apply) => {
+    try {
+      const rows = await fetcher()
+      apply(rows)
+      setOffline(false)
+      return true
+    } catch (e) {
+      if (/403|No access|access level/i.test(e?.message || '')) { apply([]); return false }  // genuinely not permitted
+      setOffline(true)          // network / server error → KEEP the last-known data, flag the outage
+      return false
+    }
+  }, [])
+
   const reload = useCallback(async (key) => {
     const s = SOURCES[key]; if (!s) return
     if (!allowed(s.panel)) { s.set([]); return }
-    try { const rows = await api('/' + s.ep); s.set((rows || []).map(s.map)) } catch { /* leave empty */ }
+    await keep(() => api('/' + s.ep), (rows) => s.set((rows || []).map(s.map)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panels])
+  }, [panels, keep])
 
   const loadProjects = useCallback(async () => {
     if (!allowed('projects')) { setProjects([]); setTeam([]); return }
-    try {
+    await keep(async () => {
       const [ps, boq, tasks, vars, tm] = await Promise.all([
         api('/projects'), api('/project-boq').catch(() => []), api('/project-tasks').catch(() => []), api('/variations').catch(() => []), api('/pm/team').catch(() => []),
       ])
       setTeam(tm || [])
-      const mapped = (ps || []).map((p) => ({
+      return (ps || []).map((p) => ({
         ...mapProject(p),
         boq: (boq || []).filter((b) => b.project_id === p.id).map((b) => ({ ...b, item: b.item_name })),
         tasks: (tasks || []).filter((t) => t.project_id === p.id),
         variations: (vars || []).filter((v) => v.project_id === p.id).map((v) => ({ ...v, desc: v.description })),
       }))
-      setProjects(mapped)
-    } catch { setProjects([]) }
+    }, setProjects)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panels])
+  }, [panels, keep])
 
   const loadQuotations = useCallback(async () => {
-    if (!allowed('sales')) { setQuotations([]); return }
-    try { const rows = await api('/sales/quotations'); setQuotations((rows || []).map(mapQuote)) } catch { setQuotations([]) }
+    if (!allowed('sales')) { setQuotations([]); return }   // role genuinely has no access → empty is the truth
+    await keep(() => api('/sales/quotations'), (rows) => setQuotations((rows || []).map(mapQuote)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panels])
+  }, [panels, keep])
 
   const loadChat = useCallback(async () => {
     if (!allowed('sales')) { setChatMessages([]); setCustomerDir([]); return }
-    try { const rows = await api('/sales/messages'); setChatMessages(rows || []) } catch { setChatMessages([]) }
-    try { const dir = await api('/sales/customers-directory'); setCustomerDir(dir || []) } catch { setCustomerDir([]) }
+    await keep(() => api('/sales/messages'), (rows) => setChatMessages(rows || []))
+    await keep(() => api('/sales/customers-directory'), (dir) => setCustomerDir(dir || []))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panels])
+  }, [panels, keep])
 
   const loadItems = useCallback(async () => {
-    try { setItems(await api('/items') || []) } catch { setItems([]) }
-    try { setItemGroups(await api('/masters/item-groups') || []) } catch { setItemGroups([]) }
-    try { setBrands(await api('/masters/brands') || []) } catch { setBrands([]) }
-    try { setItemAttributes(await api('/masters/item-attributes') || []) } catch { setItemAttributes([]) }
-    try { setProductFamilies(await api('/masters/product-families') || []) } catch { setProductFamilies([]) }
-    try { setPriceLists(await api('/masters/price-lists') || []) } catch { setPriceLists([]) }
-  }, [])
+    await keep(() => api('/items'), (r) => setItems(r || []))
+    await keep(() => api('/masters/item-groups'), (r) => setItemGroups(r || []))
+    await keep(() => api('/masters/brands'), (r) => setBrands(r || []))
+    await keep(() => api('/masters/item-attributes'), (r) => setItemAttributes(r || []))
+    await keep(() => api('/masters/product-families'), (r) => setProductFamilies(r || []))
+    await keep(() => api('/masters/price-lists'), (r) => setPriceLists(r || []))
+  }, [keep])
 
   // ── RESOLVER MAPS ── fill the module-level id→label maps so every mapper resolves project/owner/manager
   // to a readable value regardless of which panel owns the source. lookups/* is readable by any internal role,
@@ -469,6 +491,7 @@ export function DataProvider({ children }) {
     suppliers, rfqs, purchaseOrders, warehouses, stockItems, deliveryNotes,
     invoices, payables, payments,
     snags, commissioning, tickets, visits, contracts, employees, leaves, interactions, chatMessages, customerDir, team, payrollStatus,
+    offline, retry: loadAll,
     items, itemGroups, brands, itemAttributes, productFamilies, priceLists,
     getItem, createItem, updateItem, deleteItem, generateVariants, importItems, addItemPrice, deleteItemPrice, addItemGroup, addBrand, updateBrand, addItemAttribute, addProductFamily, addPriceList, getAlternatives,
     eosCatalog, eosDetail, eosImport, eosSync,

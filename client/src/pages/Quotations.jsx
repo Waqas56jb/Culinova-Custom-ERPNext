@@ -16,6 +16,10 @@ const FINANCIAL_ROLES = ['Management', 'System Admin', 'Accounts User', 'Purchas
 // roles whose access level includes 'update' (server gates edit/discount/revise on 'update')
 const EDITORS = ['Management', 'System Admin', 'Sales Manager']
 const APPROVERS = ['Management', 'System Admin', 'Sales Manager']
+// Sending and marking Lost are 'create'-level actions on the server — a Sales User must be able to do
+// both, otherwise the quotation they just built is unreachable forever (and CEO rule #10 says a
+// quotation is never deleted, only marked Lost).
+const SENDERS = ['Management', 'System Admin', 'Sales Manager', 'Sales User']
 
 const n0 = (v) => Number(v) || 0
 // strip HTML/JSON noise for a compact spec/description preview
@@ -30,11 +34,20 @@ const itemRate = (it) => n0(it.selling_price) || n0(it.selling_rate) || n0(it.st
 const itemCost = (it) => (it.landed_cost != null ? n0(it.landed_cost) : it.cost != null ? n0(it.cost) : null)
 
 export default function Quotations() {
-  const { quotations, items, customers, projects, settings, loadAll, approveQuotation, rejectQuotation, sendQuotation } = useData()
+  const d = useData()
+  const { quotations, items, customers, settings, loadAll, approveQuotation, rejectQuotation, sendQuotation, lostQuotation } = d
   const { user } = useAuth()
   const showFin = FINANCIAL_ROLES.includes(user?.role)
   const canEdit = EDITORS.includes(user?.role)
   const canApprove = APPROVERS.includes(user?.role)
+  const canSend = SENDERS.includes(user?.role)
+
+  // Projects live in the projects panel, which Sales cannot read — so the store's `projects` array is
+  // permanently empty here. Use the shared read-only lookup instead, which every internal role may read.
+  const [projectOpts, setProjectOpts] = useState([])
+  useEffect(() => {
+    d.lookupProjects().then((r) => setProjectOpts(Array.isArray(r) ? r : [])).catch(() => setProjectOpts([]))
+  }, [d])
 
   const vatRate = useMemo(() => {
     const vs = settings?.vatSettings || []
@@ -51,6 +64,14 @@ export default function Quotations() {
 
   const run = async (id, fn) => { setBusy(id); try { await fn() } catch (e) { alert(e.message) } finally { setBusy(null) } }
   const reject = (q) => { const reason = window.prompt('Reject (approval) — reason (optional):') ?? ''; run(q.id, () => rejectQuotation(q.id, reason)) }
+  // A quotation is never deleted — it is marked Lost with a mandatory reason (CEO rule #10), which the
+  // server records in the revision history.
+  const markLost = (q) => {
+    const reason = window.prompt(`Mark ${q.ref} as Lost — reason (required):`)
+    if (reason == null) return                       // cancelled
+    if (!reason.trim()) { alert('A reason is required to mark a quotation as Lost.'); return }
+    run(q.id, () => lostQuotation(q.id, reason.trim()))
+  }
 
   // ── KPIs ──
   const totalValue = quotations.reduce((s, q) => s + n0(q.amount), 0)
@@ -200,7 +221,8 @@ export default function Quotations() {
                         <Act onClick={() => setPreview(q)} tone="slate" icon={FileText}>PDF</Act>
                         <Act onClick={() => openRevisions(q)} tone="slate" icon={History} loading={busy === q.id}>Revisions</Act>
                         {canEdit && !locked && <Act onClick={() => openBuilder(q)} icon={Pencil} loading={busy === q.id}>{q.status === 'Draft' ? 'Build' : 'Edit'}</Act>}
-                        {canEdit && q.status === 'Draft' && <Act onClick={() => run(q.id, () => sendQuotation(q.id))} tone="emerald" icon={Send}>Send</Act>}
+                        {canSend && q.status === 'Draft' && <Act onClick={() => run(q.id, () => sendQuotation(q.id))} tone="emerald" icon={Send}>Send</Act>}
+                        {canSend && !locked && q.status !== 'Lost' && <Act onClick={() => markLost(q)} tone="rose" icon={X} loading={busy === q.id}>Lost</Act>}
                         {pending && canApprove && (
                           <>
                             <Act onClick={() => run(q.id, () => approveQuotation(q.id))} tone="emerald" icon={ThumbsUp} loading={busy === q.id}>Approve</Act>
@@ -222,7 +244,7 @@ export default function Quotations() {
 
       {builder && (
         <Builder
-          builder={builder} setH={setH} items={items} customers={customers} projects={projects}
+          builder={builder} setH={setH} items={items} customers={customers} projects={projectOpts}
           currencies={settings?.currencies || []} addLine={addLine} setLine={setLine} removeLine={removeLine}
           totals={{ net: bNet, discAmt: bDiscAmt, vat: bVat, total: bTotal, gp: bGp, cost: bCost, vatRate }}
           showFin={showFin} onClose={() => setBuilder(null)} onSave={saveBuilder} onRevise={revise}
@@ -262,7 +284,8 @@ function Builder({ builder, setH, items, customers, projects, currencies, addLin
   }
 
   const custOpts = ['', ...new Set((customers || []).map((c) => c.name).filter(Boolean))]
-  const projOpts = [{ value: '', label: '— none —' }, ...(projects || []).map((p) => ({ value: p.id, label: p.name || p.ref }))]
+  // options come from /lookups/projects → { id, ref, name, label } (readable by Sales)
+  const projOpts = [{ value: '', label: '— none —' }, ...(projects || []).map((p) => ({ value: p.id, label: p.label || [p.ref, p.name].filter(Boolean).join(' · ') }))]
   const currOpts = (currencies?.length ? currencies.map((c) => c.code) : ['SAR'])
 
   return (

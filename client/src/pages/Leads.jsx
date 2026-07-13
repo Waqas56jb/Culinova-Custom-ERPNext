@@ -19,7 +19,9 @@ export default function Leads() {
   )
   const total = leads.length
   const openCount = leads.filter((l) => l.status === 'Open').length
-  const converted = leads.filter((l) => l.status === 'Converted').length
+  // converting a lead sets its status to 'Opportunity' (see convertLead) — counting only 'Converted'
+  // meant this KPI could never be anything but 0
+  const converted = leads.filter((l) => ['Opportunity', 'Converted'].includes(l.status)).length
   const conversion = total ? Math.round((converted / total) * 100) : 0
 
   return (
@@ -74,7 +76,7 @@ export default function Leads() {
             <tbody>
               {rows.map((l) => (
                 <tr key={l.id} className="group hover:bg-slate-50/60">
-                  <td className="td font-semibold text-brand-600">{l.id}</td>
+                  <td className="td font-semibold text-brand-600">{l.ref || l.number || '—'}</td>
                   <td className="td">
                     <div className="flex items-center gap-2.5">
                       <span className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-navy-700 to-brand-600 text-[11px] font-bold text-white">
