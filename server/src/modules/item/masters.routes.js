@@ -3,6 +3,7 @@ import { supabase } from '../../config/supabase.js'
 import { authRequired } from '../../middleware/auth.js'
 import { authorize, redactFinancials, internalOnly } from '../../middleware/rbac.js'
 import { asyncWrap } from '../../middleware/error.js'
+import { eosOnlyItemCreation, eosOnlyItemDeletion, itemsComeFromEosOnly, EOS_ONLY_EDIT_MESSAGE } from '../../core/policy.js'
 
 const r = Router()
 // Item Master reference data (groups, brands, UOMs, families, attributes) is shared across internal
@@ -15,16 +16,16 @@ r.get('/item-groups', authRequired, asyncWrap(async (req, res) => {
   if (error) throw error
   res.json(data || [])
 }))
-r.post('/item-groups', authRequired, authorize('warehouse', 'create'), asyncWrap(async (req, res) => {
+r.post('/item-groups', authRequired, authorize('warehouse', 'create'), eosOnlyItemCreation, asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('item_groups').insert({ item_group_name: req.body.item_group_name, parent_item_group: req.body.parent_item_group || null, is_group: !!req.body.is_group }).select().single()
   if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: error.message })
   res.status(201).json(data)
 }))
-r.patch('/item-groups/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async (req, res) => {
+r.patch('/item-groups/:id', authRequired, authorize('warehouse', 'update'), eosOnlyItemCreation, asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('item_groups').update(req.body).eq('id', req.params.id).select().single()
   if (error) throw error; res.json(data)
 }))
-r.delete('/item-groups/:id', authRequired, authorize('warehouse', 'delete'), asyncWrap(async (req, res) => {
+r.delete('/item-groups/:id', authRequired, authorize('warehouse', 'delete'), eosOnlyItemDeletion, asyncWrap(async (req, res) => {
   await supabase.from('item_groups').delete().eq('id', req.params.id); res.json({ ok: true })
 }))
 
@@ -36,19 +37,30 @@ r.get('/brands', authRequired, asyncWrap(async (req, res) => {
   if (error) throw error
   res.json(redactFinancials(req.user.role, data || []))
 }))
-r.post('/brands', authRequired, authorize('warehouse', 'create'), asyncWrap(async (req, res) => {
+r.post('/brands', authRequired, authorize('warehouse', 'create'), eosOnlyItemCreation, asyncWrap(async (req, res) => {
   const b = req.body
   const { data, error } = await supabase.from('brands').insert({ brand: b.brand, description: b.description || null, currency: b.currency || 'SAR', exchange_factor: Number(b.exchange_factor) || 1, price_factor: Number(b.price_factor) || 1, country_of_origin: b.country_of_origin || null, country_of_purchase: b.country_of_purchase || null }).select().single()
   if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: error.message })
   res.status(201).json(data)
 }))
+// A brand's IDENTITY belongs to EOS (the EOS import creates it). Only its PRICING factors are the
+// ERP's — EOS carries no prices — so under the EOS policy this route accepts nothing else.
 r.patch('/brands/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async (req, res) => {
+  const PRICING = ['currency', 'exchange_factor', 'price_factor']
+  const IDENTITY = ['description', 'country_of_origin', 'country_of_purchase']
+  const eosOwns = await itemsComeFromEosOnly()
+  const editable = eosOwns ? PRICING : [...PRICING, ...IDENTITY]
+
+  const rejected = Object.keys(req.body || {}).filter((f) => !editable.includes(f) && [...PRICING, ...IDENTITY, 'brand'].includes(f))
+  if (rejected.length) return res.status(403).json({ error: `${EOS_ONLY_EDIT_MESSAGE} Rejected: ${rejected.join(', ')}.`, blocked: rejected, source: 'EOS' })
+
   const patch = {}
-  for (const f of ['description', 'currency', 'exchange_factor', 'price_factor', 'country_of_origin', 'country_of_purchase']) if (req.body[f] != null) patch[f] = req.body[f]
+  for (const f of editable) if (req.body[f] != null) patch[f] = req.body[f]
+  if (!Object.keys(patch).length) return res.status(422).json({ error: 'Nothing to update. Only pricing factors (currency, exchange factor, price factor) are set in the ERP.' })
   const { data, error } = await supabase.from('brands').update(patch).eq('id', req.params.id).select().single()
   if (error) throw error; res.json(data)
 }))
-r.delete('/brands/:id', authRequired, authorize('warehouse', 'delete'), asyncWrap(async (req, res) => {
+r.delete('/brands/:id', authRequired, authorize('warehouse', 'delete'), eosOnlyItemDeletion, asyncWrap(async (req, res) => {
   await supabase.from('brands').delete().eq('id', req.params.id); res.json({ ok: true })
 }))
 
@@ -57,16 +69,16 @@ r.get('/uoms', authRequired, asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('uoms').select('*').order('name')
   if (error) throw error; res.json(data || [])
 }))
-r.post('/uoms', authRequired, authorize('warehouse', 'create'), asyncWrap(async (req, res) => {
+r.post('/uoms', authRequired, authorize('warehouse', 'create'), eosOnlyItemCreation, asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('uoms').insert({ name: req.body.name, symbol: req.body.symbol || null, is_active: req.body.is_active ?? true }).select().single()
   if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: error.message })
   res.status(201).json(data)
 }))
-r.patch('/uoms/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async (req, res) => {
+r.patch('/uoms/:id', authRequired, authorize('warehouse', 'update'), eosOnlyItemCreation, asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('uoms').update(req.body).eq('id', req.params.id).select().single()
   if (error) throw error; res.json(data)
 }))
-r.delete('/uoms/:id', authRequired, authorize('warehouse', 'delete'), asyncWrap(async (req, res) => {
+r.delete('/uoms/:id', authRequired, authorize('warehouse', 'delete'), eosOnlyItemDeletion, asyncWrap(async (req, res) => {
   await supabase.from('uoms').delete().eq('id', req.params.id); res.json({ ok: true })
 }))
 
@@ -75,17 +87,17 @@ r.get('/product-families', authRequired, asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('product_families').select('*').order('name')
   if (error) throw error; res.json(data || [])
 }))
-r.post('/product-families', authRequired, authorize('warehouse', 'create'), asyncWrap(async (req, res) => {
+r.post('/product-families', authRequired, authorize('warehouse', 'create'), eosOnlyItemCreation, asyncWrap(async (req, res) => {
   const b = req.body
   const { data, error } = await supabase.from('product_families').insert({ name: b.name, category: b.category || null, sub_category: b.sub_category || null, datasheet_url: b.datasheet_url || null, image_url: b.image_url || null, specs: b.specs || null }).select().single()
   if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: error.message })
   res.status(201).json(data)
 }))
-r.patch('/product-families/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async (req, res) => {
+r.patch('/product-families/:id', authRequired, authorize('warehouse', 'update'), eosOnlyItemCreation, asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('product_families').update(req.body).eq('id', req.params.id).select().single()
   if (error) throw error; res.json(data)
 }))
-r.delete('/product-families/:id', authRequired, authorize('warehouse', 'delete'), asyncWrap(async (req, res) => {
+r.delete('/product-families/:id', authRequired, authorize('warehouse', 'delete'), eosOnlyItemDeletion, asyncWrap(async (req, res) => {
   await supabase.from('product_families').delete().eq('id', req.params.id); res.json({ ok: true })
 }))
 
@@ -121,7 +133,7 @@ r.get('/item-attributes', authRequired, asyncWrap(async (req, res) => {
   }
   res.json(out)
 }))
-r.post('/item-attributes', authRequired, authorize('warehouse', 'create'), asyncWrap(async (req, res) => {
+r.post('/item-attributes', authRequired, authorize('warehouse', 'create'), eosOnlyItemCreation, asyncWrap(async (req, res) => {
   const { data: a, error } = await supabase.from('item_attributes').insert({ attribute_name: req.body.attribute_name, numeric_values: !!req.body.numeric_values, from_range: req.body.from_range, increment: req.body.increment, to_range: req.body.to_range }).select().single()
   if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: error.message })
   const vals = (req.body.values || []).filter((v) => v && (v.attribute_value || v))

@@ -13,6 +13,14 @@ const MARK = 'ZZVERIFY'
 
 console.log(`\n########  VERIFYING: ${BASE}  ########`)
 
+// CEO rule R2 (14 Jul 2026): items are created ONLY in EOS. This suite predates that rule and drives
+// the ERP's own item-creation path, so it switches the DB policy to 'erp' for its run and restores it
+// at the end. That the switch works is itself proof the policy is a real, DB-driven setting and not
+// hardcoded. The EOS-only enforcement is verified separately in scripts/verify_ceo_rules.mjs.
+const setPolicy = (v) => supabase.from('system_settings').update({ value: v }).eq('key', 'item_creation_source')
+await setPolicy('erp')
+console.log('  (item_creation_source temporarily = erp for this legacy item-creation suite)')
+
 // ---------- AUTH ----------
 section('AUTH & SESSION')
 const A = await login('admin@gmail.com', 'admin@123!')
@@ -138,6 +146,9 @@ console.log(`  cleaned ${cleaned} test items + masters + verify users`)
 const after = await fetch(`${BASE}/items`, { headers: H(A) }).then(j)
 const arr = Array.isArray(after) ? after : (after.items || after.data || [])
 ok(!arr.some((x) => (x.item_name || '').includes(MARK) || (x.model || '').includes(MARK)), 'no test-item residue left')
+
+await setPolicy('eos')   // restore the CEO's rule: items come from EOS only
+console.log('  (item_creation_source restored to eos)')
 
 console.log(`\n########  ${BASE}\n########  RESULT: ${pass} passed, ${fail} failed  ########`)
 if (fail) { console.log('FAILURES:'); fails.forEach((f) => console.log('  -', f)) }

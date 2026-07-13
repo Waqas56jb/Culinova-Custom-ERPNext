@@ -41,8 +41,9 @@ export const resources = {
   'commercial-terms': { table: 'commercial_terms', panel: 'sales' },
   // item version history — written by the EOS import/sync, never edited by hand
   'item-versions': { table: 'item_versions', panel: 'warehouse', orderBy: 'created_at', readOnly: true },
-  // finance
-  invoices: { table: 'invoices', panel: 'finance' },
+  // finance — an invoice raised against a project is what makes projects.billed/collected real
+  // (nothing used to write those columns, so every project reported 0 billed forever)
+  invoices: { table: 'invoices', panel: 'finance', recomputeProject: true },
   payments: { table: 'payments', panel: 'finance' },
   payables: { table: 'payables', panel: 'finance' },
   // site

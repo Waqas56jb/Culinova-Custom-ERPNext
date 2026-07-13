@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react'
-import { Search, Plus, Package, Layers, Tag, Sparkles, Settings2, Database, SlidersHorizontal, Trash2 } from 'lucide-react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import * as XLSX from 'xlsx'
+import { Search, Plus, Package, Layers, Tag, Sparkles, Settings2, Database, SlidersHorizontal, Trash2, RefreshCw, Loader2, Download, CheckCircle2, AlertTriangle, Link2, Inbox, Lock } from 'lucide-react'
 import { PageHeader, Badge, Menu, MenuItem } from '../components/ui.jsx'
 import { Modal, Field, Select } from '../components/Modal.jsx'
 import { sar } from '../data/mockData.js'
@@ -12,9 +13,52 @@ import EosImportModal from '../components/EosImportModal.jsx'
 import ItemView from '../components/ItemView.jsx'
 import ImageLightbox from '../components/ImageLightbox.jsx'
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ITEM MASTER — CEO rule (14 Jul 2026):
+//   "Item Master should show ONLY EOS-approved data. In the Item Master, roles get VIEW/READ access
+//    only. Item data comes only from what the EOS admin has approved. Create, edit, approve, reject
+//    and DELETE all live in EOS — nobody has them in the ERP Item Master."
+//
+// The server enforces it (POST /items · /items/import · /items/:id/variants · DELETE /items/:id → 403;
+// PATCH /items/:id → 403 for ANY item-data field; masters create/edit/delete → 403) and the rule itself
+// lives in the DB (system_settings.item_creation_source), NOT in code. So this page READS the policy
+// from GET /eos/policy — it never hardcodes it. While the policy says 'eos' there is NO create, edit or
+// delete entry point anywhere on this page (a button that only 403s is worse than no button). If the
+// owner ever switches the policy back, those paths reappear on their own.
+//
+// PRICING IS NOT ITEM DATA. EOS carries no prices, so the ERP still owns them — they stay visible here
+// and settable in the Pricing Engine (/stock/pricing). Brand pricing factors + supplier price lists
+// likewise stay editable; only a brand's IDENTITY belongs to EOS.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const fmtWhen = (dt) => dt.toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+function ago(dt) {
+  const s = Math.floor((Date.now() - dt.getTime()) / 1000)
+  if (s < 90) return 'just now'
+  const m = Math.floor(s / 60); if (m < 60) return `${m} min ago`
+  const h = Math.floor(m / 60); if (h < 24) return `${h} h ago`
+  return `${Math.floor(h / 24)} d ago`
+}
+
+// Turn the real /eos/auto-sync/run report into one honest sentence. Zeros everywhere = "Nothing new".
+function syncLine(r) {
+  if (!r) return ''
+  if (r.skipped) return `A sync is already running${r.reason ? ` — ${r.reason}` : ''}.`
+  const moved = (r.imported || 0) + (r.updated || 0) + (r.failed || 0)
+  if (!moved) return `Nothing new — everything is already in sync${r.unchanged ? ` (${r.unchanged} items checked)` : ''}.`
+  const parts = []
+  if (r.imported) parts.push(`Imported ${r.imported}`)
+  if (r.updated) parts.push(`Updated ${r.updated}`)
+  if (r.unchanged) parts.push(`${r.unchanged} unchanged`)
+  if (r.failed) parts.push(`${r.failed} failed`)
+  return parts.join(' · ')
+}
+
 export default function ItemMaster() {
   const d = useData()
+  const dRef = useRef(d); dRef.current = d   // stable handle — the store object changes every 12s
   const { user } = useAuth()
+  // Role gate: who may run the ERP-owned actions at all (sync, EOS import, pricing masters).
   const canEdit = ['Management', 'Stock Manager', 'Stock User'].includes(user?.role) || user?.access_level === 'Full Admin'
   const items = d.items || []
   const [q, setQ] = useState('')
@@ -26,6 +70,80 @@ export default function ItemMaster() {
   const [eos, setEos] = useState(false)
   const [lightbox, setLightbox] = useState(null)
 
+  // ── EOS link state (policy + status) ──
+  const [policy, setPolicy] = useState(null)
+  const [status, setStatus] = useState(null)
+  const [eosErr, setEosErr] = useState('')
+  const [syncing, setSyncing] = useState(false)
+  const [syncReport, setSyncReport] = useState(null)
+  const [syncErr, setSyncErr] = useState('')
+
+  // Read BOTH endpoints; allSettled so one failure never hides the other, and every failure is SURFACED.
+  // (Both are readable by EVERY internal role now — a Project Manager sees the page cleanly.)
+  const loadEos = useCallback(async () => {
+    const [s, p] = await Promise.allSettled([dRef.current.resList('eos/status'), dRef.current.resList('eos/policy')])
+    if (s.status === 'fulfilled') setStatus(s.value)
+    if (p.status === 'fulfilled') setPolicy(p.value)
+    else if (s.status === 'fulfilled' && s.value?.policy) setPolicy(s.value.policy)   // status carries the policy too
+    const problems = [
+      s.status === 'rejected' ? `status: ${s.reason?.message || s.reason}` : '',
+      p.status === 'rejected' ? `policy: ${p.reason?.message || p.reason}` : '',
+    ].filter(Boolean)
+    setEosErr(problems.length ? `Could not read the EOS link — ${problems.join(' · ')}` : '')
+  }, [])
+
+  useEffect(() => { loadEos() }, [loadEos])
+
+  // The SERVER policy decides, not this file. Unknown policy → assume the CEO's rule (the server enforces
+  // it anyway, so showing a create/edit button would only produce a 403).
+  const source = policy?.item_creation_source || 'eos'
+  const eosOnly = source === 'eos'
+  // The ONE flag that governs every item-DATA mutation affordance on this page: create, advanced form,
+  // bulk import, edit, delete. Under the live 'eos' policy it is false for EVERY role, Management included.
+  const erpOwnsItems = canEdit && !eosOnly
+  const autoOn = (policy?.eos_auto_sync || 'on').toLowerCase() === 'on'
+  const cadence = Number(policy?.eos_auto_sync_minutes) || 30
+  const reachable = status?.eos_reachable !== false
+
+  const syncTimes = [status?.last_sync, status?.last_auto_sync?.finished]
+    .filter(Boolean).map((t) => new Date(t)).filter((t) => !Number.isNaN(t.getTime()))
+  const lastAt = syncTimes.length ? new Date(Math.max(...syncTimes.map((t) => t.getTime()))) : null
+
+  // Force a sync pass now — real report, real refresh, errors surfaced.
+  const runSync = async () => {
+    setSyncing(true); setSyncErr(''); setSyncReport(null)
+    try {
+      const r = await dRef.current.resAdd('eos/auto-sync/run', {})
+      setSyncReport(r)
+      await dRef.current.loadAll()   // newly-imported / updated items land in every panel
+      await loadEos()                // refresh last-sync time + pending count
+    } catch (e) {
+      setSyncErr(e?.message || 'Sync failed')
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  // Export stays available to everyone — it reads, it never creates. (Cost columns are server-redacted
+  // per role, so whatever the user cannot see on screen is not in their file either.)
+  const exportItems = () => {
+    try {
+      const data = items.map((i) => ({
+        'Item Code': i.item_code, 'Item Name': i.item_name, 'Item Group': i.category || i.item_group, 'Sub Item Group': i.sub_category,
+        'Product Family': i.product_family, 'Brand': i.brand, 'Model No.': i.model, 'Default Unit of Measure': i.stock_uom,
+        'Dimensions': i.dimensions || '', 'Power Type': i.power_type || '', 'Country of Origin': i.country_of_origin || '',
+        'Currency': i.currency || '', 'Supplier Net Price': i.supplier_price ?? '', 'Landed Cost': i.cost ?? '',
+        'Add Margin %': i.add_margin_pct ?? '', 'Selling Price': i.standard_rate ?? '', 'GP %': i.gp_percent ?? '',
+        'EOS Linked': i.eos_entry_id ? 'Yes' : 'No', 'Status': i.disabled ? 'Disabled' : 'Active',
+      }))
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.length ? data : [{ 'Item Code': '' }]), 'Item Master')
+      XLSX.writeFile(wb, `Culinova-Item-Master-${new Date().toISOString().slice(0, 10)}.xlsx`)
+    } catch (e) {
+      setEosErr(`Export failed — ${e?.message || 'unknown error'}`)
+    }
+  }
+
   const groups = ['All', ...new Set(items.map((i) => i.category).filter(Boolean))]
   const rows = items.filter((i) => (g === 'All' || i.category === g) && `${i.item_code} ${i.item_name} ${i.brand || ''} ${i.product_family || ''}`.toLowerCase().includes(q.toLowerCase()))
   const seeCost = items.some((i) => i.cost != null)
@@ -34,17 +152,88 @@ export default function ItemMaster() {
 
   return (
     <>
-      <PageHeader title="Item Master" subtitle="Central catalogue — created by Warehouse, used by every panel">
-        {canEdit && <ItemImportExport />}
-        {canEdit && <button className="btn-ghost whitespace-nowrap" onClick={() => setEos(true)}><Database size={16} /> Import from EOS</button>}
+      <PageHeader title="Item Master" subtitle={eosOnly ? 'View only — synchronised from CULINOVA EOS, the single source of truth for item data' : 'Central catalogue — used by every panel'}>
+        {/* The bulk Import/Export menu carries an IMPORT entry — it only exists while the ERP may create items. */}
+        {erpOwnsItems && <ItemImportExport />}
+        {/* Export always stays: it reads, it never writes. */}
+        {!erpOwnsItems && (
+          <button className="btn-ghost whitespace-nowrap" onClick={exportItems}><Download size={16} /> Export</button>
+        )}
         {canEdit && (
           <Menu label="More" icon={Settings2}>
-            <MenuItem icon={Settings2} onClick={() => setMasters(true)}>Masters (brands · families · price lists)</MenuItem>
-            <MenuItem icon={SlidersHorizontal} onClick={() => setForm({ open: true, id: null })}>Advanced item form</MenuItem>
+            <MenuItem icon={Settings2} onClick={() => setMasters(true)}>
+              {eosOnly ? 'Masters (brand factors · price lists)' : 'Masters (brands · families · price lists)'}
+            </MenuItem>
+            {erpOwnsItems && <MenuItem icon={SlidersHorizontal} onClick={() => setForm({ open: true, id: null })}>Advanced item form</MenuItem>}
           </Menu>
         )}
-        {canEdit && <button className="btn-primary whitespace-nowrap" onClick={() => setQuick(true)}><Plus size={16} /> New Item</button>}
+        {erpOwnsItems && <button className="btn-primary whitespace-nowrap" onClick={() => setQuick(true)}><Plus size={16} /> New Item</button>}
       </PageHeader>
+
+      {/* ── THE HEADLINE: the EOS relationship. Calm, factual — not an error. ── */}
+      <div className={`card mb-4 overflow-hidden animate-fade-up ${reachable ? '' : 'ring-1 ring-amber-200'}`}>
+        <div className={`flex flex-col gap-3 p-4 sm:flex-row sm:items-center ${reachable ? 'bg-gradient-to-r from-brand-50/70 to-transparent' : 'bg-amber-50/60'}`}>
+          <span className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl text-white shadow-soft ${reachable ? 'bg-brand-500' : 'bg-amber-500'}`}>
+            {reachable ? <Database size={20} /> : <AlertTriangle size={20} />}
+          </span>
+          <div className="min-w-0 flex-1">
+            <h3 className="flex flex-wrap items-center gap-2 font-display text-[15px] font-bold text-ink">
+              {eosOnly ? 'Item data is owned by CULINOVA EOS — the Item Master is read-only here' : `Item creation policy: ${source} — EOS sync stays active`}
+              {eosOnly && <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500"><Lock size={10} /> View only</span>}
+            </h3>
+            <p className="mt-0.5 text-xs leading-relaxed text-muted">
+              {eosOnly
+                ? <>Create, edit, approve, reject and delete all happen in EOS — approved items sync here. </>
+                : <>The owner has allowed items to be created in the ERP, so the create and edit actions are available again. </>}
+              {autoOn
+                ? <>Approved items sync in automatically <b className="text-slate-600">every {cadence} min</b>.</>
+                : <span className="font-semibold text-amber-600">Automatic sync is switched OFF — use “Sync now”.</span>}
+              {lastAt && <> Last sync <b className="text-slate-600" title={fmtWhen(lastAt)}>{ago(lastAt)}</b> ({fmtWhen(lastAt)}).</>}
+              {!lastAt && status && <> No sync has run yet.</>}
+              {!reachable && <span className="font-semibold text-amber-700"> EOS is unreachable — the last known data is shown.</span>}
+              {eosOnly && <> Pricing is not item data — set it in the <b className="text-slate-600">Pricing Engine</b>.</>}
+            </p>
+          </div>
+          {canEdit && (
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              <button className="btn-ghost whitespace-nowrap" disabled={syncing} onClick={runSync} title="Force an EOS → Item Master sync pass right now">
+                {syncing ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />} {syncing ? 'Syncing…' : 'Sync now'}
+              </button>
+              <button className="btn-primary whitespace-nowrap" onClick={() => setEos(true)}>
+                <Database size={16} /> Import from EOS
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* status strip — real numbers from GET /eos/status */}
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5 border-t border-slate-100 px-4 py-2.5">
+          <Strip icon={Package} label="Total items" value={status?.total_items ?? items.length} tone="text-brand-600" />
+          <Strip icon={Link2} label="Linked to EOS" value={status?.eos_linked ?? items.filter((i) => i.eos_entry_id).length} tone="text-emerald-600" />
+          <Strip icon={Inbox} label="Approved & pending import" value={status?.pending_approved ?? '—'} tone={status?.pending_approved ? 'text-amber-600' : 'text-slate-400'}
+            hint={!reachable ? 'EOS unreachable' : status?.total_approved != null ? `${status.total_approved} approved in EOS` : ''} />
+        </div>
+
+        {(syncReport || syncErr || eosErr) && (
+          <div className="space-y-1.5 border-t border-slate-100 px-4 py-2.5">
+            {syncReport && (
+              <div className={`flex items-start gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold ${syncReport.failed ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-700'}`}>
+                {syncReport.failed ? <AlertTriangle size={13} className="mt-0.5 shrink-0" /> : <CheckCircle2 size={13} className="mt-0.5 shrink-0" />}
+                <span>
+                  {syncLine(syncReport)}
+                  {(syncReport.errors || []).length > 0 && (
+                    <span className="mt-0.5 block font-normal text-rose-600">
+                      {(syncReport.errors || []).map((er, i) => <span key={i} className="block">{er.item_name || er.id || 'EOS'}: {er.error}</span>)}
+                    </span>
+                  )}
+                </span>
+              </div>
+            )}
+            {syncErr && <div className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600">Sync failed — {syncErr}</div>}
+            {eosErr && <div className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600">{eosErr}</div>}
+          </div>
+        )}
+      </div>
 
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Items" value={items.filter((i) => !i.has_variants).length} icon={Package} tone="text-brand-600" />
@@ -95,19 +284,50 @@ export default function ItemMaster() {
                   <td className="td"><Badge tone={i.disabled ? 'red' : 'green'}>{i.disabled ? 'Disabled' : 'Active'}</Badge></td>
                 </tr>
               ))}
-              {rows.length === 0 && <tr><td className="td text-slate-400" colSpan={seeCost ? 9 : 8}>No items yet. Click “New Item” to add one.</td></tr>}
+              {rows.length === 0 && (
+                <tr><td className="td text-slate-400" colSpan={seeCost ? 9 : 8}>
+                  {items.length === 0
+                    ? (eosOnly ? 'No items yet — approve an item in CULINOVA EOS and it will appear here. (It syncs automatically; “Import from EOS” pulls it in immediately.)' : 'No items yet. Click “New Item” to add one.')
+                    : 'No items match this search.'}
+                </td></tr>
+              )}
             </tbody>
           </table>
         </div>
       </div>
 
-      <ItemView open={!!view} itemId={view} canEdit={canEdit} onClose={() => setView(null)} onEdit={() => { setForm({ open: true, id: view }); setView(null) }} />
-      <ItemForm open={form.open} itemId={form.id} onClose={() => setForm({ open: false, id: null })} />
-      <QuickItemForm open={quick} onClose={() => setQuick(false)} />
-      <EosImportModal open={eos} onClose={() => setEos(false)} />
-      <MastersModal open={masters} onClose={() => setMasters(false)} />
+      {/* Read-only detail. onEdit is only wired when the ERP owns items; under the 'eos' policy the
+          modal has no Edit and no Delete at all — it points at the Pricing Engine for prices instead. */}
+      <ItemView
+        open={!!view}
+        itemId={view}
+        canEditData={erpOwnsItems}
+        canPrice={canEdit}
+        eosOwned={eosOnly}
+        onClose={() => setView(null)}
+        onEdit={erpOwnsItems ? () => { setForm({ open: true, id: view }); setView(null) } : undefined}
+      />
+
+      {/* ItemForm / QuickItemForm are NOT deleted — they simply have no route into them while EOS owns
+          item data. They come back the moment the owner switches item_creation_source away from 'eos'. */}
+      {erpOwnsItems && <ItemForm open={form.open} itemId={form.id} onClose={() => setForm({ open: false, id: null })} />}
+      {erpOwnsItems && <QuickItemForm open={quick} onClose={() => setQuick(false)} />}
+
+      <EosImportModal open={eos} onClose={() => setEos(false)} onImported={loadEos} />
+      <MastersModal open={masters} onClose={() => setMasters(false)} eosOwned={eosOnly} />
       <ImageLightbox src={lightbox} onClose={() => setLightbox(null)} />
     </>
+  )
+}
+
+function Strip({ icon: Icon, label, value, tone, hint }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs">
+      <Icon size={14} className={tone} />
+      <b className={`text-sm font-extrabold ${tone}`}>{value}</b>
+      <span className="text-muted">{label}</span>
+      {hint && <span className="text-[10px] text-slate-400">· {hint}</span>}
+    </span>
   )
 }
 
@@ -120,82 +340,200 @@ function Stat({ label, value, icon: Icon, tone }) {
   )
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// MASTERS — mirrors the server exactly.
+//   Under item_creation_source = 'eos':
+//     · brands / product families / units / item groups / attributes  → create·edit·delete are 403.
+//       They are created by the EOS import, so here they are a READ-ONLY reference list.
+//     · a brand's PRICING factors (currency · exchange · price factor) are still PATCHable — EOS
+//       carries no prices, so the ERP owns them. Kept editable.
+//     · supplier price lists are pure pricing → still importable.
+// ─────────────────────────────────────────────────────────────────────────────
+const EOS_NOTE = 'Created in CULINOVA EOS and synced here. To add or change one, do it in EOS.'
 const MTABS = ['Brands', 'Product Families', 'Units', 'Price Lists']
-function MastersModal({ open, onClose }) {
+
+function MastersModal({ open, onClose, eosOwned = true }) {
   const d = useData()
   const [tab, setTab] = useState('Brands')
   const [msg, setMsg] = useState('')
-  const ok = (t) => { setMsg(t); setTimeout(() => setMsg(''), 2500) }
+  const [err, setErr] = useState('')
+  const ok = (t) => { setErr(''); setMsg(t); setTimeout(() => setMsg(''), 2500) }
+  const fail = (e) => { setMsg(''); setErr(e?.message || 'Something went wrong') }
+
   const [br, setBr] = useState({ brand: '', currency: 'SAR', exchange_factor: 1, price_factor: 1, country_of_origin: '', country_of_purchase: '' })
   const [fam, setFam] = useState({ name: '', category: 'Equipment', sub_category: '', datasheet_url: '' })
   const [pl, setPl] = useState({ name: '', brand: '', currency: '', year: '', rows: '' })
   const [uoms, setUoms] = useState([])
   const [uom, setUom] = useState({ name: '', symbol: '' })
-  const loadUoms = () => d.resList('masters/uoms').then((u) => setUoms(Array.isArray(u) ? u : [])).catch(() => setUoms([]))
-  useEffect(() => { if (open) loadUoms() }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
-  const addUom = async () => { if (!uom.name) return; try { await d.resAdd('masters/uoms', uom); setUom({ name: '', symbol: '' }); loadUoms(); ok('Unit added') } catch (e) { alert(e.message) } }
-  const delUom = async (id) => { try { await d.resDelete('masters/uoms', id); loadUoms() } catch (e) { alert(e.message) } }
 
-  const addBrand = async () => { if (!br.brand) return; try { await d.addBrand(br); setBr({ brand: '', currency: 'SAR', exchange_factor: 1, price_factor: 1 }); ok('Brand added') } catch (e) { alert(e.message) } }
-  const addFam = async () => { if (!fam.name) return; try { await d.addProductFamily(fam); setFam({ name: '', category: 'Equipment', sub_category: '', datasheet_url: '' }); ok('Product Family added') } catch (e) { alert(e.message) } }
+  // brand PRICING factors — the one thing the ERP still owns on a brand
+  const [edit, setEdit] = useState(null)          // { id, currency, exchange_factor, price_factor }
+  const [savingBrand, setSavingBrand] = useState(false)
+
+  const loadUoms = useCallback(async () => {
+    try { const u = await d.resList('masters/uoms'); setUoms(Array.isArray(u) ? u : []) }
+    catch (e) { setUoms([]); setErr(`Could not load units — ${e?.message || 'unknown error'}`) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  useEffect(() => { if (open) { setErr(''); setMsg(''); setEdit(null); loadUoms() } }, [open, loadUoms])
+
+  const addUom = async () => { if (!uom.name) return; try { await d.resAdd('masters/uoms', uom); setUom({ name: '', symbol: '' }); await loadUoms(); ok('Unit added') } catch (e) { fail(e) } }
+  const delUom = async (id) => { try { await d.resDelete('masters/uoms', id); await loadUoms(); ok('Unit removed') } catch (e) { fail(e) } }
+  const addBrand = async () => { if (!br.brand) return; try { await d.addBrand(br); setBr({ brand: '', currency: 'SAR', exchange_factor: 1, price_factor: 1, country_of_origin: '', country_of_purchase: '' }); ok('Brand added') } catch (e) { fail(e) } }
+  const addFam = async () => { if (!fam.name) return; try { await d.addProductFamily(fam); setFam({ name: '', category: 'Equipment', sub_category: '', datasheet_url: '' }); ok('Product Family added') } catch (e) { fail(e) } }
+
+  // ALLOWED under the EOS policy — pricing is not item data.
+  const saveFactors = async () => {
+    if (!edit) return
+    setSavingBrand(true)
+    try {
+      await d.updateBrand(edit.id, {
+        currency: edit.currency || 'SAR',
+        exchange_factor: Number(edit.exchange_factor) || 1,
+        price_factor: Number(edit.price_factor) || 1,
+      })
+      setEdit(null)
+      ok('Pricing factors saved — items on this brand are repriced on their next save.')
+    } catch (e) { fail(e) } finally { setSavingBrand(false) }
+  }
+
   const addPL = async () => {
     if (!pl.name) return
     const items = pl.rows.split('\n').map((l) => l.split(/[,\t]/)).filter((c) => c[0] && c[0].trim()).map((c) => ({ model: c[0].trim(), supplier_price: Number((c[1] || '').trim()) || 0 }))
-    try { const r = await d.addPriceList({ name: pl.name, brand: pl.brand, currency: pl.currency, year: pl.year, items }); setPl({ name: '', brand: '', currency: '', year: '', rows: '' }); ok(`Price list added (${r.imported} items)`) } catch (e) { alert(e.message) }
+    try { const r = await d.addPriceList({ name: pl.name, brand: pl.brand, currency: pl.currency, year: pl.year, items }); setPl({ name: '', brand: '', currency: '', year: '', rows: '' }); ok(`Price list added (${r.imported} items)`) } catch (e) { fail(e) }
   }
 
   return (
-    <Modal open={open} onClose={onClose} size="lg" title="Item Masters" subtitle="Brands (factors) · Product Families · Supplier Price Lists"
+    <Modal open={open} onClose={onClose} size="lg" title="Item Masters"
+      subtitle={eosOwned ? 'Brand pricing factors · Supplier price lists — everything else is owned by EOS' : 'Brands (factors) · Product Families · Supplier Price Lists'}
       footer={<button className="btn-ghost" onClick={onClose}>Close</button>}>
       <div className="-mt-1 mb-3 flex gap-1.5 border-b border-slate-100 pb-3">
         {MTABS.map((t) => <button key={t} onClick={() => setTab(t)} className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${tab === t ? 'bg-brand-500 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>{t}</button>)}
       </div>
       {msg && <div className="mb-2 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-600">{msg}</div>}
+      {err && <div className="mb-2 rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600">{err}</div>}
 
       {tab === 'Brands' && (
         <div className="space-y-3">
-          <div className="grid gap-2 sm:grid-cols-2">
-            <Field label="Brand Name" value={br.brand} onChange={(e) => setBr((s) => ({ ...s, brand: e.target.value }))} />
-            <Field label="Currency" value={br.currency} onChange={(e) => setBr((s) => ({ ...s, currency: e.target.value }))} placeholder="EUR" />
-            <Field label="Exchange Factor" type="number" value={br.exchange_factor} onChange={(e) => setBr((s) => ({ ...s, exchange_factor: e.target.value }))} hint="supplier price × this = landed cost" />
-            <Field label="Price Factor" type="number" value={br.price_factor} onChange={(e) => setBr((s) => ({ ...s, price_factor: e.target.value }))} hint="landed × this = selling price" />
-            <Field label="Country of Origin" value={br.country_of_origin} onChange={(e) => setBr((s) => ({ ...s, country_of_origin: e.target.value }))} placeholder="Italy" />
-            <Field label="Country of Purchase" value={br.country_of_purchase} onChange={(e) => setBr((s) => ({ ...s, country_of_purchase: e.target.value }))} placeholder="KSA" />
+          {eosOwned ? (
+            <p className="flex items-start gap-1.5 rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-muted">
+              <Lock size={12} className="mt-0.5 shrink-0 text-slate-400" />
+              <span>Brand names come from EOS. Only the <b className="text-slate-600">pricing factors</b> below are set in the ERP — EOS carries no prices.</span>
+            </p>
+          ) : (
+            <>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Field label="Brand Name" value={br.brand} onChange={(e) => setBr((s) => ({ ...s, brand: e.target.value }))} />
+                <Field label="Currency" value={br.currency} onChange={(e) => setBr((s) => ({ ...s, currency: e.target.value }))} placeholder="EUR" />
+                <Field label="Exchange Factor" type="number" value={br.exchange_factor} onChange={(e) => setBr((s) => ({ ...s, exchange_factor: e.target.value }))} hint="supplier price × this = landed cost" />
+                <Field label="Price Factor" type="number" value={br.price_factor} onChange={(e) => setBr((s) => ({ ...s, price_factor: e.target.value }))} hint="landed × this = selling price" />
+                <Field label="Country of Origin" value={br.country_of_origin} onChange={(e) => setBr((s) => ({ ...s, country_of_origin: e.target.value }))} placeholder="Italy" />
+                <Field label="Country of Purchase" value={br.country_of_purchase} onChange={(e) => setBr((s) => ({ ...s, country_of_purchase: e.target.value }))} placeholder="KSA" />
+              </div>
+              <button className="btn-primary !py-2" onClick={addBrand}>Add Brand</button>
+            </>
+          )}
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead><tr className="bg-slate-50/60">
+                <th className="th">Brand</th><th className="th">Currency</th><th className="th">Exchange</th><th className="th">Price Factor</th><th className="th"></th>
+              </tr></thead>
+              <tbody>
+                {(d.brands || []).map((b) => {
+                  const on = edit?.id === b.id
+                  return (
+                    <tr key={b.id}>
+                      <td className="td font-medium text-ink">{b.brand}</td>
+                      {on ? (
+                        <>
+                          <td className="td"><input value={edit.currency} onChange={(e) => setEdit((s) => ({ ...s, currency: e.target.value }))} className="w-20 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs outline-none focus:border-brand-400" /></td>
+                          <td className="td"><input type="number" step="0.0001" value={edit.exchange_factor} onChange={(e) => setEdit((s) => ({ ...s, exchange_factor: e.target.value }))} className="w-24 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs outline-none focus:border-brand-400" /></td>
+                          <td className="td"><input type="number" step="0.0001" value={edit.price_factor} onChange={(e) => setEdit((s) => ({ ...s, price_factor: e.target.value }))} className="w-24 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs outline-none focus:border-brand-400" /></td>
+                          <td className="td">
+                            <div className="flex gap-1.5">
+                              <button className="btn-primary !px-2.5 !py-1 !text-xs" disabled={savingBrand} onClick={saveFactors}>{savingBrand ? <Loader2 size={12} className="animate-spin" /> : null} Save</button>
+                              <button className="btn-ghost !px-2.5 !py-1 !text-xs" onClick={() => setEdit(null)}>Cancel</button>
+                            </div>
+                          </td>
+                        </>
+                      ) : (
+                        <>
+                          <td className="td">{b.currency || '—'}</td>
+                          <td className="td">{b.exchange_factor ?? '—'}</td>
+                          <td className="td">{b.price_factor ?? '—'}</td>
+                          <td className="td">
+                            <button className="text-xs font-semibold text-brand-600 hover:underline"
+                              onClick={() => setEdit({ id: b.id, currency: b.currency || 'SAR', exchange_factor: b.exchange_factor ?? 1, price_factor: b.price_factor ?? 1 })}>
+                              Edit factors
+                            </button>
+                          </td>
+                        </>
+                      )}
+                    </tr>
+                  )
+                })}
+                {(d.brands || []).length === 0 && (
+                  <tr><td className="td text-slate-400" colSpan={5}>{eosOwned ? 'No brands yet — they arrive with the first approved EOS item.' : 'No brands yet.'}</td></tr>
+                )}
+              </tbody>
+            </table>
           </div>
-          <button className="btn-primary !py-2" onClick={addBrand}>Add Brand</button>
-          <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="bg-slate-50/60"><th className="th">Brand</th><th className="th">Currency</th><th className="th">Exchange</th><th className="th">Price Factor</th></tr></thead>
-            <tbody>{(d.brands || []).map((b) => <tr key={b.id}><td className="td font-medium text-ink">{b.brand}</td><td className="td">{b.currency}</td><td className="td">{b.exchange_factor}</td><td className="td">{b.price_factor}</td></tr>)}</tbody></table></div>
         </div>
       )}
 
       {tab === 'Product Families' && (
         <div className="space-y-3">
-          <div className="grid gap-2 sm:grid-cols-2">
-            <Field label="Family Name" value={fam.name} onChange={(e) => setFam((s) => ({ ...s, name: e.target.value }))} placeholder="4 Burner Gas Range" />
-            <Select label="Category" value={fam.category} onChange={(e) => setFam((s) => ({ ...s, category: e.target.value }))} options={['Equipment', 'Custom Fabrication']} />
-            <Field label="Sub Category" value={fam.sub_category} onChange={(e) => setFam((s) => ({ ...s, sub_category: e.target.value }))} placeholder="Cooking Equipment" />
-            <Field label="Datasheet URL (custom fab)" value={fam.datasheet_url} onChange={(e) => setFam((s) => ({ ...s, datasheet_url: e.target.value }))} placeholder="https://…" />
+          {eosOwned ? (
+            <p className="flex items-start gap-1.5 rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-muted">
+              <Lock size={12} className="mt-0.5 shrink-0 text-slate-400" /> <span>{EOS_NOTE}</span>
+            </p>
+          ) : (
+            <>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Field label="Family Name" value={fam.name} onChange={(e) => setFam((s) => ({ ...s, name: e.target.value }))} placeholder="4 Burner Gas Range" />
+                <Select label="Category" value={fam.category} onChange={(e) => setFam((s) => ({ ...s, category: e.target.value }))} options={['Equipment', 'Custom Fabrication']} />
+                <Field label="Sub Category" value={fam.sub_category} onChange={(e) => setFam((s) => ({ ...s, sub_category: e.target.value }))} placeholder="Cooking Equipment" />
+                <Field label="Datasheet URL (custom fab)" value={fam.datasheet_url} onChange={(e) => setFam((s) => ({ ...s, datasheet_url: e.target.value }))} placeholder="https://…" />
+              </div>
+              <button className="btn-primary !py-2" onClick={addFam}>Add Product Family</button>
+            </>
+          )}
+          <div className="flex flex-wrap gap-1.5">
+            {(d.productFamilies || []).map((f) => <span key={f.id} className="rounded-lg bg-slate-100 px-2 py-1 text-[11px]">{f.name} <span className="text-slate-400">· {f.category}</span></span>)}
+            {(d.productFamilies || []).length === 0 && <span className="text-xs text-slate-400">{eosOwned ? 'No product families yet — they arrive with the first approved EOS item.' : 'No product families yet.'}</span>}
           </div>
-          <button className="btn-primary !py-2" onClick={addFam}>Add Product Family</button>
-          <div className="flex flex-wrap gap-1.5">{(d.productFamilies || []).map((f) => <span key={f.id} className="rounded-lg bg-slate-100 px-2 py-1 text-[11px]">{f.name} <span className="text-slate-400">· {f.category}</span></span>)}</div>
         </div>
       )}
 
       {tab === 'Units' && (
         <div className="space-y-3">
-          <div className="grid gap-2 sm:grid-cols-2">
-            <Field label="Unit Name" value={uom.name} onChange={(e) => setUom((s) => ({ ...s, name: e.target.value }))} placeholder="e.g. Kilogram" />
-            <Field label="Symbol" value={uom.symbol} onChange={(e) => setUom((s) => ({ ...s, symbol: e.target.value }))} placeholder="e.g. kg" />
+          {eosOwned ? (
+            <p className="flex items-start gap-1.5 rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-muted">
+              <Lock size={12} className="mt-0.5 shrink-0 text-slate-400" /> <span>{EOS_NOTE}</span>
+            </p>
+          ) : (
+            <>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Field label="Unit Name" value={uom.name} onChange={(e) => setUom((s) => ({ ...s, name: e.target.value }))} placeholder="e.g. Kilogram" />
+                <Field label="Symbol" value={uom.symbol} onChange={(e) => setUom((s) => ({ ...s, symbol: e.target.value }))} placeholder="e.g. kg" />
+              </div>
+              <button className="btn-primary !py-2" onClick={addUom}>Add Unit</button>
+            </>
+          )}
+          <div className="flex flex-wrap gap-1.5">
+            {uoms.map((u) => (
+              <span key={u.id} className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2 py-1 text-[11px]">
+                {u.name}{u.symbol ? ` · ${u.symbol}` : ''}
+                {!eosOwned && <button onClick={() => delUom(u.id)} className="text-slate-400 hover:text-rose-500"><Trash2 size={11} /></button>}
+              </span>
+            ))}
+            {uoms.length === 0 && <span className="text-xs text-slate-400">No units yet.</span>}
           </div>
-          <button className="btn-primary !py-2" onClick={addUom}>Add Unit</button>
-          <div className="flex flex-wrap gap-1.5">{uoms.map((u) => (
-            <span key={u.id} className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2 py-1 text-[11px]">{u.name}{u.symbol ? ` · ${u.symbol}` : ''}
-              <button onClick={() => delUom(u.id)} className="text-slate-400 hover:text-rose-500"><Trash2 size={11} /></button>
-            </span>
-          ))}</div>
         </div>
       )}
 
+      {/* Supplier price lists are PRICING — the ERP owns them under every policy. */}
       {tab === 'Price Lists' && (
         <div className="space-y-3">
           <div className="grid gap-2 sm:grid-cols-2">

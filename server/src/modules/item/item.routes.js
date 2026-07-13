@@ -8,6 +8,7 @@ import { logAudit } from '../../core/audit.js'
 import { resolveItemAuto, getBrand, supplierPriceFor } from '../../core/itempricing.js'
 import { priceItem, persistable } from '../../core/pricing.js'
 import { stripEosOwned, recordVersion } from '../../core/eosfields.js'
+import { eosOnlyItemCreation, eosOnlyItemDeletion, itemsComeFromEosOnly, stripErpOwned, EOS_ONLY_EDIT_MESSAGE } from '../../core/policy.js'
 
 // Resolve an item's pricing inputs (brand factors + price-list supplier price are the fallbacks the
 // CEO's chain relies on), then run THE pricing chain (core/pricing.js) over the merged item.
@@ -115,7 +116,7 @@ r.get('/:id/pricing-history', authRequired, asyncWrap(async (req, res) => {
 }))
 
 // ── CREATE (Item Manager / Warehouse) — naming, default UOM, auto Item Price ──
-r.post('/', authRequired, authorize('warehouse', 'create'), asyncWrap(async (req, res) => {
+r.post('/', authRequired, authorize('warehouse', 'create'), eosOnlyItemCreation, asyncWrap(async (req, res) => {
   const p = req.body
   const item_code = (p.item_code || p.code || '').trim() || num()
   // (13) duplicate prevention by Brand + Model
@@ -165,9 +166,24 @@ r.patch('/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async 
   const p = req.body
   const { data: cur } = await supabase.from('items').select('*').eq('id', req.params.id).single()
   if (!cur) return res.status(404).json({ error: 'Item not found' })
-  // EOS owns engineering data: once an item is linked to an EOS entry, those fields are read-only in
-  // the ERP (a manual edit would be overwritten by the next sync and split the two systems). Block the
-  // change instead of silently discarding it, so the user understands why. Commercial fields pass through.
+
+  // THE ITEM MASTER IS READ-ONLY IN THE ERP.
+  // EOS owns item data — create, edit, approve, reject and delete all happen there, and the change
+  // syncs here. The ONLY thing the ERP still owns is what EOS does not carry: pricing and stock policy
+  // (set via the Pricing Engine). Anything else is refused with a message that says where to go.
+  if (await itemsComeFromEosOnly()) {
+    const { patch: erpSafe, blocked: notOurs } = stripErpOwned(p)
+    if (notOurs.length) {
+      return res.status(403).json({
+        error: `${EOS_ONLY_EDIT_MESSAGE} Rejected: ${notOurs.join(', ')}.`,
+        blocked: notOurs, source: 'EOS',
+      })
+    }
+    for (const k of Object.keys(p)) if (!(k in erpSafe)) delete p[k]
+  }
+
+  // (belt and braces — also true when the policy is switched back to 'erp': an EOS-linked item's
+  // engineering fields can still never be hand-edited, or the next sync would silently undo it)
   const { patch: allowed, blocked } = stripEosOwned(p, cur)
   if (blocked.length) return res.status(409).json({ error: `These fields come from EOS and are read-only in the ERP: ${blocked.join(', ')}. Edit them in EOS, then Sync.`, blocked })
   req.body = allowed // downstream reads from p, so also narrow the local reference
@@ -208,7 +224,9 @@ r.patch('/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async 
   res.json({ ...item, ...(await loadChildren(item.id)) })
 }))
 
-r.delete('/:id', authRequired, authorize('warehouse', 'delete'), asyncWrap(async (req, res) => {
+// Deleting an item is an EOS decision (reject / remove it there and the ERP follows). Guarded by the
+// same DB policy, so nobody in the ERP — not even Management — can delete from the Item Master.
+r.delete('/:id', authRequired, authorize('warehouse', 'delete'), eosOnlyItemDeletion, asyncWrap(async (req, res) => {
   if (await hasStock(req.params.id)) return res.status(422).json({ error: 'Cannot delete — stock exists. Disable the item instead.' })
   const { error } = await supabase.from('items').delete().eq('id', req.params.id) // children cascade
   if (error) throw error
@@ -217,7 +235,7 @@ r.delete('/:id', authRequired, authorize('warehouse', 'delete'), asyncWrap(async
 }))
 
 // ── VARIANTS: generate child items from a template's attributes (ERPNext) ──
-r.post('/:id/variants', authRequired, authorize('warehouse', 'create'), asyncWrap(async (req, res) => {
+r.post('/:id/variants', authRequired, authorize('warehouse', 'create'), eosOnlyItemCreation, asyncWrap(async (req, res) => {
   const { data: tpl } = await supabase.from('items').select('*').eq('id', req.params.id).single()
   if (!tpl || !tpl.has_variants) return res.status(422).json({ error: 'Not a template item' })
   const combos = req.body.combinations || [] // [{ attributes:[{attribute,attribute_value}], suffix }]
@@ -361,7 +379,7 @@ async function importItemRow(raw, user) {
   }
   return item
 }
-r.post('/import', authRequired, authorize('warehouse', 'create'), asyncWrap(async (req, res) => {
+r.post('/import', authRequired, authorize('warehouse', 'create'), eosOnlyItemCreation, asyncWrap(async (req, res) => {
   const rows = Array.isArray(req.body.rows) ? req.body.rows : []
   if (!rows.length) return res.status(422).json({ error: 'No rows to import' })
   if (rows.length > 5000) return res.status(422).json({ error: 'Max 5000 rows per import' })

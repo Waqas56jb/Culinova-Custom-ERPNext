@@ -46,6 +46,24 @@ export function lookupsRouter() {
     supabase.from('warehouses').select('id, code, name, type').order('name').limit(200)
       .then(({ data, error }) => ({ data: (data || []).map((w) => ({ id: w.id, code: w.code, name: w.name, type: w.type, label: [w.code, w.name].filter(Boolean).join(' · ') })), error }))))
 
+  // sales orders → { id, number, customer }. A Project Manager cannot read the sales panel, so without
+  // this the project's originating Sales Order could only ever render as '—'. No money is exposed.
+  r.get('/sales-orders', list('sales-orders', () =>
+    supabase.from('sales_orders').select('id, number, customer, project_id').order('created_at', { ascending: false }).limit(500)
+      .then(({ data, error }) => ({ data: (data || []).map((s) => ({ id: s.id, number: s.number, customer: s.customer, project_id: s.project_id, label: [s.number, s.customer].filter(Boolean).join(' · ') })), error }))))
+
+  // quotations → { id, number, customer, status }. Needed by the PM's "Generate BOQ from Quotation" and
+  // the Cost Sheet's quotation link — both dead for a PM otherwise. Deliberately carries NO money field
+  // (no amount, no cost, no margin) — it is a picker, not a financial read.
+  r.get('/quotations', list('quotations', () =>
+    supabase.from('quotations').select('id, number, customer, status, project_id, created_at').order('created_at', { ascending: false }).limit(500)
+      .then(({ data, error }) => ({ data: (data || []).map((q) => ({ id: q.id, number: q.number, customer: q.customer, status: q.status, project_id: q.project_id, label: [q.number, q.customer].filter(Boolean).join(' · ') })), error }))))
+
+  // internal staff → { id, name, role }. Used to assign a Project Manager / a task assignee.
+  r.get('/team', list('team', () =>
+    supabase.from('users').select('id, name, role, designation').neq('role', 'Customer').order('name').limit(500)
+      .then(({ data, error }) => ({ data: (data || []).map((u) => ({ id: u.id, name: u.name, role: u.role, designation: u.designation, label: `${u.name} · ${u.role}` })), error }))))
+
   return r
 }
 

@@ -1,4 +1,12 @@
 // End-to-end CEO Item Master verification: import (CEO headers) → pricing chain → redaction → masters → cleanup
+//
+// NOTE (CEO rule R2, 14 Jul 2026): items are now created ONLY in EOS. This suite predates that rule and
+// drives the ERP's item-creation path directly, so it temporarily switches the DB policy to 'erp' and
+// restores it at the end. EOS-only enforcement is verified in scripts/verify_ceo_rules.mjs.
+import { supabase } from '../src/config/supabase.js'
+const setPolicy = (v) => supabase.from('system_settings').update({ value: v }).eq('key', 'item_creation_source')
+await setPolicy('erp')
+
 const BASE = process.env.BASE || 'http://localhost:5050/api'
 const j = async (r) => { const t = await r.text(); try { return JSON.parse(t) } catch { return t } }
 const login = async (email, password) => { const r = await fetch(`${BASE}/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, password }) }); const d = await j(r); if (!d.token) throw new Error('login failed ' + email + ': ' + JSON.stringify(d)); return d.token }
@@ -92,6 +100,9 @@ if (it) { await fetch(`${BASE}/items/${it.id}`, { method: 'DELETE', headers: H(a
 if (brRec) { await fetch(`${BASE}/masters/brands/${brRec.id}`, { method: 'DELETE', headers: H(admin) }).then(j).catch(() => {}); console.log('  · deleted CEOBrand (if delete route exists)') }
 const fam = (fams || []).find((f) => f.name === 'Open Burner Range')
 if (fam) { await fetch(`${BASE}/masters/product-families/${fam.id}`, { method: 'DELETE', headers: H(admin) }).then(j).catch(() => {}); console.log('  · deleted test product family') }
+
+await setPolicy('eos')   // restore the CEO's rule: items come from EOS only
+console.log('  · item_creation_source restored to eos')
 
 console.log(`\n═══ RESULT: ${pass} passed, ${fail} failed ═══`)
 process.exit(fail ? 1 : 0)

@@ -1,7 +1,8 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import {
   Plus, AlertTriangle, Pencil, Check, X, ThumbsUp, FileText, Loader2, Search, Trash2,
   History, Send, Package, ClipboardList, Wallet, ScrollText,
+  Boxes, CheckCircle2, ShoppingCart, PackageCheck, Truck,
 } from 'lucide-react'
 import { PageHeader, Badge, statusTone, KpiCard } from '../components/ui.jsx'
 import { Modal, Field, Select, TextArea, Row } from '../components/Modal.jsx'
@@ -32,6 +33,26 @@ const preview = (s, len = 90) => {
 }
 const itemRate = (it) => n0(it.selling_price) || n0(it.selling_rate) || n0(it.standard_rate) || 0
 const itemCost = (it) => (it.landed_cost != null ? n0(it.landed_cost) : it.cost != null ? n0(it.cost) : null)
+const plural = (n) => (n === 1 ? '' : 's')
+
+// CEO rule — STOCK FIRST: "first check the available stock; only after utilising the available stock
+// allow purchasing". The server does the allocation (POST /quotations/check-stock, and it persists the
+// same split on every saved line). These helpers only READ what the server returned — nothing here
+// invents, rounds or guesses a quantity.
+
+// Roll up the split PERSISTED on a saved quotation's lines (quotation_items.from_stock / to_purchase).
+// Lines created before the stock engine existed carry NULLs — in that case we know nothing, and we say
+// nothing (return null) rather than fabricate a "0% stock" chip.
+const stockOf = (q) => {
+  const lines = q?.items || []
+  if (!lines.length) return null
+  if (!lines.every((l) => l.from_stock != null && l.to_purchase != null)) return null
+  const total_qty = lines.reduce((s, l) => s + n0(l.qty), 0)
+  if (total_qty <= 0) return null
+  const from_stock = lines.reduce((s, l) => s + n0(l.from_stock), 0)
+  const to_purchase = lines.reduce((s, l) => s + n0(l.to_purchase), 0)
+  return { total_qty, from_stock, to_purchase, pct: Math.round((from_stock / total_qty) * 100) }
+}
 
 export default function Quotations() {
   const d = useData()
@@ -199,6 +220,7 @@ export default function Quotations() {
               <tr className="bg-slate-50/60">
                 <th className="th">Quotation</th><th className="th">Customer</th><th className="th">Amount (incl. VAT)</th>
                 <th className="th">Disc.</th>{showFin && <th className="th">GP</th>}
+                <th className="th">Stock</th>
                 <th className="th">Valid Till</th><th className="th">Rev.</th><th className="th">Status</th><th className="th">Actions</th>
               </tr>
             </thead>
@@ -206,6 +228,7 @@ export default function Quotations() {
               {quotations.map((q) => {
                 const pending = q.approval === 'Pending'
                 const locked = ['Ordered', 'Lost'].includes(q.status)
+                const st = stockOf(q)
                 return (
                   <tr key={q.id} className="hover:bg-slate-50/60">
                     <td className="td font-semibold text-brand-600">{q.ref}</td>
@@ -213,6 +236,15 @@ export default function Quotations() {
                     <td className="td font-semibold">{sar(q.amount)}</td>
                     <td className="td text-slate-500">{q.discount ? `${q.discount}%` : '—'}</td>
                     {showFin && <td className="td"><span className={`chip ${q.gp < 35 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>{q.gp}%</span></td>}
+                    <td className="td">
+                      {st ? (
+                        <span
+                          title={`${st.from_stock} of ${st.total_qty} unit${plural(st.total_qty)} from stock · ${st.to_purchase} to purchase`}
+                          className={`chip ${st.to_purchase === 0 ? 'bg-emerald-50 text-emerald-600' : st.from_stock === 0 ? 'bg-slate-100 text-slate-600' : 'bg-amber-50 text-amber-700'}`}>
+                          {st.pct}% stock{st.to_purchase > 0 ? ` · buy ${st.to_purchase}` : ''}
+                        </span>
+                      ) : <span className="text-slate-300">—</span>}
+                    </td>
                     <td className="td text-slate-500">{q.valid_till || (q.validity ? `${q.validity} days` : '—')}</td>
                     <td className="td text-slate-400">r{q.revision ?? 0}</td>
                     <td className="td"><Badge tone={statusTone(q.status)}>{q.status}</Badge></td>
@@ -236,7 +268,7 @@ export default function Quotations() {
                   </tr>
                 )
               })}
-              {quotations.length === 0 && <tr><td className="td text-slate-400" colSpan={showFin ? 9 : 8}>No quotations yet. Click “New Quotation” to build one from the Item Master.</td></tr>}
+              {quotations.length === 0 && <tr><td className="td text-slate-400" colSpan={showFin ? 10 : 9}>No quotations yet. Click “New Quotation” to build one from the Item Master.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -260,11 +292,82 @@ export default function Quotations() {
 
 // ── The quotation BUILDER ────────────────────────────────────────────────────
 function Builder({ builder, setH, items, customers, projects, currencies, addLine, setLine, removeLine, totals, showFin, onClose, onSave, onRevise, saving, error }) {
+  const d = useData()
   const [q, setQ] = useState('')
   const [terms, setTerms] = useState([])
   const [pickTerm, setPickTerm] = useState('')
 
   useEffect(() => { api('/quotations/terms').then(setTerms).catch(() => setTerms([])) }, [])
+
+  // ── STOCK FIRST (CEO rule) ────────────────────────────────────────────────
+  // As the quote is composed, ask the server for the live stock-first split. This is a what-if: it
+  // saves nothing. The very same allocation is what the server persists on save, reserves on customer
+  // acceptance and hands to Procurement — so what is shown here IS what will happen.
+  const [stock, setStock] = useState(null)      // { lines, summary, sig } — the server's answer
+  const [checking, setChecking] = useState(false)
+  const [stockErr, setStockErr] = useState('')
+  const [ack, setAck] = useState(false)         // "I understand N units must be purchased"
+  const seqRef = useRef(0)                      // out-of-order guard: only the newest reply may land
+
+  // Only the ITEM SET and the QUANTITIES change the stock position — rate/discount edits must not
+  // re-trigger a check.
+  const sig = useMemo(
+    () => JSON.stringify(builder.lines.map((l) => [l.item_id || null, l.item_name || '', n0(l.qty)])),
+    [builder.lines],
+  )
+
+  useEffect(() => {
+    const items_ = builder.lines.map((l) => ({
+      item_id: l.item_id || null,          // never '' → the server writes this to a uuid column
+      item_name: l.item_name || '',
+      qty: n0(l.qty),
+    }))
+    if (!items_.length) { seqRef.current += 1; setStock(null); setStockErr(''); setChecking(false); return }
+    const seq = ++seqRef.current
+    setChecking(true)
+    const t = setTimeout(async () => {
+      try {
+        const r = await d.resAdd('quotations/check-stock', { items: items_ })  // POST /api/quotations/check-stock
+        if (seq !== seqRef.current) return                                     // a newer request is in flight — drop this reply
+        if (!r || !Array.isArray(r.lines) || !r.summary) throw new Error('Stock check returned an unexpected response')
+        setStock({ ...r, sig })
+        setStockErr('')
+      } catch (e) {
+        if (seq !== seqRef.current) return
+        setStock(null)
+        setStockErr(e.message || 'Could not check stock')                      // surfaced in the panel — never swallowed
+      } finally {
+        if (seq === seqRef.current) setChecking(false)
+      }
+    }, 400)                                                                    // debounced — typing is never blocked
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sig])
+
+  // The answer is only trustworthy for the line set it was computed from.
+  const fresh = !!stock && stock.sig === sig
+  const summary = stock?.summary || null
+  const needsProc = !!summary?.needs_procurement
+  const toBuy = n0(summary?.to_purchase)
+
+  // Any change to the item set / quantities invalidates the acknowledgement the user gave: they
+  // acknowledged a specific shortfall, not this new one. (Rate/discount edits do not change `sig`, so
+  // they do not clear it.)
+  useEffect(() => { setAck(false) }, [sig])
+
+  // 'Stock first', not 'stock only': a quotation that needs purchasing is never blocked — but the
+  // purchase must be deliberate and visible, so it must be acknowledged.
+  const blockedByStock = needsProc && !ack
+
+  // Map a builder line → its allocated line. The server returns one entry per line, in order; if the
+  // shapes ever disagree we show "checking" rather than a badge that might belong to another item.
+  const allocFor = (i, l) => {
+    if (!fresh || !stock.lines || stock.lines.length !== builder.lines.length) return null
+    const s = stock.lines[i]
+    if (!s) return null
+    const same = l.item_id ? s.item_id === l.item_id : s.item_name === l.item_name
+    return same ? s : null
+  }
 
   const results = useMemo(() => {
     const s = q.trim().toLowerCase()
@@ -295,9 +398,17 @@ function Builder({ builder, setH, items, customers, projects, currencies, addLin
       footer={
         <>
           {error && <span className="mr-auto self-center text-xs font-semibold text-rose-600">{error}</span>}
+          {!error && blockedByStock && (
+            <span className="mr-auto self-center text-xs font-semibold text-amber-700">
+              {toBuy} unit{plural(toBuy)} are not in stock — tick the purchase acknowledgement below the totals to save.
+            </span>
+          )}
           {builder.editingId && <button className="btn-ghost" onClick={onRevise} disabled={saving}><History size={15} /> Save Revision</button>}
           <button className="btn-ghost" onClick={onClose} disabled={saving}>Cancel</button>
-          <button className="btn-primary" onClick={onSave} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} {builder.editingId ? 'Save Changes' : 'Create Quotation'}</button>
+          <button className="btn-primary" onClick={onSave} disabled={saving || blockedByStock}
+            title={blockedByStock ? 'Acknowledge the units that must be purchased first' : undefined}>
+            {saving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} {builder.editingId ? 'Save Changes' : 'Create Quotation'}
+          </button>
         </>
       }>
       {/* customer + project */}
@@ -368,6 +479,7 @@ function Builder({ builder, setH, items, customers, projects, currencies, addLin
                           <p className="text-[11px] text-slate-500">{[l.brand, l.model].filter(Boolean).join(' · ')}</p>
                           {preview(l.specifications || l.description, 70) && <p className="mt-0.5 text-[11px] text-slate-400">{preview(l.specifications || l.description, 70)}</p>}
                           {l.datasheet_url && <span className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-semibold text-brand-500"><FileText size={11} /> datasheet</span>}
+                          <div className="mt-1"><StockBadge s={allocFor(i, l)} err={stockErr} /></div>
                         </div>
                       </div>
                     </td>
@@ -400,6 +512,12 @@ function Builder({ builder, setH, items, customers, projects, currencies, addLin
           <TextArea label="Notes / Special Requirements" rows={2} value={builder.notes} onChange={(e) => setH({ notes: e.target.value })} />
         </div>
 
+        <div className="space-y-4">
+        <StockPanel
+          lines={builder.lines.length} summary={fresh ? summary : null} checking={checking || (!!builder.lines.length && !fresh && !stockErr)}
+          err={stockErr} ack={ack} setAck={setAck}
+        />
+
         <div className="rounded-xl border border-slate-200 bg-slate-50/40 p-4">
           <p className="mb-3 text-sm font-bold text-ink">Totals</p>
           <div className="space-y-2 text-sm">
@@ -426,8 +544,111 @@ function Builder({ builder, setH, items, customers, projects, currencies, addLin
           </div>
           <p className="mt-3 text-[11px] text-slate-400">A discount above the item’s cap will be rejected on save. Final figures are recomputed on the server.</p>
         </div>
+        </div>
       </div>
     </Modal>
+  )
+}
+
+// ── STOCK FIRST — per-line badge ─────────────────────────────────────────────
+// Renders ONLY what the server allocated. `s` is null while the check is in flight (or if it failed),
+// and then we say so — we never show a fake zero.
+function StockBadge({ s, err }) {
+  const cls = (tone) => `inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${tone}`
+  if (err) return <span className={cls('bg-rose-50 text-rose-600')}><AlertTriangle size={11} /> Stock unknown — check failed</span>
+  if (!s) return <span className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-400"><Loader2 size={11} className="animate-spin" /> checking stock…</span>
+
+  const lead = s.lead_time_days ? ` · ~${s.lead_time_days} day${plural(s.lead_time_days)} lead time` : ''
+  // no Item-Master link → a one-off / custom fabrication: it has no stock by definition
+  if (!s.stocked_item) return <span className={cls('bg-slate-100 text-slate-600')}><Package size={11} /> Custom item · to purchase</span>
+  if (!(n0(s.qty) > 0)) return <span className={cls('bg-slate-100 text-slate-500')}><Boxes size={11} /> Set a quantity · {n0(s.available)} available</span>
+  if (s.in_stock) return <span className={cls('bg-emerald-50 text-emerald-700')}><CheckCircle2 size={11} /> In stock · {n0(s.available)} available</span>
+  if (s.partial) {
+    return (
+      <span className={cls('bg-amber-50 text-amber-700')}>
+        <PackageCheck size={11} /> {n0(s.from_stock)} of {n0(s.qty)} from stock · {n0(s.to_purchase)} to purchase{lead}
+      </span>
+    )
+  }
+  return (
+    <span className={cls('bg-rose-50 text-rose-600')}>
+      <ShoppingCart size={11} /> Not in stock · {n0(s.to_purchase)} to purchase{lead}
+    </span>
+  )
+}
+
+// ── STOCK FIRST — the summary the CEO asked for ──────────────────────────────
+// "Utilise the stock we already own first; only the shortfall may be purchased." This panel makes the
+// profitability story legible: how much of the quote we already own, and exactly what has to be bought.
+// A quote that needs purchasing is NOT blocked — but it must be acknowledged, so the purchase is a
+// deliberate decision rather than an accident.
+function StockPanel({ lines, summary, checking, err, ack, setAck }) {
+  const toBuy = n0(summary?.to_purchase)
+  const tone = err ? 'border-rose-200 bg-rose-50/50'
+    : !summary ? 'border-slate-200 bg-slate-50/40'
+      : summary.fully_from_stock ? 'border-emerald-200 bg-emerald-50/50'
+        : summary.needs_procurement ? 'border-amber-200 bg-amber-50/50' : 'border-slate-200 bg-slate-50/40'
+
+  return (
+    <div className={`rounded-xl border p-4 ${tone}`}>
+      <p className="mb-2 flex items-center gap-1.5 text-sm font-bold text-ink">
+        <Boxes size={15} className="text-brand-500" /> Stock First
+        {checking && <Loader2 size={13} className="animate-spin text-slate-400" />}
+      </p>
+
+      {err ? (
+        <p className="text-xs font-semibold text-rose-600">Could not check stock: {err}</p>
+      ) : lines === 0 ? (
+        <p className="text-xs text-slate-500">Add equipment lines to see how much of this quotation is already covered by stock you own.</p>
+      ) : !summary ? (
+        <p className="text-xs text-slate-500">Checking live stock…</p>
+      ) : (
+        <div className="space-y-2">
+          {/* coverage */}
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+            <div className={`h-full rounded-full ${summary.fully_from_stock ? 'bg-emerald-500' : summary.stock_coverage_pct > 0 ? 'bg-amber-500' : 'bg-slate-300'}`}
+              style={{ width: `${Math.max(0, Math.min(100, n0(summary.stock_coverage_pct)))}%` }} />
+          </div>
+          <p className="text-xs text-slate-700">
+            <b>Stock coverage {n0(summary.stock_coverage_pct)}%</b> — {n0(summary.from_stock)} of {n0(summary.total_qty)} unit{plural(n0(summary.total_qty))} come from stock you already own.
+            {toBuy > 0 && <> {toBuy} unit{plural(toBuy)} will have to be purchased.</>}
+          </p>
+
+          {summary.fully_from_stock && (
+            <p className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700">
+              <CheckCircle2 size={13} /> Fully covered by stock — nothing needs to be purchased.
+            </p>
+          )}
+
+          {summary.needs_procurement && (
+            <>
+              <div className="rounded-lg border border-amber-200 bg-white/70 p-2.5">
+                <p className="mb-1 flex items-center gap-1.5 text-xs font-bold text-amber-800"><ShoppingCart size={12} /> To be purchased</p>
+                <ul className="space-y-1">
+                  {(summary.purchase_lines || []).map((p, i) => (
+                    <li key={`${p.item_id || p.item_name}-${i}`} className="flex flex-wrap items-baseline gap-x-1.5 text-[11px] text-slate-600">
+                      <span className="font-semibold text-ink">{p.item_name}</span>
+                      <span>— {n0(p.to_purchase)} of {n0(p.qty)} to purchase{n0(p.from_stock) > 0 ? ` (${n0(p.from_stock)} from stock)` : ''}</span>
+                      {p.lead_time_days ? <span className="inline-flex items-center gap-0.5 text-slate-500"><Truck size={11} /> ~{p.lead_time_days} day{plural(p.lead_time_days)}</span> : null}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {/* stock first, not stock only — the purchase is allowed, but it must be deliberate */}
+              <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-amber-300 bg-white px-2.5 py-2">
+                <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 accent-amber-600" />
+                <span className="text-[11px] font-semibold text-amber-800">
+                  I understand {toBuy} unit{plural(toBuy)} {toBuy === 1 ? 'is' : 'are'} not in stock and will have to be purchased.
+                </span>
+              </label>
+            </>
+          )}
+
+          <p className="text-[11px] text-slate-400">Stock is allocated to your lines first; only the shortfall above can ever become a purchase. Reserved stock (already promised to an accepted order) is not counted as available.</p>
+        </div>
+      )}
+    </div>
   )
 }
 

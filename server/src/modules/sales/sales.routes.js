@@ -11,6 +11,7 @@ import { projectFieldsFromQuote } from '../../core/handover.js'
 import { notifyManagementApproval } from '../../core/notify.js'
 import { recomputeProject } from '../../core/projectcost.js'
 import { reserveForSalesOrder } from '../../core/inventory.js'
+import { allocateLines } from '../../core/availability.js'
 import { validateRequiredFields, computeFinancials, evaluateApproval, discountSource, RULES } from './quotation.rules.js'
 import { nextNumber } from '../../core/numbering.js'
 
@@ -327,19 +328,30 @@ r.post('/quotations/:id/accept', authRequired, authorize('sales', 'create'), asy
   if (pErr) throw pErr
 
   // 3) BOQ (required items) from the quotation lines — budget cost auto-seeded from the
-  //    sales Item-Master cost so the PM starts with a ready budget (can adjust later)
+  //    sales Item-Master cost so the PM starts with a ready budget (can adjust later).
+  //    STOCK FIRST (CEO rule R1): the line carries the split computed when the quotation was built —
+  //    from_stock is already ours, to_purchase is the ONLY part Procurement may ever buy. Re-allocate
+  //    against LIVE stock at acceptance time, because stock may have moved since the quote was sent.
   const items = q.quotation_items || []
+  const alloc = await allocateLines(items.map((it) => ({ item_id: it.item_id, item_name: it.item_name, qty: it.qty })))
   if (items.length) {
-    await supabase.from('project_boq').insert(items.map((it) => ({
-      project_id: proj.id, item_name: it.item_name, qty: it.qty, status: 'Waiting',
+    await supabase.from('project_boq').insert(items.map((it, i) => ({
+      project_id: proj.id, item_id: it.item_id || null, item_name: it.item_name, qty: it.qty, status: 'Waiting',
       budget_cost: (Number(it.cost) || 0) * (Number(it.qty) || 0),
+      from_stock: Number(alloc[i]?.from_stock) || 0,
+      to_purchase: Number(alloc[i]?.to_purchase) || 0,
     })))
   }
   // 4) link + mark ordered
   await supabase.from('sales_orders').update({ project_id: proj.id }).eq('id', so.id)
   await supabase.from('quotations').update({ status: 'Ordered' }).eq('id', q.id)
   await recomputeProject(proj.id) // set committed cost / GP from the seeded budget
-  await reserveForSalesOrder({ items, sales_order_id: so.id, project_id: proj.id, userId: req.user.id }) // INV-006 auto-reserve
+  // reserve ONLY what is genuinely on the shelf — reserving a quantity we do not own would create
+  // phantom stock and hide the real purchase requirement
+  await reserveForSalesOrder({
+    items: alloc.filter((l) => Number(l.from_stock) > 0).map((l) => ({ item_name: l.item_name, qty: l.from_stock })),
+    sales_order_id: so.id, project_id: proj.id, userId: req.user.id,
+  })
   await winOpportunityForCustomer(q.customer, q.total_amount) // opportunity auto-Won
   await logAudit(req.user, 'quotation', q.id, 'accepted', { sales_order: so.number, project: proj.number })
   res.status(201).json({ ok: true, sales_order: so, project: proj })

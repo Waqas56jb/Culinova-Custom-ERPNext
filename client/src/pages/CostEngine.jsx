@@ -130,13 +130,26 @@ export default function CostEngine() {
 function NewSheetModal({ d, onClose, onCreated, setErr }) {
   const [f, setF] = useState({ name: '', project_id: '', quotation_id: '', overhead_pct: '', revenue: '' })
   const [busy, setBusy] = useState(false)
+  // The store's `quotations` source is gated on the SALES panel — a Project Manager gets 403 there, so
+  // this dropdown was permanently empty for the role that owns the Cost Engine. Use the shared read-only
+  // lookup (id · number · customer, no money), readable by every internal role.
+  const [quotes, setQuotes] = useState([])
+  const [quotesErr, setQuotesErr] = useState('')
+  useEffect(() => {
+    let alive = true
+    d.lookupQuotations()
+      .then((r) => { if (alive) { setQuotes(Array.isArray(r) ? r : []); setQuotesErr('') } })
+      .catch((e) => { if (alive) { setQuotes([]); setQuotesErr(e.message || 'Could not load quotations.') } })
+    return () => { alive = false }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   const save = async () => {
     setBusy(true); setErr('')
     try {
       const body = {
         name: f.name || undefined,
-        project_id: f.project_id || null,
-        quotation_id: f.quotation_id || null,
+        project_id: f.project_id || null,      // never send '' to a uuid column
+        quotation_id: f.quotation_id || null,  // ditto
         overhead_pct: f.overhead_pct === '' ? 0 : Number(f.overhead_pct),
         revenue: f.revenue === '' ? 0 : Number(f.revenue),
       }
@@ -145,14 +158,20 @@ function NewSheetModal({ d, onClose, onCreated, setErr }) {
     } catch (e) { setErr(e.message) } finally { setBusy(false) }
   }
   const projOpts = [{ value: '', label: '— none —' }, ...(d.projects || []).map((p) => ({ value: p.id, label: p.name || p.ref || p.number }))]
-  const quoteOpts = [{ value: '', label: '— none —' }, ...(d.quotations || []).map((q) => ({ value: q.id, label: `${q.ref || q.number} · ${q.customer || ''}` }))]
+  const quoteOpts = [
+    { value: '', label: quotes.length ? '— none —' : '— no quotations available —' },
+    ...quotes.map((q) => ({ value: q.id, label: q.label || `${q.number || ''} · ${q.customer || ''}`.trim() })),
+  ]
   return (
     <Modal open onClose={onClose} title="New Cost Sheet" subtitle="Link a project and/or quotation — a document number is assigned automatically"
       footer={<><button className="btn-ghost" onClick={onClose}>Cancel</button><button className="btn-primary" disabled={busy} onClick={save}>{busy ? 'Creating…' : 'Create Cost Sheet'}</button></>}>
       <Field label="Name (optional — derived from the project if blank)" value={f.name} onChange={(e) => setF((s) => ({ ...s, name: e.target.value }))} placeholder="e.g. Central Kitchen — Fit-out" />
       <Row>
         <Select label="Project" value={f.project_id} onChange={(e) => setF((s) => ({ ...s, project_id: e.target.value }))} options={projOpts} />
-        <Select label="Quotation" value={f.quotation_id} onChange={(e) => setF((s) => ({ ...s, quotation_id: e.target.value }))} options={quoteOpts} />
+        <div>
+          <Select label="Quotation" value={f.quotation_id} onChange={(e) => setF((s) => ({ ...s, quotation_id: e.target.value }))} options={quoteOpts} />
+          {quotesErr && <p className="mt-1 text-[11px] text-rose-600">Quotations could not be loaded: {quotesErr}</p>}
+        </div>
       </Row>
       <Row>
         <Field label="Overhead %" type="number" value={f.overhead_pct} onChange={(e) => setF((s) => ({ ...s, overhead_pct: e.target.value }))} placeholder="e.g. 10" />

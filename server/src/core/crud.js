@@ -103,6 +103,17 @@ export function crudRouter(name, cfg) {
   // UPDATE
   r.patch('/:id', authRequired, authorize(cfg.panel, 'update'), asyncWrap(async (req, res) => {
     const body = sanitizeBody(req.body, cfg, req.user.role)
+    // Everything the caller sent was stripped (immutable or protected for their role) → there is nothing
+    // to update. An empty UPDATE makes Postgres 500; tell them WHY instead of returning a mystery error.
+    if (!Object.keys(body).length) {
+      const stripped = Object.keys(req.body || {}).filter((k) => (cfg.protect || []).includes(k))
+      return res.status(403).json({
+        error: stripped.length
+          ? `${stripped.join(', ')} can only be changed by Management.`
+          : 'Nothing to update.',
+        protected: stripped,
+      })
+    }
     // capture the pre-update row so re-parenting recomputes BOTH the old and the new project
     const before = cfg.recomputeProject ? (await supabase.from(t).select('project_id').eq('id', req.params.id).maybeSingle()).data : null
     const { data, error } = await supabase.from(t).update(body).eq('id', req.params.id).select().single()

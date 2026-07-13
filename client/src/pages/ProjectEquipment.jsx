@@ -39,7 +39,7 @@ function ProgressBar({ label, value, icon: Icon, tone = 'brand' }) {
 }
 
 export default function ProjectEquipment() {
-  const { projects, items, warehouses, resList } = useData()
+  const { projects, items, lookupWarehouses, resList } = useData()
   const { user } = useAuth()
   const fin = FIN_ROLES.includes(user?.role)
   const canDelete = user?.access_level === 'Full Admin'
@@ -48,6 +48,12 @@ export default function ProjectEquipment() {
   const [rows, setRows] = useState([])
   const [summary, setSummary] = useState(null)
   const [statusOpts, setStatusOpts] = useState({ delivery: [], installation: [], commissioning: [] })
+  // Warehouses come from the SHARED LOOKUP, not the store: the store's warehouse source is gated on the
+  // 'warehouse' panel, which a Project Manager cannot read (403) → the array was always [] for the very
+  // role that lives on this page, and the picker silently degraded to a free-text box. /lookups/warehouses
+  // is readable by every internal role and returns { id, code, name, type, label }.
+  const [warehouses, setWarehouses] = useState([])
+  const [whErr, setWhErr] = useState('')
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [qtyDraft, setQtyDraft] = useState({})
@@ -59,6 +65,19 @@ export default function ProjectEquipment() {
 
   // the status vocabulary comes from the server (not hardcoded on the client)
   useEffect(() => { api('/project-equipment/meta/status-options').then((o) => o && setStatusOpts(o)).catch(() => {}) }, [])
+
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        const list = await lookupWarehouses()
+        if (alive) { setWarehouses(list || []); setWhErr('') }
+      } catch (e) {
+        if (alive) { setWarehouses([]); setWhErr(e.message || 'Could not load warehouses.') }
+      }
+    })()
+    return () => { alive = false }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const itemById = useMemo(() => { const m = {}; for (const i of items || []) m[i.id] = i; return m }, [items])
 
@@ -230,13 +249,13 @@ export default function ProjectEquipment() {
         </>
       )}
 
-      {modal && <AssignModal onClose={() => setModal(false)} items={items} warehouses={warehouses} fin={fin} busy={busy} onAssign={onAssign} />}
+      {modal && <AssignModal onClose={() => setModal(false)} items={items} warehouses={warehouses} whErr={whErr} fin={fin} busy={busy} onAssign={onAssign} />}
     </>
   )
 }
 
 // ── Assign Equipment modal ─────────────────────────────────────────────────────
-function AssignModal({ onClose, items, warehouses, fin, busy, onAssign }) {
+function AssignModal({ onClose, items, warehouses, whErr, fin, busy, onAssign }) {
   const [q, setQ] = useState('')
   const [sel, setSel] = useState(null)
   const [qty, setQty] = useState('1')
@@ -261,10 +280,13 @@ function AssignModal({ onClose, items, warehouses, fin, busy, onAssign }) {
     setCost(i.landed_cost != null ? String(i.landed_cost) : '')
   }
 
-  const whOpts = [{ value: '', label: '— No warehouse —' }, ...(warehouses || []).map((w) => ({ value: w.name, label: w.name }))]
+  // project_equipment.warehouse is a TEXT column (see server/src/modules/pm/equipment.routes.js →
+  // `warehouse: str(b.warehouse)`), so the option VALUE is the warehouse NAME, not its uuid.
+  const wh = warehouses || []
+  const whOpts = [{ value: '', label: '— No warehouse —' }, ...wh.map((w) => ({ value: w.name, label: w.label || w.name }))]
   const submit = () => {
     const body = { item_id: sel.id, qty: Number(qty) || 1, area: area || null, position: position || null, notes: notes || null }
-    if (warehouse) body.warehouse = warehouse
+    body.warehouse = warehouse || null   // never send '' — the column is nullable text
     if (price !== '') body.unit_price = Number(price)
     if (fin && cost !== '') body.unit_cost = Number(cost)
     onAssign(body)
@@ -318,9 +340,14 @@ function AssignModal({ onClose, items, warehouses, fin, busy, onAssign }) {
           </div>
           <div className="grid grid-cols-2 gap-4">
             <Field label="Quantity" type="number" min="0" step="any" value={qty} onChange={(e) => setQty(e.target.value)} />
-            {warehouses && warehouses.length > 0
-              ? <Select label="Warehouse" value={warehouse} onChange={(e) => setWarehouse(e.target.value)} options={whOpts} />
-              : <Field label="Warehouse" value={warehouse} onChange={(e) => setWarehouse(e.target.value)} placeholder="Optional" />}
+            <div>
+              <Select label="Warehouse" value={warehouse} disabled={wh.length === 0}
+                onChange={(e) => setWarehouse(e.target.value)}
+                options={wh.length ? whOpts : [{ value: '', label: '— No warehouses configured —' }]} />
+              {whErr
+                ? <p className="mt-1 text-[11px] text-rose-600">Warehouses could not be loaded: {whErr}</p>
+                : wh.length === 0 && <p className="mt-1 text-[11px] text-muted">No warehouses exist yet — ask Stock/Admin to create one. The equipment will be assigned without a warehouse.</p>}
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <Field label="Area" value={area} onChange={(e) => setArea(e.target.value)} placeholder="e.g. Main Kitchen" />

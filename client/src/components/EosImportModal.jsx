@@ -20,9 +20,10 @@ const SECTIONS = [
 // preview any model's full engineering record, and import ONLY approved entries into the ERP Item
 // Master. The list is the "pending to import" queue — an entry drops out the moment it is imported,
 // so an item you've already picked never shows again ("jo select kar chuka hu wo nazar nahi aani chahiye").
-export default function EosImportModal({ open, onClose }) {
+export default function EosImportModal({ open, onClose, onImported }) {
   const d = useData()
   const dRef = useRef(d); dRef.current = d // keep a stable handle so re-renders never re-trigger loading
+  const cbRef = useRef(onImported); cbRef.current = onImported // ditto for the parent's refresh callback
 
   const [q, setQ] = useState('')
   const [rows, setRows] = useState([])          // marked EOS entries (imported:true/false)
@@ -84,6 +85,7 @@ export default function EosImportModal({ open, onClose }) {
       const r = await dRef.current.eosImport(ids) // POST /eos/import (also reloads the Item Master store)
       setResult(r); setSel(new Set()); setActive(null); setDetail(null) // imported items leave the list
       await loadList(q)
+      await cbRef.current?.(r)                    // let the Item Master refresh its EOS status strip
     } catch (e) { setErr(e.message) }
     finally { setBusy(false) }
   }
@@ -96,6 +98,7 @@ export default function EosImportModal({ open, onClose }) {
       setSyncReport(rep)
       await dRef.current.loadAll() // refresh the whole store so updated items reflect everywhere
       await loadList(q)
+      await cbRef.current?.(rep)   // and the Item Master's status strip (last sync time, counts)
     } catch (e) { setErr(e.message) }
     finally { setSyncing(false) }
   }
@@ -131,12 +134,19 @@ export default function EosImportModal({ open, onClose }) {
         </div>
 
         {mode === 'semantic' && <div className="w-max rounded bg-brand-50 px-2 py-0.5 text-[10px] font-bold text-brand-600">AI semantic search</div>}
-        {result && (
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">
-            Import done ✓ — {result.created} created · {result.linked} linked · {result.updated} updated · {result.unchanged} unchanged{result.failed ? ` · ${result.failed} failed` : ''}.
-            {result.failed > 0 && <div className="mt-1 font-normal text-rose-600">{(result.errors || []).map((e) => `${e.id}: ${e.error}`).join('; ')}</div>}
-          </div>
-        )}
+        {result && (() => {
+          // Report EXACTLY what the server did — created / linked / updated / unchanged / failed.
+          const changed = (result.created || 0) + (result.linked || 0) + (result.updated || 0)
+          const allFailed = result.failed > 0 && changed === 0
+          return (
+            <div className={`rounded-lg border px-3 py-2 text-xs font-semibold ${allFailed ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
+              {allFailed ? 'Import failed' : 'Import done ✓'} — {result.created || 0} created · {result.linked || 0} linked · {result.updated || 0} updated · {result.unchanged || 0} unchanged{result.failed ? ` · ${result.failed} failed` : ''}.
+              {!allFailed && changed > 0 && <span className="font-normal"> The Item Master has been refreshed.</span>}
+              {!allFailed && changed === 0 && !result.failed && <span className="font-normal"> Nothing changed — these entries were already current.</span>}
+              {result.failed > 0 && <div className="mt-1 font-normal text-rose-600">{(result.errors || []).map((e) => `${e.id}: ${e.error}`).join('; ')}</div>}
+            </div>
+          )
+        })()}
         {syncReport && (
           <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700">
             Sync done ✓ — {syncReport.checked} linked items checked · {syncReport.updated} updated · {syncReport.unchanged} already current{syncReport.failed ? ` · ${syncReport.failed} failed` : ''}.

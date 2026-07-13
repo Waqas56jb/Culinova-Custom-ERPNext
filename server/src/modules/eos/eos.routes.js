@@ -1,11 +1,13 @@
 import { Router } from 'express'
 import { supabase } from '../../config/supabase.js'
 import { authRequired } from '../../middleware/auth.js'
-import { authorize, redactFinancials } from '../../middleware/rbac.js'
+import { authorize, redactFinancials, internalOnly } from '../../middleware/rbac.js'
 import { asyncWrap } from '../../middleware/error.js'
 import { logAudit } from '../../core/audit.js'
 import { eosCatalog, eosDetail, eosPending, importEosEntries, syncLinkedItems } from '../../core/eos.js'
 import { versionsOf, stripEosOwned } from '../../core/eosfields.js'
+import { runEosSync, lastEosSync } from '../../core/eosautosync.js'
+import { settings as systemSettings, invalidatePolicy } from '../../core/policy.js'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CULINOVA EOS (engineering knowledge base) → ERP Item Master. The Item Master lives
@@ -119,7 +121,7 @@ export function eosRouter() {
   }))
 
   // ── STATUS strip — total items, EOS-linked count, approved-pending count, last sync time. ──
-  r.get('/status', authRequired, authorize('warehouse', 'read'), asyncWrap(async (req, res) => {
+  r.get('/status', authRequired, internalOnly, asyncWrap(async (req, res) => {
     const [totalRes, linkedRes, lastSyncRes] = await Promise.all([
       supabase.from('items').select('*', { count: 'exact', head: true }),
       supabase.from('items').select('*', { count: 'exact', head: true }).not('eos_entry_id', 'is', null),
@@ -140,7 +142,34 @@ export function eosRouter() {
       pending_approved: pendingApproved,
       last_sync: lastSyncRes.data?.eos_synced_at || null,
       eos_reachable: eosReachable,
+      // the governing policy — the UI shows the user WHY it cannot create an item here
+      policy: await systemSettings(),
+      last_auto_sync: lastEosSync(),
     })
+  }))
+
+  // ── AUTOMATIC SYNC — the CEO's rule is that approved EOS items flow in on their own. This runs on a
+  //    DB-driven interval in the background; this endpoint forces a pass right now. ──
+  r.post('/auto-sync/run', authRequired, authorize('warehouse', 'update'), asyncWrap(async (req, res) => {
+    const report = await runEosSync({ trigger: `manual:${req.user.name}` })
+    await logAudit(req.user, 'eos', null, 'auto-sync', report).catch(() => {})
+    res.json(report)
+  }))
+
+  // ── the policy itself (admin) — kept in the DB so the rule can change without a code change ──
+  r.get('/policy', authRequired, internalOnly, asyncWrap(async (req, res) => {
+    res.json(await systemSettings())
+  }))
+  r.patch('/policy', authRequired, authorize('admin', 'update'), asyncWrap(async (req, res) => {
+    const allowed = ['item_creation_source', 'eos_auto_sync', 'eos_auto_sync_minutes']
+    const updates = Object.entries(req.body || {}).filter(([k]) => allowed.includes(k))
+    if (!updates.length) return res.status(422).json({ error: `Nothing to update. Allowed: ${allowed.join(', ')}` })
+    for (const [key, value] of updates) {
+      await supabase.from('system_settings').update({ value: String(value), updated_at: new Date().toISOString() }).eq('key', key)
+    }
+    invalidatePolicy()
+    await logAudit(req.user, 'system_settings', null, 'updated', Object.fromEntries(updates)).catch(() => {})
+    res.json(await systemSettings())
   }))
 
   // ── VERSION HISTORY for one item (each import/sync/edit is snapshotted). Snapshots carry the full

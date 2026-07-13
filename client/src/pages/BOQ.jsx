@@ -18,7 +18,7 @@ const STATUSES = ['Draft', 'Finalized', 'Approved', 'Sent', 'Ordered']
 const pct = (n) => `${Number(n) || 0}%`
 
 export default function BOQ() {
-  const { resList, resGet, resAdd, resUpdate, resDelete, items, projects, quotations, settings } = useData()
+  const { resList, resGet, resAdd, resUpdate, resDelete, lookupQuotations, items, projects, settings } = useData()
   const { user } = useAuth()
   const fin = FIN_ROLES.includes(user?.role)
   const canDelete = user?.access_level === 'Full Admin'
@@ -33,6 +33,14 @@ export default function BOQ() {
   const [busy, setBusy] = useState(false)
   const [modal, setModal] = useState(null) // 'new' | 'add' | 'quote'
   const [err, setErr] = useState('')
+  // "Generate BOQ from Quotation" is a PROJECT-side feature, but the store's `quotations` source is gated
+  // on the sales panel → a Project Manager (403 on /sales/quotations) always saw an empty picker and the
+  // headline feature was dead for its primary user. The POST endpoint already authorises a PM; only the
+  // picker's SOURCE was wrong. /lookups/quotations is readable by every internal role and carries id /
+  // number / customer / status — deliberately NO money.
+  const [quotes, setQuotes] = useState([])
+  const [quotesErr, setQuotesErr] = useState('')
+  const [quotesLoading, setQuotesLoading] = useState(true)
 
   const currencies = (settings?.currencies || []).map((c) => c.code).filter(Boolean)
 
@@ -49,6 +57,21 @@ export default function BOQ() {
 
   useEffect(() => { loadList() }, [loadList])
   useEffect(() => { loadDetail(selId) }, [selId, loadDetail])
+
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        const list = await lookupQuotations()
+        if (alive) { setQuotes(Array.isArray(list) ? list : []); setQuotesErr('') }
+      } catch (e) {
+        if (alive) { setQuotes([]); setQuotesErr(e.message || 'Could not load quotations.') }
+      } finally {
+        if (alive) setQuotesLoading(false)
+      }
+    })()
+    return () => { alive = false }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const refresh = async () => { await Promise.all([loadList(), loadDetail(selId)]) }
   const run = async (fn) => { setBusy(true); setErr(''); try { await fn(); await refresh() } catch (e) { setErr(e.message); alert(e.message) } finally { setBusy(false) } }
@@ -226,7 +249,10 @@ export default function BOQ() {
       )}
 
       {modal === 'add' && <AddItemModal onClose={() => setModal(null)} items={items} fin={fin} onAdd={onAddItem} />}
-      {modal === 'quote' && <FromQuoteModal onClose={() => setModal(null)} quotations={quotations} onGen={onGenFromQuote} />}
+      {modal === 'quote' && (
+        <FromQuoteModal onClose={() => setModal(null)} quotations={quotes} loading={quotesLoading}
+          loadErr={quotesErr} busy={busy} onGen={onGenFromQuote} />
+      )}
     </>
   )
 
@@ -368,19 +394,34 @@ function AddItemModal({ onClose, items, fin, onAdd }) {
   )
 }
 
-function FromQuoteModal({ onClose, quotations, onGen }) {
+// Quotations come from the shared /lookups/quotations picker (id · number · customer · status — no money),
+// which every internal role may read — including the Project Manager who lives on this page.
+function FromQuoteModal({ onClose, quotations, loading, loadErr, busy, onGen }) {
   const [qid, setQid] = useState('')
-  const opts = [{ value: '', label: '— Select a quotation —' }, ...(quotations || []).map((q) => ({ value: q.id, label: `${q.ref || q.number || ''} · ${q.customer || ''}`.trim() }))]
+  const list = quotations || []
+  const opts = [
+    { value: '', label: '— Select a quotation —' },
+    ...list.map((q) => ({ value: q.id, label: q.label || `${q.number || ''} · ${q.customer || ''}`.trim() })),
+  ]
   return (
     <Modal open title="Generate from Quotation" subtitle="Import the quotation's line items into this BOQ" onClose={onClose}
       footer={<>
         <button className="btn-ghost" onClick={onClose}>Cancel</button>
-        <button className="btn-primary" disabled={!qid} onClick={() => onGen(qid)}><Send size={15} /> Generate Lines</button>
+        <button className="btn-primary" disabled={!qid || busy} onClick={() => onGen(qid)}>
+          {busy ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />} Generate Lines
+        </button>
       </>}>
-      {(quotations || []).length === 0 ? (
-        <p className="text-sm text-muted">No quotations are available to your role. Ask Sales/Management to share a quotation, or add items manually.</p>
+      {loading ? (
+        <p className="text-sm text-muted"><Loader2 size={15} className="inline animate-spin" /> Loading quotations…</p>
+      ) : loadErr ? (
+        <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">Quotations could not be loaded: {loadErr}</p>
+      ) : list.length === 0 ? (
+        <p className="text-sm text-muted">There are no quotations in the system yet. Create one in Sales, or add the BOQ items manually.</p>
       ) : (
-        <Select label="Quotation" value={qid} onChange={(e) => setQid(e.target.value)} options={opts} />
+        <>
+          <Select label="Quotation" value={qid} onChange={(e) => setQid(e.target.value)} options={opts} />
+          <p className="text-[11px] text-muted">Every line of the selected quotation is imported into this BOQ. Rates are re-priced by the engine.</p>
+        </>
       )}
     </Modal>
   )

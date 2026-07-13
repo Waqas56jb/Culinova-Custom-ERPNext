@@ -13,6 +13,7 @@ import { asyncWrap } from '../../middleware/error.js'
 import { logAudit } from '../../core/audit.js'
 import { priceItem } from '../../core/pricing.js'
 import { canSeeFinancials } from '../../rbac/permissions.js'
+import { recomputeProject } from '../../core/projectcost.js'
 
 const round = (n) => Math.round((Number(n) || 0) * 100) / 100
 const num = (v) => (v === '' || v === null || v === undefined ? null : Number(v))
@@ -146,6 +147,8 @@ export function equipmentRouter() {
     const { data, error } = await supabase.from('project_equipment').insert(row).select().single()
     if (error) return res.status(400).json({ error: error.message })
     await logAudit(req.user, 'project_equipment', data.id, 'assign', { project_id: projectId, item: row.item_name, qty })
+    // assigned equipment IS a committed project cost — roll it into the project's P&L
+    await recomputeProject(projectId).catch(() => {})
     res.status(201).json(redactFinancials(req.user.role, data))
   }))
 
@@ -180,16 +183,18 @@ export function equipmentRouter() {
     const { data, error } = await supabase.from('project_equipment').update(patch).eq('id', row.id).select().single()
     if (error) return res.status(400).json({ error: error.message })
     await logAudit(req.user, 'project_equipment', row.id, 'update', patch)
+    await recomputeProject(row.project_id).catch(() => {})   // a qty/cost change moves the project's committed cost
     res.json(redactFinancials(req.user.role, data))
   }))
 
   // DELETE an assigned line (Full-Admin action).
   r.delete('/:id', authRequired, authorize('projects', 'delete'), asyncWrap(async (req, res) => {
-    const { data: row } = await supabase.from('project_equipment').select('id').eq('id', req.params.id).maybeSingle()
+    const { data: row } = await supabase.from('project_equipment').select('id, project_id').eq('id', req.params.id).maybeSingle()
     if (!row) return res.status(404).json({ error: 'Equipment line not found' })
     const { error } = await supabase.from('project_equipment').delete().eq('id', req.params.id)
     if (error) return res.status(400).json({ error: error.message })
     await logAudit(req.user, 'project_equipment', req.params.id, 'delete', null)
+    await recomputeProject(row.project_id).catch(() => {})   // removing equipment lowers committed cost
     res.json({ ok: true })
   }))
 

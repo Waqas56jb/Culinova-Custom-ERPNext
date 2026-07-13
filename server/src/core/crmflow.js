@@ -1,4 +1,9 @@
 import { supabase } from '../config/supabase.js'
+import { nextNumber } from './numbering.js'
+
+// Leads and Opportunities auto-created by this automation must get a real document reference too —
+// they are inserted straight through the Supabase client, which bypasses the generic CRUD layer where
+// numbering normally happens. Without this they land with number = NULL and the UI falls back to a uuid.
 
 // Stage pipeline order — automation only ever moves an opportunity FORWARD.
 const ORDER = { Lead: 0, Prospecting: 1, Qualified: 1, Quotation: 2, Negotiation: 3, Won: 4, Lost: 4 }
@@ -18,9 +23,9 @@ async function openOpp(customer) {
 export async function ensureLeadAndOpportunity({ name }) {
   if (!name) return
   const { data: lead } = await supabase.from('leads').select('id').ilike('company', name).limit(1).maybeSingle()
-  if (!lead) await supabase.from('leads').insert({ name, company: name, source: 'Chat', status: 'Open' })
+  if (!lead) await supabase.from('leads').insert({ number: await nextNumber('leads', 'LEAD'), name, company: name, source: 'Chat', status: 'Open' })
   if (!(await openOpp(name))) {
-    await supabase.from('opportunities').insert({ customer: name, stage: 'Prospecting', value: 0, probability: PROB.Prospecting, next_action_date: plus(7) })
+    await supabase.from('opportunities').insert({ number: await nextNumber('opportunities', 'OPP'), customer: name, stage: 'Prospecting', value: 0, probability: PROB.Prospecting, next_action_date: plus(7) })
   }
 }
 
@@ -38,7 +43,7 @@ export async function winOpportunityForCustomer(customer, value) {
   if (!customer) return
   const o = await openOpp(customer)
   if (o) await supabase.from('opportunities').update({ stage: 'Won', probability: 100 }).eq('id', o.id)
-  else await supabase.from('opportunities').insert({ customer, stage: 'Won', value: Number(value) || 0, probability: 100, next_action_date: plus(1) })
+  else await supabase.from('opportunities').insert({ number: await nextNumber('opportunities', 'OPP'), customer, stage: 'Won', value: Number(value) || 0, probability: 100, next_action_date: plus(1) })
 }
 
 // Deal closed-lost

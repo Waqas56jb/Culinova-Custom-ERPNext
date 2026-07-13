@@ -191,11 +191,19 @@ export function DataProvider({ children }) {
       _maps.projects = Object.fromEntries((ps || []).map((p) => [p.id, { number: p.ref, name: p.name }]))
     } catch { /* keep last-known map */ }
     try {
-      const tm = await api('/pm/team')
+      // /lookups/team is readable by EVERY internal role; /pm/team is projects-panel only, so without
+      // this fallback a non-PM role could never resolve an owner/manager/assignee name
+      const tm = await api('/lookups/team')
       const m = {}; (tm || []).forEach((u) => { if (u?.id) m[u.id] = u })
       const cur = me(); if (cur?.id) m[cur.id] = m[cur.id] || { id: cur.id, name: cur.name }
       _maps.users = m
     } catch { const cur = me(); if (cur?.id && !_maps.users[cur.id]) _maps.users = { ..._maps.users, [cur.id]: { id: cur.id, name: cur.name } } }
+    try {
+      // a Project Manager cannot read the sales panel, so the project's originating Sales Order could
+      // only ever render as '—'. The lookup exposes the number, never any money.
+      const sos = await api('/lookups/sales-orders')
+      _maps.salesOrders = Object.fromEntries((sos || []).map((s) => [s.id, { number: s.number, customer: s.customer }]))
+    } catch { /* keep last-known map */ }
   }, [])
 
   // ── PAYROLL ── the run status is persisted (payroll_runs), so a completed run survives a page refresh.
@@ -262,6 +270,9 @@ export function DataProvider({ children }) {
   const lookupSuppliers = () => resList('lookups/suppliers')
   const lookupItems = (sales = false) => resList('lookups/items', sales ? 'sales=1' : '')
   const lookupWarehouses = () => resList('lookups/warehouses')
+  const lookupSalesOrders = () => resList('lookups/sales-orders')
+  const lookupQuotations = () => resList('lookups/quotations')   // id/number/customer only — NO money
+  const lookupTeam = () => resList('lookups/team')
 
   // documents (with version history)
   const docList = (entityType, entityId) => api(`/documents${entityType ? `?entity_type=${entityType}${entityId ? `&entity_id=${entityId}` : ''}` : ''}`)
@@ -317,7 +328,12 @@ export function DataProvider({ children }) {
 
   // keep the module-level resolver maps in sync with loaded state (sales-order numbers have no lookup endpoint,
   // and projects/team refresh here too so the next reload cycle re-maps records with the latest labels)
-  useEffect(() => { _maps.salesOrders = Object.fromEntries((salesOrders || []).map((o) => [o.id, { number: o.number }])) }, [salesOrders])
+  // only MERGE the sales-panel store into the map — never replace it. For a Project Manager the
+  // salesOrders store is [] (403), and replacing would wipe the map loadRefMaps built from /lookups.
+  useEffect(() => {
+    if (!salesOrders?.length) return
+    _maps.salesOrders = { ..._maps.salesOrders, ...Object.fromEntries(salesOrders.map((o) => [o.id, { number: o.number }])) }
+  }, [salesOrders])
   useEffect(() => { if (projects?.length) _maps.projects = { ..._maps.projects, ...Object.fromEntries(projects.map((p) => [p.id, { number: p.ref || p.number, name: p.name }])) } }, [projects])
   useEffect(() => { if (team?.length) { const m = { ..._maps.users }; team.forEach((u) => { if (u?.id) m[u.id] = u }); _maps.users = m } }, [team])
 
@@ -379,7 +395,16 @@ export function DataProvider({ children }) {
 
   // ── PROJECTS ──
   const addProject = async (d) => { const p = await post('projects', { name: d.name, customer: d.customer, contract_value: Number(d.contractValue) || 0, manager_id: me()?.id }); await loadProjects(); return p }
-  const addTask = async (pid, t) => { await post('project-tasks', { project_id: pid, name: t.name, status: t.status || 'Open', due_date: t.due || null }); await loadProjects() }
+  // project_tasks columns are: project_id, name, assignee_id (uuid), status, due_date, progress.
+  // Sending `assignee` (which the old code did) 500s — the column does not exist.
+  const addTask = async (pid, t) => {
+    await post('project-tasks', {
+      project_id: pid, name: t.name, status: t.status || 'Open',
+      due_date: t.due || t.due_date || null, assignee_id: t.assignee_id || null,
+      progress: Number(t.progress) || 0,
+    })
+    await loadProjects()
+  }
   const updateTask = async (pid, tid, p) => { await patch('project-tasks', tid, p); await loadProjects() }
   const deleteTask = async (pid, tid) => { await del('project-tasks', tid); await loadProjects() }
   const updateBoqItem = async (pid, idx, p) => { const proj = projects.find((x) => x.id === pid); const b = proj?.boq?.[idx]; if (b?.id) { await patch('pm/boq', b.id, p); await loadProjects() } }
@@ -388,10 +413,20 @@ export function DataProvider({ children }) {
     if (p.progress != null) body.progress = p.progress
     if (p.status) body.status = p.status
     if (p.name) body.name = p.name
-    if (p.contractValue != null) body.contract_value = Number(p.contractValue) || 0  // note: protected — only Management persists this
+    // contract_value is a PROTECTED field: the server silently strips it for anyone who is not
+    // Management, so the UI must not offer it to a PM as if it would save (it never did).
+    if (p.contractValue != null) body.contract_value = Number(p.contractValue) || 0
+    if (p.manager_id !== undefined) body.manager_id = p.manager_id || null
     if (p.start) body.start_date = p.start
     if (p.end) body.end_date = p.end
     await patch('projects', pid, body); await loadProjects()
+  }
+  // The PM's hand-off to buying: raises a real Purchase Requisition from the project's Waiting BOQ
+  // lines (Project → PR → RFQ → PO). Previously this only flipped statuses and created nothing.
+  const sendToProcurement = async (pid, opts = {}) => {
+    const r = await api(`/pm/projects/${pid}/to-procurement`, { method: 'POST', body: opts })
+    await loadProjects()
+    return r
   }
   const addVariation = async (pid, vo) => { await post('variations', { project_id: pid, description: vo.desc || vo.description, amount: Number(vo.amount) || 0, status: vo.status || 'Pending' }); await loadProjects() }
 
@@ -501,6 +536,7 @@ export function DataProvider({ children }) {
     getParty, addPartyChild, deletePartyChild, partyCategories,
     resList, resGet, resAdd, resUpdate, resDelete, docList, docGet, docAdd, docNewVersion, docDelete,
     lookupProjects, lookupCustomers, lookupSuppliers, lookupItems, lookupWarehouses,
+    lookupSalesOrders, lookupQuotations, lookupTeam, sendToProcurement,
     getPrefs, savePref,
     reload, loadAll,
     addLead, addOpportunity, lostOpportunity, wonOpportunity, addInteraction, addQuotation, updateQuotation, addOrder, addCustomer, convertLead, checkAvailability, getOrderItems,

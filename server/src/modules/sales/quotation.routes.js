@@ -29,6 +29,17 @@ import { priceItem, discountFor, baseCurrency } from '../../core/pricing.js'
 import { discountSource, evaluateApproval, effectiveDiscountPct, RULES } from './quotation.rules.js'
 import { ensureLeadAndOpportunity, advanceOpportunity } from '../../core/crmflow.js'
 import { notifyManagementApproval } from '../../core/notify.js'
+import { allocateLines, allocationSummary, allocationColumns } from '../../core/availability.js'
+
+// CEO rule R1 — STOCK FIRST. Every quotation is allocated against live stock BEFORE it is saved:
+// each line records how much is served from stock we already own and how much is a shortfall that
+// must be purchased. Only the shortfall may ever reach Procurement. Allocation runs over the WHOLE
+// line set at once so the same unit of stock can never be promised to two lines.
+async function allocateBuilt(built = []) {
+  const alloc = await allocateLines(built.map((l) => ({ item_id: l.item_id, item_name: l.item_name, qty: l.qty })))
+  const lines = built.map((l, i) => ({ ...l, ...allocationColumns(alloc[i] || {}) }))
+  return { lines, alloc, summary: allocationSummary(alloc) }
+}
 
 // The builder must obey EXACTLY the same discount rules as the legacy create route — otherwise a
 // salesperson could route around their own limit simply by using the newer screen. Two gates apply:
@@ -202,12 +213,14 @@ export function quotationRouter() {
     if (!p.customer || !String(p.customer).trim()) return res.status(422).json({ error: 'Customer is required' })
 
     const rawLines = Array.isArray(p.items) ? p.items : []
-    const built = []
+    const rawBuilt = []
     for (let i = 0; i < rawLines.length; i++) {
       const li = rawLines[i]
       if (!clean(li.item_id) && !clean(li.item_name)) continue // skip empty lines
-      built.push(await buildLine(li, i))
+      rawBuilt.push(await buildLine(li, i))
     }
+    // STOCK FIRST (CEO rule R1) — consume what we already own before anything is bought
+    const { lines: built, summary: stock } = await allocateBuilt(rawBuilt)
 
     // GATE 1 — the item cap: the header discount must not exceed the items' max_discount cap
     const cap = await discountCapFor(built.map((l) => l.item_id))
@@ -268,8 +281,17 @@ export function quotationRouter() {
     // over the role's limit → tell Management there is something to approve
     if (decision.needsApproval) { try { await notifyManagementApproval(full, req.user.name) } catch { /* notify is best-effort */ } }
 
-    await logAudit(req.user, 'quotation', q.id, 'created', { number: q.number, lines: built.length, status: decision.status })
-    res.status(201).json({ ...redactFinancials(req.user.role, full), _approval: { needsApproval: !!decision.needsApproval } })
+    await logAudit(req.user, 'quotation', q.id, 'created', {
+      number: q.number, lines: built.length, status: decision.status,
+      from_stock: stock.from_stock, to_purchase: stock.to_purchase,
+    })
+    // the stock split travels back to the UI so the salesperson SEES what is covered by stock and what
+    // will have to be bought — the purchase is only legitimate once the stock has been utilised
+    res.status(201).json({
+      ...redactFinancials(req.user.role, full),
+      _approval: { needsApproval: !!decision.needsApproval },
+      stock,
+    })
   }))
 
   // ── active commercial terms (for the terms picker) — registered BEFORE '/:id' ──
@@ -286,7 +308,21 @@ export function quotationRouter() {
     if (Array.isArray(q.quotation_items)) q.quotation_items.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
     const { data: revisions } = await supabase.from('quotation_revisions').select('*').eq('quotation_id', q.id).order('created_at', { ascending: false })
     const { data: terms } = await supabase.from('commercial_terms').select('*').eq('is_active', true).order('category', { ascending: true })
-    res.json(redactFinancials(req.user.role, { ...q, revisions: revisions || [], terms: terms || [] }))
+    // the stock split stored on the lines, rolled up — what we already own vs what must be bought
+    const stock = allocationSummary((q.quotation_items || []).map((l) => ({
+      item_id: l.item_id, item_name: l.item_name, qty: l.qty,
+      from_stock: l.from_stock, to_purchase: l.to_purchase, available: l.available_qty,
+    })))
+    res.json(redactFinancials(req.user.role, { ...q, revisions: revisions || [], terms: terms || [], stock }))
+  }))
+
+  // ── LIVE AVAILABILITY for the builder ──
+  // The salesperson must SEE the stock position before committing a line. Given the lines they are
+  // composing, this returns the stock-first split WITHOUT saving anything (a what-if).
+  r.post('/check-stock', authRequired, authorize('sales', 'read'), asyncWrap(async (req, res) => {
+    const lines = Array.isArray(req.body?.items) ? req.body.items : []
+    const alloc = await allocateLines(lines.map((l) => ({ item_id: clean(l.item_id), item_name: clean(l.item_name), qty: num(l.qty) ?? 1 })))
+    res.json({ lines: alloc, summary: allocationSummary(alloc) })
   }))
 
   // ── revision history ──
@@ -323,12 +359,15 @@ export function quotationRouter() {
     let replaced = false
     let needsApproval = false
     if (Array.isArray(p.items)) {
-      const built = []
+      const rawBuilt = []
       for (let i = 0; i < p.items.length; i++) {
         const li = p.items[i]
         if (!clean(li.item_id) && !clean(li.item_name)) continue
-        built.push(await buildLine(li, i))
+        rawBuilt.push(await buildLine(li, i))
       }
+      // STOCK FIRST — re-allocate against live stock whenever the lines change
+      const { lines: built } = await allocateBuilt(rawBuilt)
+
       // cap check against the resulting lines + resulting discount
       const cap = await discountCapFor(built.map((l) => l.item_id))
       const net = round(built.reduce((s, l) => s + lineAmount(l), 0))

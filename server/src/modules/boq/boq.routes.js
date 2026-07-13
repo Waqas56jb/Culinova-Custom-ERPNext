@@ -13,6 +13,7 @@ import { nextNumber } from '../../core/numbering.js'
 import { logAudit } from '../../core/audit.js'
 import { priceItem } from '../../core/pricing.js'
 import { canSeeFinancials } from '../../rbac/permissions.js'
+import { recomputeProject } from '../../core/projectcost.js'
 
 const round = (n) => Math.round((Number(n) || 0) * 100) / 100
 const num = (v) => { if (v === '' || v === null || v === undefined) return null; const n = Number(v); return Number.isFinite(n) ? n : null } // '' / non-numeric → null (never NaN to the DB or past a > 0 guard)
@@ -421,6 +422,8 @@ export function boqRouter() {
     const { data, error } = await supabase.from('project_equipment').insert(rows).select()
     if (error) return res.status(400).json({ error: error.message })
     await logAudit(req.user, 'boq', boq.id, 'to-project-equipment', { project_id: boq.project_id, count: rows.length })
+    // the pushed equipment is a real committed cost on that project
+    await recomputeProject(boq.project_id).catch(() => {})
     res.status(201).json({ ok: true, pushed: (data || rows).length, project_id: boq.project_id })
   }))
 
