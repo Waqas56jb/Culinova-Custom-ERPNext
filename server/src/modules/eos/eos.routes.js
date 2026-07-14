@@ -4,7 +4,7 @@ import { authRequired } from '../../middleware/auth.js'
 import { authorize, redactFinancials, internalOnly } from '../../middleware/rbac.js'
 import { asyncWrap } from '../../middleware/error.js'
 import { logAudit } from '../../core/audit.js'
-import { eosCatalog, eosDetail, eosPending, importEosEntries, syncLinkedItems } from '../../core/eos.js'
+import { eosCatalog, eosDetail, eosPending, importEosEntries, syncLinkedItems, eosUpdatesAvailable } from '../../core/eos.js'
 import { versionsOf, stripEosOwned } from '../../core/eosfields.js'
 import { runEosSync, lastEosSync } from '../../core/eosautosync.js'
 import { settings as systemSettings, invalidatePolicy } from '../../core/policy.js'
@@ -97,6 +97,15 @@ export function eosRouter() {
       created: results.created, updated: results.updated, linked: results.linked, unchanged: results.unchanged, failed: results.failed,
     }).catch(() => {})
     res.json(results)
+  }))
+
+  // ── UPDATE AVAILABLE (read-only) — which linked items have newer engineering data in EOS.
+  //    Writes nothing; the UI shows an "Update Available" badge and the user chooses to sync. ──
+  r.get('/updates', authRequired, authorize('warehouse', 'read'), asyncWrap(async (req, res) => {
+    let report
+    try { report = await eosUpdatesAvailable() }
+    catch (e) { return res.status(502).json({ error: `Could not reach EOS knowledge base: ${e.message}` }) }
+    res.json(report)
   }))
 
   // ── RE-SYNC every already-linked item from EOS (refresh engineering data, keep pricing). ──

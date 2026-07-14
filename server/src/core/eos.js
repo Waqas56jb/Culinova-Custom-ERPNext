@@ -192,6 +192,44 @@ export async function syncLinkedItems(user, { ids } = {}) {
   return report
 }
 
+// ── UPDATE AVAILABLE (client item 19) ────────────────────────────────────────
+// Which EOS-linked items have NEWER engineering data upstream? Read-only: we recompute the
+// engineering hash from live EOS and compare it with the hash stored at the last sync. Nothing is
+// written — the engineer decides in the UI whether to pull the update (per item or Sync All).
+export async function eosUpdatesAvailable() {
+  const { data: linked, error } = await supabase
+    .from('items')
+    .select('id, item_name, item_code, brand, model, eos_entry_id, eos_version, eos_last_hash, eos_synced_at')
+    .not('eos_entry_id', 'is', null)
+  if (error) throw new Error(error.message)
+
+  const report = { checked: (linked || []).length, updates: [], unchanged: 0, failed: 0, errors: [] }
+  for (const it of linked || []) {
+    try {
+      const detail = await eosDetail(it.eos_entry_id)
+      if (!detail?.entry) throw new Error('entry no longer exists in EOS')
+      const mapped = mapEosToItem(detail)
+      const hash = eosHash({ ...mapped.fields, eos_status: detail.entry.current_status })
+      if (hash === it.eos_last_hash) { report.unchanged++; continue }
+      report.updates.push({
+        item_id: it.id,
+        item_name: it.item_name,
+        item_code: it.item_code,
+        brand: it.brand,
+        model: it.model,
+        eos_entry_id: it.eos_entry_id,
+        erp_version: it.eos_version,
+        last_synced_at: it.eos_synced_at || null,
+        update_available: true,
+      })
+    } catch (e) {
+      report.failed++
+      report.errors.push({ item_id: it.id, item_name: it.item_name, error: e.message })
+    }
+  }
+  return report
+}
+
 // Which approved EOS entries are NOT yet in the ERP — the pending import queue Ali works through.
 export async function eosPending({ query = '', page = 1, limit = 60 } = {}) {
   const cat = await eosCatalog({ query, page, limit })
