@@ -49,11 +49,16 @@ ok((await fetch(`${BASE}/sales/quotations`, { headers: P })).status === 403, 'PM
 // ─────────────────────────────────────────────────────────────────────────────
 S('HANDOVER — customer accepts a quotation → Sales Order + Project + BOQ land with the PM')
 const { data: item } = await supabase.from('items').select('*').limit(1).single()
+const pmOpp = await fetch(`${BASE}/sales/opportunities`, {
+  method: 'POST', headers: A,
+  body: JSON.stringify({ customer: 'ZZPROJ Verify Co', stage: 'Prospecting', value: 100000, next_action_date: '2026-08-01' }),
+}).then(j)
 const q = await fetch(`${BASE}/quotations`, {
   method: 'POST', headers: A,
   body: JSON.stringify({
     customer: 'ZZPROJ Verify Co', customer_email: 'zzproj@example.com', contact_person: 'Mr ZZ',
     project_name: 'ZZ Verify Kitchen', project_location: 'ZZ Riyadh', payment_terms: '30% advance',
+    opportunity_id: pmOpp.id,
     delivery_date: '2026-12-01', notes: 'ZZ handover note',
     items: [{ item_id: item.id, qty: 2, rate: 5000 }],
   }),

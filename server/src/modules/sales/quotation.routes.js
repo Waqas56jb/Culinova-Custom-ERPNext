@@ -22,11 +22,12 @@ import { Router } from 'express'
 import { supabase } from '../../config/supabase.js'
 import { authRequired } from '../../middleware/auth.js'
 import { authorize, redactFinancials } from '../../middleware/rbac.js'
+import { isManagement } from '../../rbac/permissions.js'
 import { asyncWrap } from '../../middleware/error.js'
 import { logAudit } from '../../core/audit.js'
 import { nextNumber } from '../../core/numbering.js'
 import { priceItem, discountFor, baseCurrency } from '../../core/pricing.js'
-import { discountSource, evaluateApproval, effectiveDiscountPct, RULES } from './quotation.rules.js'
+import { discountSource, evaluateApproval, effectiveDiscountPct, RULES, isValidValidityDays } from './quotation.rules.js'
 import { ensureLeadAndOpportunity, advanceOpportunity } from '../../core/crmflow.js'
 import { notifyManagementApproval } from '../../core/notify.js'
 import { allocateLines, allocationSummary, allocationColumns } from '../../core/availability.js'
@@ -96,7 +97,7 @@ async function priceOf(item) {
 
 // Build ONE quotation_items row: snapshot engineering data + resolve rate/cost.
 // `input` may override any snapshot field / the rate (used on edit so an existing snapshot is kept).
-async function buildLine(input = {}, idx = 0) {
+async function buildLine(input = {}, idx = 0, { lockRate = false } = {}) {
   const itemId = clean(input.item_id)
   let itemRow = null
   if (itemId) {
@@ -107,7 +108,7 @@ async function buildLine(input = {}, idx = 0) {
   const qtyRaw = num(input.qty)
   const qty = qtyRaw == null ? 1 : qtyRaw
   const rateOverride = num(input.rate)
-  const rate = rateOverride != null ? rateOverride : n0(priced.selling)
+  const rate = lockRate ? n0(priced.selling) : (rateOverride != null ? rateOverride : n0(priced.selling))
   const cost = itemRow ? n0(priced.landed) : n0(input.cost)
   const disc = Math.max(0, Math.min(100, n0(input.discount_pct)))
   // provided field wins (keeps a prior snapshot intact on edit); else snapshot from the item
@@ -211,13 +212,19 @@ export function quotationRouter() {
   r.post('/', authRequired, authorize('sales', 'create'), asyncWrap(async (req, res) => {
     const p = req.body || {}
     if (!p.customer || !String(p.customer).trim()) return res.status(422).json({ error: 'Customer is required' })
+    if (!p.opportunity_id) return res.status(422).json({ error: 'Quotation must be created from an Opportunity (opportunity_id required)' })
+    const { data: oppCheck } = await supabase.from('opportunities').select('id, stage').eq('id', p.opportunity_id).maybeSingle()
+    if (!oppCheck) return res.status(422).json({ error: 'Linked opportunity not found' })
+    if (oppCheck.stage === 'Lost') return res.status(422).json({ error: 'Cannot create quotation for a Lost opportunity' })
+    if (!isValidValidityDays(p.validity_days ?? 30)) return res.status(422).json({ error: 'validity_days must be between 1 and 365' })
 
+    const lockRate = !isManagement(req.user.role)
     const rawLines = Array.isArray(p.items) ? p.items : []
     const rawBuilt = []
     for (let i = 0; i < rawLines.length; i++) {
       const li = rawLines[i]
       if (!clean(li.item_id) && !clean(li.item_name)) continue // skip empty lines
-      rawBuilt.push(await buildLine(li, i))
+      rawBuilt.push(await buildLine(li, i, { lockRate }))
     }
     // STOCK FIRST (CEO rule R1) — consume what we already own before anything is bought
     const { lines: built, summary: stock } = await allocateBuilt(rawBuilt)
@@ -231,12 +238,17 @@ export function quotationRouter() {
     }
     // GATE 2 — the role gate: over the role's own limit → Management approval; over the absolute
     // ceiling → refused. Without this the builder would let a salesperson issue any discount they liked.
+    if (n0(p.discount_pct) > RULES.MAX_DISCOUNT) {
+      return res.status(422).json({ error: `Discount ${p.discount_pct}% exceeds max ${RULES.MAX_DISCOUNT}%` })
+    }
     const decision = approvalFor({ net, discount_pct: p.discount_pct, discount_fixed: p.discount_fixed, role: req.user.role })
     if (decision.blocked) return res.status(422).json({ error: decision.reason })
 
     const validity = num(p.validity_days) ?? 30
+    const { data: consultant } = await supabase.from('users').select('name, email, phone').eq('id', req.user.id).maybeSingle()
     const header = {
       number: await nextNumber('quotations', 'QTN'),
+      opportunity_id: clean(p.opportunity_id),
       customer: String(p.customer).trim(),
       contact_person: clean(p.contact_person),
       project_name: clean(p.project_name),
@@ -247,6 +259,13 @@ export function quotationRouter() {
       valid_till: clean(p.valid_till) || validTillFrom(validity),
       payment_terms: clean(p.payment_terms),
       terms_text: clean(p.terms_text),
+      delivery_time: clean(p.delivery_time),
+      warranty_terms: clean(p.warranty_terms),
+      sales_consultant: clean(p.sales_consultant) || consultant?.name || req.user.name,
+      sales_consultant_phone: clean(p.sales_consultant_phone) || consultant?.phone || null,
+      sales_consultant_email: clean(p.sales_consultant_email) || consultant?.email || req.user.email,
+      area: clean(p.area),
+      language: clean(p.language) || 'en',
       currency: clean(p.currency) || (await baseCurrency()),
       discount_pct: Math.max(0, n0(p.discount_pct)),
       discount_fixed: Math.max(0, n0(p.discount_fixed)),
@@ -341,7 +360,7 @@ export function quotationRouter() {
 
     const p = req.body || {}
     const patch = {}
-    for (const f of ['customer', 'contact_person', 'project_name', 'customer_email', 'payment_terms', 'terms_text', 'currency', 'notes', 'project_location']) {
+    for (const f of ['customer', 'contact_person', 'project_name', 'customer_email', 'payment_terms', 'terms_text', 'currency', 'notes', 'project_location', 'delivery_time', 'warranty_terms', 'sales_consultant', 'sales_consultant_phone', 'sales_consultant_email', 'area', 'language']) {
       if (p[f] !== undefined) patch[f] = clean(p[f])
     }
     if (p.project_id !== undefined) patch.project_id = clean(p.project_id)
@@ -363,7 +382,7 @@ export function quotationRouter() {
       for (let i = 0; i < p.items.length; i++) {
         const li = p.items[i]
         if (!clean(li.item_id) && !clean(li.item_name)) continue
-        rawBuilt.push(await buildLine(li, i))
+        rawBuilt.push(await buildLine(li, i, { lockRate: !isManagement(req.user.role) }))
       }
       // STOCK FIRST — re-allocate against live stock whenever the lines change
       const { lines: built } = await allocateBuilt(rawBuilt)
@@ -440,7 +459,7 @@ export function quotationRouter() {
     const p = req.body || {}
     const patch = {}
     if (p.qty !== undefined) { const v = num(p.qty); patch.qty = v == null ? line.qty : v }
-    if (p.rate !== undefined) { const v = num(p.rate); patch.rate = v == null ? line.rate : v }
+    if (p.rate !== undefined && isManagement(req.user.role)) { const v = num(p.rate); patch.rate = v == null ? line.rate : v }
     if (p.discount_pct !== undefined) patch.discount_pct = Math.max(0, Math.min(100, n0(p.discount_pct)))
     for (const f of ['item_name', 'brand', 'model', 'uom', 'description', 'specifications', 'image_url', 'datasheet_url']) {
       if (p[f] !== undefined) patch[f] = clean(p[f])

@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import {
   Plus, AlertTriangle, Pencil, Check, X, ThumbsUp, FileText, Loader2, Search, Trash2,
   History, Send, Package, ClipboardList, Wallet, ScrollText,
@@ -23,6 +24,7 @@ const APPROVERS = ['Management', 'System Admin', 'Sales Manager']
 const SENDERS = ['Management', 'System Admin', 'Sales Manager', 'Sales User']
 
 const n0 = (v) => Number(v) || 0
+const fmtDec = (n) => Number(n || 0).toLocaleString('en-SA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 // strip HTML/JSON noise for a compact spec/description preview
 const preview = (s, len = 90) => {
   if (!s) return ''
@@ -56,7 +58,9 @@ const stockOf = (q) => {
 
 export default function Quotations() {
   const d = useData()
-  const { quotations, items, customers, settings, loadAll, approveQuotation, rejectQuotation, sendQuotation, lostQuotation } = d
+  const location = useLocation()
+  const navigate = useNavigate()
+  const { quotations, items, customers, settings, opportunities, loadAll, approveQuotation, rejectQuotation, sendQuotation, lostQuotation } = d
   const { user } = useAuth()
   const showFin = FINANCIAL_ROLES.includes(user?.role)
   const canEdit = EDITORS.includes(user?.role)
@@ -100,7 +104,49 @@ export default function Quotations() {
   const orderedCount = quotations.filter((q) => q.status === 'Ordered').length
 
   // ── builder state ──
-  const emptyHeader = { customer: '', contact_person: '', project_name: '', project_id: '', customer_email: '', validity_days: 30, payment_terms: '50% advance, 50% on delivery', currency: 'SAR', terms_text: '', notes: '', discount_pct: 0, discount_fixed: 0 }
+  const emptyHeader = {
+    opportunity_id: '', customer: '', contact_person: '', project_name: '', project_id: '', project_location: '',
+    customer_email: '', validity_days: 30, payment_terms: '100% Advanced Payment', currency: 'SAR',
+    terms_text: '', notes: '', discount_pct: 0, discount_fixed: 0,
+    delivery_time: '5-7 Days After Approval',
+    warranty_terms: 'Two-years warranty: 1st year covers labor & parts, 2nd year covers labor only (excludes parts). Misuse not covered',
+    sales_consultant: '', sales_consultant_phone: '', sales_consultant_email: '', area: '', language: 'en',
+  }
+  const openBuilderFromPrefill = (prefill) => {
+    setError('')
+    const preLines = (prefill.lines || []).map((l) => ({
+      item_id: l.item_id,
+      item_name: l.item_name,
+      brand: l.brand,
+      model: l.model,
+      uom: l.uom || 'Nos',
+      description: l.description,
+      specifications: l.specifications,
+      image_url: l.image_url,
+      datasheet_url: l.datasheet_url,
+      qty: n0(l.qty) || 1,
+      rate: n0(l.rate),
+      cost: l.cost != null ? n0(l.cost) : null,
+      discount_pct: n0(l.discount_pct),
+    }))
+    setBuilder({
+      editingId: null,
+      ...emptyHeader,
+      opportunity_id: prefill.opportunity_id,
+      customer: prefill.customer || '',
+      contact_person: prefill.contact_person || '',
+      customer_email: prefill.customer_email || '',
+      project_name: prefill.project_name || '',
+      project_location: prefill.project_location || '',
+      sales_consultant: prefill.sales_consultant || '',
+      sales_consultant_email: prefill.sales_consultant_email || '',
+      sales_consultant_phone: prefill.sales_consultant_phone || '',
+      lines: preLines,
+    })
+    if (prefill.unresolved?.length) {
+      setError(`${prefill.unresolved.length} BOQ line(s) could not be matched to Item Master — add them manually.`)
+    }
+  }
   const openBuilder = async (q = null) => {
     setError('')
     if (!q) { setBuilder({ editingId: null, ...emptyHeader, lines: [] }); return }
@@ -113,10 +159,16 @@ export default function Quotations() {
         qty: n0(l.qty), rate: n0(l.rate), cost: l.cost, discount_pct: n0(l.discount_pct),
       }))
       setBuilder({
-        editingId: full.id, customer: full.customer || '', contact_person: full.contact_person || '',
-        project_name: full.project_name || '', project_id: full.project_id || '', customer_email: full.customer_email || '',
+        editingId: full.id, opportunity_id: full.opportunity_id || '',
+        customer: full.customer || '', contact_person: full.contact_person || '',
+        project_name: full.project_name || '', project_id: full.project_id || '', project_location: full.project_location || '',
+        customer_email: full.customer_email || '',
         validity_days: full.validity_days || 30, payment_terms: full.payment_terms || '', currency: full.currency || 'SAR',
         terms_text: full.terms_text || '', notes: full.notes || '', discount_pct: n0(full.discount_pct), discount_fixed: n0(full.discount_fixed),
+        delivery_time: full.delivery_time || emptyHeader.delivery_time,
+        warranty_terms: full.warranty_terms || emptyHeader.warranty_terms,
+        sales_consultant: full.sales_consultant || '', sales_consultant_phone: full.sales_consultant_phone || '',
+        sales_consultant_email: full.sales_consultant_email || '', area: full.area || '', language: full.language || 'en',
         lines,
       })
     } catch (e) { alert(e.message) } finally { setBusy(null) }
@@ -145,17 +197,30 @@ export default function Quotations() {
   const bTotal = bAfter + bVat
   const bGp = bAfter > 0 ? ((bAfter - bCost) / bAfter) * 100 : 0
 
+  useEffect(() => {
+    if (location.state?.quotePrefill) {
+      openBuilderFromPrefill(location.state.quotePrefill)
+      navigate(location.pathname, { replace: true, state: {} })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state?.quotePrefill])
+
   const saveBuilder = async () => {
     setError('')
     if (!builder.customer.trim()) { setError('Customer is required'); return }
+    if (!builder.editingId && !builder.opportunity_id) { setError('Quotation must be linked to an Opportunity — create from Opportunities page'); return }
     if (!builder.lines.length) { setError('Add at least one item to the quotation'); return }
     setSaving(true)
     const body = {
+      opportunity_id: builder.opportunity_id || null,
       customer: builder.customer.trim(), contact_person: builder.contact_person || null, project_name: builder.project_name || null,
-      project_id: builder.project_id || null, customer_email: builder.customer_email || null,
+      project_id: builder.project_id || null, project_location: builder.project_location || null, customer_email: builder.customer_email || null,
       validity_days: Number(builder.validity_days) || 30, payment_terms: builder.payment_terms || null,
       currency: builder.currency || 'SAR', terms_text: builder.terms_text || null, notes: builder.notes || null,
       discount_pct: n0(builder.discount_pct), discount_fixed: n0(builder.discount_fixed),
+      delivery_time: builder.delivery_time || null, warranty_terms: builder.warranty_terms || null,
+      sales_consultant: builder.sales_consultant || null, sales_consultant_phone: builder.sales_consultant_phone || null,
+      sales_consultant_email: builder.sales_consultant_email || null, area: builder.area || null, language: builder.language || 'en',
       items: builder.lines.map((l, i) => ({
         item_id: l.item_id, item_name: l.item_name, brand: l.brand, model: l.model, uom: l.uom,
         description: l.description, specifications: l.specifications, image_url: l.image_url, datasheet_url: l.datasheet_url,
@@ -197,8 +262,8 @@ export default function Quotations() {
 
   return (
     <>
-      <PageHeader title="Quotations / Estimation" subtitle="EOS-driven equipment quotes — auto specs, technical data, images, terms & revisions">
-        <button className="btn-primary" onClick={() => openBuilder()}><Plus size={16} /> New Quotation</button>
+      <PageHeader title="Quotations / Estimation" subtitle="Create from Opportunity — EOS specs, images & fixed pricing from Item Master">
+        <button className="btn-primary" onClick={() => navigate('/sales/opportunities')}><Plus size={16} /> New from Opportunity</button>
       </PageHeader>
 
       <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -208,9 +273,9 @@ export default function Quotations() {
         <KpiCard label="Pipeline Value" value={sar(totalValue)} icon={Wallet} accent="gold" />
       </div>
 
-      <div className="mb-4 flex items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 animate-fade-up">
+      <div className="mb-4 flex items-center gap-3 rounded-2xl border border-brand-200 bg-brand-50 px-4 py-3 text-sm text-brand-800 animate-fade-up">
         <AlertTriangle size={18} className="shrink-0" />
-        <span><b>How it works:</b> pick equipment from the Item Master — its specs, technical data, images &amp; datasheet are snapshotted onto the quote. Line rates prefill from the pricing chain. A discount can never exceed the item’s cap. <b>Only the customer</b> can Accept / Reject (in their portal).</span>
+        <span><b>Workflow:</b> Lead → Opportunity → <b>Create Quotation</b> on the opportunity card. Customer, contact, project &amp; location inherit automatically. Prices come from the pricing chain — sales cannot edit rates.</span>
       </div>
 
       <div className="card overflow-hidden">
@@ -276,10 +341,10 @@ export default function Quotations() {
 
       {builder && (
         <Builder
-          builder={builder} setH={setH} items={items} customers={customers} projects={projectOpts}
+          builder={builder} setH={setH} items={items} customers={customers} projects={projectOpts} opportunities={opportunities}
           currencies={settings?.currencies || []} addLine={addLine} setLine={setLine} removeLine={removeLine}
           totals={{ net: bNet, discAmt: bDiscAmt, vat: bVat, total: bTotal, gp: bGp, cost: bCost, vatRate }}
-          showFin={showFin} onClose={() => setBuilder(null)} onSave={saveBuilder} onRevise={revise}
+          showFin={showFin} canEditRate={showFin} onClose={() => setBuilder(null)} onSave={saveBuilder} onRevise={revise}
           saving={saving} error={error}
         />
       )}
@@ -291,13 +356,45 @@ export default function Quotations() {
 }
 
 // ── The quotation BUILDER ────────────────────────────────────────────────────
-function Builder({ builder, setH, items, customers, projects, currencies, addLine, setLine, removeLine, totals, showFin, onClose, onSave, onRevise, saving, error }) {
+function Builder({ builder, setH, items, customers, projects, opportunities, currencies, addLine, setLine, removeLine, totals, showFin, canEditRate, onClose, onSave, onRevise, saving, error }) {
   const d = useData()
   const [q, setQ] = useState('')
   const [terms, setTerms] = useState([])
+  const [paymentTemplates, setPaymentTemplates] = useState([])
   const [pickTerm, setPickTerm] = useState('')
+  const [customValidity, setCustomValidity] = useState(false)
+  const [smartFamily, setSmartFamily] = useState('')
+  const [smartRecs, setSmartRecs] = useState([])
+  const [smartBusy, setSmartBusy] = useState(false)
+
+  const productFamilies = useMemo(() => {
+    return Array.from(new Set((items || []).map((it) => it.product_family).filter(Boolean))).sort()
+  }, [items])
+
+  const loadSmartRecs = async () => {
+    if (!smartFamily) return
+    setSmartBusy(true)
+    try {
+      const recs = await api(`/engineering/equipment-recommendations?product_family=${encodeURIComponent(smartFamily)}&limit=5`)
+      setSmartRecs(Array.isArray(recs) ? recs : [])
+    } catch (e) {
+      setSmartRecs([])
+      alert(e.message || 'Could not load recommendations')
+    } finally { setSmartBusy(false) }
+  }
+
+  const addRecLine = (rec) => {
+    const it = (items || []).find((x) => x.id === rec.item_id)
+    if (it) addLine(it)
+    else addLine({
+      id: rec.item_id, item_name: rec.item_name, name: rec.item_name,
+      brand: rec.brand, model: rec.model, selling_price: rec.selling_price,
+      image_url: rec.image_url, specifications: rec.specifications, datasheet_url: rec.datasheet_url,
+    })
+  }
 
   useEffect(() => { api('/quotations/terms').then(setTerms).catch(() => setTerms([])) }, [])
+  useEffect(() => { d.getPaymentTemplates().then(setPaymentTemplates).catch(() => setPaymentTemplates([])) }, [d])
 
   // ── STOCK FIRST (CEO rule) ────────────────────────────────────────────────
   // As the quote is composed, ask the server for the live stock-first split. This is a what-if: it
@@ -422,15 +519,55 @@ function Builder({ builder, setH, items, customers, projects, currencies, addLin
         <Field label="Contact Person" value={builder.contact_person} onChange={(e) => setH({ contact_person: e.target.value })} placeholder="Attn." />
         <Field label="Customer Email" type="email" value={builder.customer_email} onChange={(e) => setH({ customer_email: e.target.value })} placeholder="name@company.com" />
         <Field label="Project Name" value={builder.project_name} onChange={(e) => setH({ project_name: e.target.value })} placeholder="e.g. Main Kitchen Fit-out" />
+        <Field label="Project Location" value={builder.project_location || ''} onChange={(e) => setH({ project_location: e.target.value })} placeholder="Riyadh → Al Malqa" />
         <Select label="Linked Project (optional)" value={builder.project_id || ''} onChange={(e) => setH({ project_id: e.target.value })} options={projOpts} />
-        <Select label="Validity" value={builder.validity_days} onChange={(e) => setH({ validity_days: Number(e.target.value) })} options={[{ value: 15, label: '15 days' }, { value: 30, label: '30 days' }, { value: 60, label: '60 days' }]} />
-        <Field label="Payment Terms" value={builder.payment_terms} onChange={(e) => setH({ payment_terms: e.target.value })} placeholder="e.g. 50% advance, 50% on delivery" />
+        {!customValidity ? (
+          <Select label="Validity" value={builder.validity_days} onChange={(e) => {
+            if (e.target.value === 'custom') setCustomValidity(true)
+            else setH({ validity_days: Number(e.target.value) })
+          }} options={[
+            { value: 7, label: '7 days' }, { value: 15, label: '15 days' }, { value: 30, label: '30 days' }, { value: 60, label: '60 days' }, { value: 'custom', label: 'Custom…' },
+          ]} />
+        ) : (
+          <Field label="Custom Validity (days)" type="number" min="1" max="365" value={builder.validity_days} onChange={(e) => setH({ validity_days: Number(e.target.value) })} />
+        )}
+        {paymentTemplates.length > 0 ? (
+          <Select label="Payment Terms" value={builder.payment_terms} onChange={(e) => setH({ payment_terms: e.target.value })}
+            options={paymentTemplates.map((t) => ({ value: t.body, label: t.name }))} />
+        ) : (
+          <Field label="Payment Terms" value={builder.payment_terms} onChange={(e) => setH({ payment_terms: e.target.value })} placeholder="100% Advanced Payment" />
+        )}
+        <Field label="Delivery Time" value={builder.delivery_time || ''} onChange={(e) => setH({ delivery_time: e.target.value })} />
+        <Field label="Warranty" value={builder.warranty_terms || ''} onChange={(e) => setH({ warranty_terms: e.target.value })} />
         <Select label="Currency" value={builder.currency} onChange={(e) => setH({ currency: e.target.value })} options={currOpts} />
       </div>
 
       {/* item picker */}
       <div className="rounded-xl border border-slate-200 p-4">
         <div className="mb-2 flex items-center gap-2 text-sm font-bold text-ink"><Package size={16} className="text-brand-500" /> Equipment Lines</div>
+
+        {productFamilies.length > 0 && (
+          <div className="mb-3 flex flex-wrap items-end gap-2 rounded-xl border border-brand-100 bg-brand-50/40 p-3">
+            <Select label="Smart selection — Product Family" value={smartFamily} onChange={(e) => { setSmartFamily(e.target.value); setSmartRecs([]) }}
+              options={[{ value: '', label: '— pick family —' }, ...productFamilies.map((f) => ({ value: f, label: f }))]} />
+            <button type="button" onClick={loadSmartRecs} disabled={!smartFamily || smartBusy}
+              className="mb-0.5 inline-flex items-center gap-1.5 rounded-xl bg-brand-500 px-3 py-2.5 text-xs font-semibold text-white hover:bg-brand-600 disabled:opacity-50">
+              {smartBusy ? <Loader2 size={14} className="animate-spin" /> : <Boxes size={14} />} Suggest equipment
+            </button>
+            {smartRecs.length > 0 && (
+              <div className="w-full space-y-1 pt-1">
+                {smartRecs.map((rec) => (
+                  <button key={rec.item_id} type="button" onClick={() => addRecLine(rec)}
+                    className="flex w-full items-center justify-between rounded-lg border border-white bg-white px-3 py-2 text-left text-xs hover:border-brand-200">
+                    <span><b>{rec.item_name}</b> · {rec.reason}{rec.in_stock ? ' · in stock' : ''}</span>
+                    <span className="font-semibold text-brand-600">{sar(rec.selling_price)}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="relative">
           <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search the Item Master by name, brand or model…"
@@ -484,7 +621,13 @@ function Builder({ builder, setH, items, customers, projects, currencies, addLin
                       </div>
                     </td>
                     <td className="px-2 py-2 text-right"><input type="number" min="0" value={l.qty} onChange={(e) => setLine(i, { qty: e.target.value })} className="w-16 rounded-lg border border-slate-200 px-2 py-1 text-right text-sm" /></td>
-                    <td className="px-2 py-2 text-right"><input type="number" min="0" value={l.rate} onChange={(e) => setLine(i, { rate: e.target.value })} className="w-24 rounded-lg border border-slate-200 px-2 py-1 text-right text-sm" /></td>
+                    <td className="px-2 py-2 text-right">
+                      {canEditRate ? (
+                        <input type="number" min="0" value={l.rate} onChange={(e) => setLine(i, { rate: e.target.value })} className="w-24 rounded-lg border border-slate-200 px-2 py-1 text-right text-sm" />
+                      ) : (
+                        <span className="text-sm font-semibold text-slate-600" title="Fixed from pricing chain">{fmtDec(l.rate)}</span>
+                      )}
+                    </td>
                     <td className="px-2 py-2 text-right"><input type="number" min="0" max="100" value={l.discount_pct} onChange={(e) => setLine(i, { discount_pct: e.target.value })} className="w-16 rounded-lg border border-slate-200 px-2 py-1 text-right text-sm" /></td>
                     <td className="px-2 py-2 text-right font-semibold text-ink">{sar(amt)}</td>
                     <td className="px-2 py-2 text-right"><button onClick={() => removeLine(i)} className="rounded-lg p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={15} /></button></td>

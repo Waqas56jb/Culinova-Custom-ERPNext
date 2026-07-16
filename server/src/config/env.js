@@ -6,6 +6,8 @@ import { fileURLToPath } from 'url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 dotenv.config({ path: path.resolve(__dirname, '../../.env') })
 
+import { eosApiUrl, erpCorsOrigins } from './deploy.js'
+
 const isProd = process.env.NODE_ENV === 'production' || !!process.env.VERCEL
 const required = ['SUPABASE_URL', 'SUPABASE_SERVICE_KEY', 'JWT_SECRET']
 const missing = required.filter((k) => !process.env[k])
@@ -23,8 +25,8 @@ export const env = {
   // never use the insecure fallback in production (guarded above); dev-only convenience otherwise
   jwtSecret: process.env.JWT_SECRET || (isProd ? undefined : 'dev-insecure-secret'),
   jwtExpires: process.env.JWT_EXPIRES || '8h',
-  corsOrigins: (process.env.CORS_ORIGINS || 'http://localhost:5173').split(',').map((s) => s.trim()),
-  // CULINOVA EOS (engineering knowledge base) — source of truth for approved product/engineering data.
-  // The ERP Item Master imports approved EOS entries. Defaults to the deployed EOS API.
-  eosApiUrl: (process.env.EOS_API_URL || 'https://culinova-rag-knowledgebase-server.vercel.app').replace(/\/$/, ''),
+  corsOrigins: erpCorsOrigins(),
+  // EOS API — defaults to production URL on Vercel, localhost:4400 in dev (override with EOS_API_URL)
+  eosApiUrl: eosApiUrl(),
+  erpEosIntegrationKey: process.env.ERP_EOS_INTEGRATION_KEY || process.env.ERP_INTEGRATION_KEY || '',
 }

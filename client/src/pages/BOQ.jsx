@@ -9,11 +9,12 @@ import { sar } from '../data/mockData.js'
 import { useData } from '../store/DataContext.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
 import { api, getToken } from '../api.js'
+import { erpApiBase } from '../../shared/deploy.js'
 
 // Roles allowed to see cost / margin / supplier price (mirrors server rbac/permissions.financialRoles).
 // The server ALSO redacts, so a non-financial viewer simply gets undefined — we never render it.
 const FIN_ROLES = ['Management', 'System Admin', 'Accounts User', 'Purchase User', 'Stock User', 'Project Manager']
-const API_BASE = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? 'https://culinova-backend.vercel.app/api' : 'http://localhost:5050/api')
+const API_BASE = erpApiBase()
 const STATUSES = ['Draft', 'Finalized', 'Approved', 'Sent', 'Ordered']
 const pct = (n) => `${Number(n) || 0}%`
 

@@ -9,6 +9,7 @@ import { useState, useEffect } from 'react'
 import { PageHeader, KpiCard, ChartCard } from '../components/ui.jsx'
 import { useData } from '../store/DataContext.jsx'
 import { sar } from '../data/mockData.js'
+import { api } from '../api.js'
 
 const SRC_COLORS = ['#0EA99A', '#6366f1', '#E0A82E', '#94a3b8', '#ef4444', '#22c55e']
 const STATUS_COLORS = { Open: '#3b82f6', Ordered: '#0EA99A', Lost: '#ef4444', Expired: '#f59e0b', Draft: '#94a3b8', 'Pending Approval': '#a855f7', Approved: '#22c55e' }
@@ -59,13 +60,22 @@ export default function SalesDashboard() {
 
   const quotationStatus = groupCount(quotations, 'status').map(([name, value]) => ({ name, value, color: STATUS_COLORS[name] || '#94a3b8' }))
   const leadSources = groupCount(leads, 'source').map(([name, value], i) => ({ name, value, color: SRC_COLORS[i % SRC_COLORS.length] }))
+  const leadStatuses = dashMetrics?.leads_by_status?.length
+    ? dashMetrics.leads_by_status.map((d, i) => ({ ...d, color: SRC_COLORS[i % SRC_COLORS.length] }))
+    : groupCount(leads, 'status').map(([name, value], i) => ({ name, value, color: SRC_COLORS[i % SRC_COLORS.length] }))
+  const wonLost = dashMetrics ? { won: dashMetrics.opportunities_won, lost: dashMetrics.opportunities_lost } : {
+    won: opportunities.filter((o) => o.stage === 'Won').length,
+    lost: opportunities.filter((o) => o.stage === 'Lost').length,
+  }
   // Outstanding is NOT a stored column. The invoices table lives in the FINANCE panel, so a pure sales
   // role can never read it — which used to leave this chart permanently dead. GET /sales/top-customers
   // returns just the aggregate a salesperson may see (customer + outstanding, no cost/margin/detail).
   // Fall back to the invoices store for roles (Finance/Management) that do hold them.
   const [topRows, setTopRows] = useState(null)
+  const [dashMetrics, setDashMetrics] = useState(null)
   useEffect(() => {
     d.resList('sales/top-customers').then((r) => setTopRows(Array.isArray(r) ? r : [])).catch(() => setTopRows(null))
+    api('/engineering/dashboard-metrics').then(setDashMetrics).catch(() => setDashMetrics(null))
   }, [d])
   const topCustomers = (topRows !== null
     ? topRows.map((r) => ({ name: r.customer, bal: Number(r.outstanding) || 0 }))
@@ -161,6 +171,36 @@ export default function SalesDashboard() {
             </>
           ) : <p className="py-10 text-center text-sm text-slate-400">No leads yet</p>}
         </ChartCard>
+
+        <ChartCard title="Lead Status" subtitle="Pipeline by status">
+          {leadStatuses.length ? (
+            <>
+              <ResponsiveContainer width="100%" height={200}>
+                <PieChart>
+                  <Pie data={leadStatuses} dataKey="value" nameKey="name" outerRadius={84} stroke="none" isAnimationActive={false}>
+                    {leadStatuses.map((d) => <Cell key={d.name} fill={d.color} />)}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+            </>
+          ) : <p className="py-10 text-center text-sm text-slate-400">No leads yet</p>}
+        </ChartCard>
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div className="card card-pad">
+          <p className="text-xs text-muted">Opportunities Won</p>
+          <p className="mt-1 text-2xl font-extrabold text-emerald-600">{wonLost.won}</p>
+        </div>
+        <div className="card card-pad">
+          <p className="text-xs text-muted">Opportunities Lost</p>
+          <p className="mt-1 text-2xl font-extrabold text-rose-600">{wonLost.lost}</p>
+        </div>
+        <div className="card card-pad">
+          <p className="text-xs text-muted">Pipeline Value</p>
+          <p className="mt-1 text-2xl font-extrabold text-brand-600">{sar(dashMetrics?.pipeline_value ?? pipelineValue)}</p>
+        </div>
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">

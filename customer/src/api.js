@@ -1,4 +1,6 @@
-const BASE = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? 'https://culinova-backend.vercel.app/api' : 'http://localhost:5050/api')
+import { erpApiBase } from '../../shared/deploy.js'
+
+const BASE = erpApiBase()
 export const getToken = () => localStorage.getItem('culinova_token')
 
 export async function api(path, { method = 'GET', body, auth = true } = {}) {
@@ -10,6 +12,12 @@ export async function api(path, { method = 'GET', body, auth = true } = {}) {
     window.location.reload()
   }
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`)
+  if (!res.ok) {
+    const err = new Error(data.error || `Request failed (${res.status})`)
+    err.code = data.code
+    err.missing = data.missing
+    err.status = res.status
+    throw err
+  }
   return data
 }

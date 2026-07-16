@@ -6,6 +6,7 @@ import { asyncWrap } from '../../middleware/error.js'
 import { uploadAttachment, signAttachments } from '../../core/chatfiles.js'
 import { ensureLeadAndOpportunity, advanceOpportunity, winOpportunityForCustomer, loseOpportunityForCustomer } from '../../core/crmflow.js'
 import { projectFieldsFromQuote } from '../../core/handover.js'
+import { customerCommercialGate } from '../../core/customerGate.js'
 import { recomputeProject } from '../../core/projectcost.js'
 import { reserveForSalesOrder } from '../../core/inventory.js'
 
@@ -82,8 +83,18 @@ r.post('/customer/quotations/:id/accept', authRequired, asyncWrap(async (req, re
   const { data: q } = await supabase.from('quotations').select('*, quotation_items(*)').eq('id', req.params.id).single()
   if (!ownsQuote(q, req.user)) return res.status(403).json({ error: 'Not your quotation' })
   if (q.status === 'Ordered') return res.status(422).json({ error: 'Already accepted' })
-  // an over-limit quotation still awaiting management approval cannot be turned into an order yet
   if (q.approval_status === 'Pending' || q.status === 'Pending Approval') return res.status(422).json({ error: 'This quotation is pending internal approval and cannot be accepted yet.' })
+
+  const gate = await customerCommercialGate(q.customer)
+  if (!gate.ok) {
+    return res.status(422).json({
+      error: gate.error,
+      code: 'COMMERCIAL_PROFILE_REQUIRED',
+      missing: gate.missing,
+      customer_exists: gate.customer_exists,
+    })
+  }
+
   const { data: so, error: e1 } = await supabase.from('sales_orders').insert({ number: num('SO'), quotation_id: q.id, customer: q.customer, amount: q.total_amount }).select().single()
   if (e1) throw e1
   const handover = await projectFieldsFromQuote(q)
@@ -98,6 +109,38 @@ r.post('/customer/quotations/:id/accept', authRequired, asyncWrap(async (req, re
   await winOpportunityForCustomer(q.customer, q.total_amount) // opportunity auto-Won
   await supabase.from('messages').insert({ customer_name: req.user.name, customer_email: req.user.email, sender: 'customer', body: `✅ I have ACCEPTED quotation ${q.number}.` })
   res.json({ ok: true, sales_order: so.number })
+}))
+
+// Customer completes commercial registration before order confirmation (CR/VAT/address)
+r.patch('/customer/commercial-profile', authRequired, asyncWrap(async (req, res) => {
+  const name = (req.user.name || '').trim()
+  const body = req.body || {}
+  const fields = {
+    cr_number: (body.cr_number || '').trim(),
+    vat_number: (body.vat_number || '').trim(),
+    national_address: (body.national_address || '').trim(),
+    billing_address: (body.billing_address || '').trim(),
+  }
+  const missing = ['cr_number', 'vat_number', 'national_address', 'billing_address'].filter((f) => !fields[f])
+  if (missing.length) return res.status(422).json({ error: `Required: ${missing.join(', ')}`, missing })
+
+  const { data: existing } = await supabase.from('customers').select('id').ilike('name', name).maybeSingle()
+  if (existing) {
+    const { data, error } = await supabase.from('customers').update(fields).eq('id', existing.id).select().single()
+    if (error) throw error
+    return res.json(data)
+  }
+  const { data, error } = await supabase.from('customers').insert({
+    name, code: `CUST-${Date.now().toString().slice(-6)}`, ...fields, status: 'Active',
+  }).select().single()
+  if (error) throw error
+  res.status(201).json(data)
+}))
+
+r.get('/customer/commercial-profile', authRequired, asyncWrap(async (req, res) => {
+  const { data } = await supabase.from('customers').select('id, name, cr_number, vat_number, national_address, billing_address')
+    .ilike('name', req.user.name).maybeSingle()
+  res.json(data || { name: req.user.name, complete: false })
 }))
 
 r.post('/customer/quotations/:id/reject', authRequired, asyncWrap(async (req, res) => {

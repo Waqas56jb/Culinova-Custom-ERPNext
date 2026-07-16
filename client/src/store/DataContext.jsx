@@ -21,8 +21,25 @@ const ownerName = (id) => { if (!id) return '—'; const n = userName(id); if (n
 
 // ── DB row → UI shape mappers (snake_case → the fields the pages read) ──
 const mapCustomer = (r) => ({ ...r, group: r.category || '—', business: r.business ?? 0, outstanding: Number(r.outstanding) || 0 })
-const mapLead = (r) => ({ ...r, value: Number(r.est_value) || 0, owner: ownerName(r.owner_id), date: d10(r), ref: r.number })
-const mapOpp = (r) => ({ ...r, value: Number(r.value) || 0, prob: r.probability ?? 0, close: r.next_action_date || '', owner: ownerName(r.owner_id), ref: r.number })
+const mapLead = (r) => ({
+  ...r,
+  value: Number(r.est_value) || 0,
+  owner: ownerName(r.assigned_to_id || r.owner_id),
+  assignedTo: ownerName(r.assigned_to_id),
+  createdBy: ownerName(r.created_by_id),
+  date: d10(r),
+  ref: r.number,
+  location: [r.project_city, r.project_district].filter(Boolean).join(' → ') || '',
+})
+const mapOpp = (r) => ({
+  ...r,
+  value: Number(r.value) || 0,
+  prob: r.probability ?? 0,
+  close: r.next_action_date || '',
+  owner: ownerName(r.owner_id),
+  ref: r.number,
+  location: r.project_location || [r.project_city, r.project_district].filter(Boolean).join(' → ') || '',
+})
 const mapQuote = (r) => ({
   ...r, amount: Number(r.total_amount) || 0, gp: Number(r.gp_percent) || 0, discount: Number(r.discount_pct) || 0,
   validity: r.validity_days, approval: r.approval_status, email: r.customer_email,
@@ -351,20 +368,46 @@ export function DataProvider({ children }) {
   const closeCompose = useCallback(() => setCompose({ open: false, prefill: null }), [])
 
   // ── SALES ──
-  const addLead = async (d) => { await post('leads', { name: d.name || d.company, company: d.company, source: d.source, est_value: Number(d.value) || 0, owner_id: me()?.id }); await reload('leads') }
-  const addOpportunity = async (d) => { await post('sales/opportunities', { customer: d.customer, stage: d.stage, value: Number(d.value) || 0, probability: Number(d.prob) || 30, next_action_date: d.close }); await reload('opportunities') }
+  const addLead = async (d) => {
+    await post('leads', {
+      name: d.name || d.company, company: d.company, source: d.source, est_value: Number(d.value) || 0,
+      mobile: d.mobile || null, email: d.email || null,
+      project_name: d.project_name || null, project_type: d.project_type || null,
+      project_city: d.project_city || null, project_district: d.project_district || null,
+      project_address: d.project_address || null,
+      next_follow_up: d.next_follow_up || null, notes: d.notes || null,
+      status: d.status || 'New',
+      owner_id: d.assigned_to_id || me()?.id,
+      created_by_id: me()?.id,
+      assigned_to_id: d.assigned_to_id || me()?.id,
+    })
+    await reload('leads')
+  }
+  const addOpportunity = async (d) => {
+    await post('sales/opportunities', {
+      customer: d.customer, stage: d.stage, value: Number(d.value) || 0,
+      probability: Number(d.prob) || 30, next_action_date: d.close,
+      opportunity_type: d.opportunity_type || 'Retail Sale',
+      project_name: d.project_name || null, project_type: d.project_type || null,
+      project_city: d.project_city || null, project_district: d.project_district || null,
+      project_location: d.project_location || null,
+      contact_person: d.contact_person || null, customer_email: d.customer_email || null,
+      mobile: d.mobile || null,
+    })
+    await reload('opportunities')
+  }
   const lostOpportunity = async (id, reason) => { await post(`sales/opportunities/${id}/lost`, { reason }); await reload('opportunities') }
   const wonOpportunity = async (id) => { await post(`sales/opportunities/${id}/won`, {}); await reload('opportunities') }
   // Customer interactions / meeting log (rule #12)
   const addInteraction = async (d) => { await post('interactions', { customer: d.customer, type: d.type, notes: d.notes, next_action: d.nextAction, user_id: me()?.id }); await reload('interactions') }
   const addCustomer = async (d) => { await post('customers', { code: d.code || slugCode('CUST', d.name), name: d.name, category: d.category, territory: d.territory, contact: d.contact, email: d.email, phone: d.phone }); await reload('customers') }
   const convertLead = async (lead) => {
-    // idempotent: a lead already converted/lost must NOT spawn another opportunity
-    if (['Opportunity', 'Converted', 'Lost'].includes(lead.status)) return
-    await patch('leads', lead.id, { status: 'Opportunity' })   // mark first to block rapid double-clicks
-    await addOpportunity({ customer: lead.company, stage: 'Prospecting', value: lead.value, prob: 30, close: today() })
-    await reload('leads')
+    if (['Opportunity', 'Converted', 'Lost', 'Do Not Contact'].includes(lead.status)) return
+    await post(`sales/leads/${lead.id}/convert`, {})
+    await Promise.all([reload('leads'), reload('opportunities')])
   }
+  const getOpportunityQuotationPrefill = (id) => api(`/sales/opportunities/${id}/quotation-prefill`)
+  const getPaymentTemplates = () => api('/sales/payment-templates')
   const quoteBody = (d) => ({
     customer: d.customer, customer_email: d.email, project_name: d.projectName || d.project_name,
     project_location: d.location, contact_person: d.contact, payment_terms: d.paymentTerms,
@@ -539,7 +582,7 @@ export function DataProvider({ children }) {
     lookupSalesOrders, lookupQuotations, lookupTeam, sendToProcurement,
     getPrefs, savePref,
     reload, loadAll,
-    addLead, addOpportunity, lostOpportunity, wonOpportunity, addInteraction, addQuotation, updateQuotation, addOrder, addCustomer, convertLead, checkAvailability, getOrderItems,
+    addLead, addOpportunity, lostOpportunity, wonOpportunity, addInteraction, addQuotation, updateQuotation, addOrder, addCustomer, convertLead, getOpportunityQuotationPrefill, getPaymentTemplates, checkAvailability, getOrderItems,
     approveQuotation, rejectQuotation, sendQuotation, acceptQuotation, lostQuotation,
     sendChatReply, markChatRead,
     addProject, addTask, updateTask, deleteTask, addVariation, updateBoqItem, updateProject,

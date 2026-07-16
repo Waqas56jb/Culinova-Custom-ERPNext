@@ -82,11 +82,17 @@ try {
   const terms = await fetch(`${BASE}/quotations/terms`, { headers: SH }).then(j)
   ok(Array.isArray(terms) && terms.length >= 1, `terms -> ${Array.isArray(terms) ? terms.length + ' active terms' : JSON.stringify(terms)}`)
 
-  console.log('\n[2] POST /quotations — create with lines (oven x2 @ chain price, mixer x1 @ override 2500)')
+  console.log('\n[2] POST /quotations — create with lines (oven x2 @ chain price, mixer x1 @ chain price — rate override ignored for Sales)')
+  const testOpp = await fetch(`${BASE}/sales/opportunities`, {
+    method: 'POST', headers: SH,
+    body: JSON.stringify({ customer: 'ZZ Al Waha Restaurant', stage: 'Prospecting', value: 100000, next_action_date: '2026-08-01' }),
+  }).then(j)
+  ok(!!testOpp.id, `test opportunity ${testOpp.number || testOpp.id}`)
   const created = await fetch(`${BASE}/quotations`, {
     method: 'POST', headers: SH,
     body: JSON.stringify({
       customer: 'ZZ Al Waha Restaurant', contact_person: 'Chef Omar', project_name: 'Main Kitchen', customer_email: 'omar@zz.test',
+      opportunity_id: testOpp.id,
       validity_days: 30, payment_terms: '50% advance, 50% on delivery', currency: 'SAR', notes: 'Test build',
       items: [{ item_id: oven.id, qty: 2 }, { item_id: mixer.id, qty: 1, rate: 2500 }],
     }),
@@ -97,13 +103,13 @@ try {
   ok(li.length === 2, `2 lines stored (${li.length})`)
   const ovenLine = li.find((l) => l.item_id === oven.id) || {}
   ok(Number(ovenLine.rate) === 5000, `oven rate from pricing chain = ${ovenLine.rate} (expect 5000)`)
-  ok(Number((li.find((l) => l.item_id === mixer.id) || {}).rate) === 2500, `mixer rate honoured override = 2500`)
+  ok(Number((li.find((l) => l.item_id === mixer.id) || {}).rate) === 2000, `mixer rate locked to chain = 2000 (override 2500 ignored for Sales)`)
   // SNAPSHOT proof (EOS spec / technical data / image auto-imported onto the line)
   ok(ovenLine.brand === 'BARTSCHER' && ovenLine.model === 'ZO-900', `snapshot brand/model = ${ovenLine.brand}/${ovenLine.model}`)
   ok(ovenLine.specifications === oven.specifications, 'snapshot specifications (technical data) captured')
   ok(ovenLine.image_url === '/files/zz-oven.png' && ovenLine.datasheet_url === '/files/zz-oven.pdf', 'snapshot image + datasheet captured')
   // totals
-  const net = 2 * 5000 + 1 * 2500 // 12500
+  const net = 2 * 5000 + 1 * 2000 // 12000 — fixed pricing from chain
   ok(approx(created.net_amount, net), `net_amount = ${created.net_amount} (expect ${net})`)
   ok(approx(created.vat_amount, net * VAT), `vat_amount = ${created.vat_amount} (expect ${(net * VAT).toFixed(2)} from DB VAT)`)
   ok(approx(created.total_amount, net + net * VAT), `total_amount = ${created.total_amount}`)

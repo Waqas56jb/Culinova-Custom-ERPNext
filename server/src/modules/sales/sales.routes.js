@@ -8,6 +8,7 @@ import { logAudit } from '../../core/audit.js'
 import { uploadAttachment, signAttachments } from '../../core/chatfiles.js'
 import { ensureLeadAndOpportunity, advanceOpportunity, winOpportunityForCustomer } from '../../core/crmflow.js'
 import { projectFieldsFromQuote } from '../../core/handover.js'
+import { customerCommercialGate } from '../../core/customerGate.js'
 import { notifyManagementApproval } from '../../core/notify.js'
 import { recomputeProject } from '../../core/projectcost.js'
 import { reserveForSalesOrder } from '../../core/inventory.js'
@@ -312,6 +313,8 @@ r.post('/quotations/:id/accept', authRequired, authorize('sales', 'create'), asy
   if (!q) return res.status(404).json({ error: 'Not found' })
   if (q.status === 'Ordered') return res.status(422).json({ error: 'Quotation already accepted' })
   if (q.approval_status === 'Pending') return res.status(403).json({ error: 'Quotation needs approval before it can be accepted' })
+  const gate = await customerCommercialGate(q.customer)
+  if (!gate.ok) return res.status(422).json({ error: gate.error, code: 'COMMERCIAL_PROFILE_REQUIRED', missing: gate.missing })
 
   // 1) Sales Order
   const { data: so, error: soErr } = await supabase.from('sales_orders').insert({
@@ -369,15 +372,73 @@ r.post('/quotations/:id/lost', authRequired, authorize('sales', 'create'), async
 }))
 
 // ============================================================
+// LEAD CONVERSION — atomic Lead → Opportunity (Create-level permission, not generic PATCH)
+// Sales User has Create but not Update — the old two-step client flow 403'd on PATCH /leads/:id.
+// ============================================================
+const plusDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10)
+const BLOCKED_LEAD = ['Opportunity', 'Converted', 'Lost', 'Do Not Contact']
+
+r.post('/leads/:id/convert', authRequired, authorize('sales', 'create'), asyncWrap(async (req, res) => {
+  const { data: lead, error: le } = await supabase.from('leads').select('*').eq('id', req.params.id).single()
+  if (le || !lead) return res.status(404).json({ error: 'Lead not found' })
+  if (BLOCKED_LEAD.includes(lead.status)) {
+    return res.status(422).json({ error: `Lead is already ${lead.status} — cannot convert again` })
+  }
+  const customer = (lead.company || lead.name || '').trim()
+  if (!customer) return res.status(422).json({ error: 'Lead must have a company or contact name' })
+
+  const { data: opp, error: oe } = await supabase.from('opportunities').insert({
+    number: await nextNumber('opportunities', 'OPP'),
+    lead_id: lead.id,
+    customer,
+    stage: 'Prospecting',
+    value: Number(lead.est_value) || 0,
+    probability: 30,
+    next_action_date: lead.next_follow_up || plusDays(7),
+    owner_id: lead.assigned_to_id || lead.owner_id || req.user.id,
+    opportunity_type: 'Retail Sale',
+    project_name: lead.project_name || null,
+    project_type: lead.project_type || null,
+    project_city: lead.project_city || null,
+    project_district: lead.project_district || null,
+    project_location: [lead.project_city, lead.project_district].filter(Boolean).join(' → ') || null,
+    contact_person: lead.name || null,
+    customer_email: lead.email || null,
+    mobile: lead.mobile || null,
+  }).select().single()
+  if (oe) throw oe
+
+  const { data: updated, error: ue } = await supabase.from('leads')
+    .update({ status: 'Opportunity', last_activity_at: new Date().toISOString() })
+    .eq('id', lead.id).select().single()
+  if (ue) throw ue
+
+  await logAudit(req.user, 'lead', lead.id, 'converted', { opportunity_id: opp.id, customer })
+  res.status(201).json({ lead: updated, opportunity: opp })
+}))
+
+// ============================================================
 // OPPORTUNITIES — enforce next-action date (#2) & lost reason (#13)
 // ============================================================
 r.post('/opportunities', authRequired, authorize('sales', 'create'), asyncWrap(async (req, res) => {
   const p = req.body
   if (!p.customer) return res.status(422).json({ error: 'Customer is required' })
   if (!p.next_action_date) return res.status(422).json({ error: 'Next action date is required (rule #2)' })
+  const loc = p.project_location || [p.project_city, p.project_district].filter(Boolean).join(' → ') || null
   const { data, error } = await supabase.from('opportunities').insert({
+    number: await nextNumber('opportunities', 'OPP'),
     customer: p.customer, stage: p.stage || 'Prospecting', value: Number(p.value) || 0,
     probability: Number(p.probability) || 30, next_action_date: p.next_action_date, owner_id: req.user.id,
+    lead_id: p.lead_id || null,
+    opportunity_type: p.opportunity_type || 'Retail Sale',
+    project_name: p.project_name || null,
+    project_type: p.project_type || null,
+    project_city: p.project_city || null,
+    project_district: p.project_district || null,
+    project_location: loc,
+    contact_person: p.contact_person || null,
+    customer_email: p.customer_email || null,
+    mobile: p.mobile || null,
   }).select().single()
   if (error) throw error
   await logAudit(req.user, 'opportunity', data.id, 'created', { customer: p.customer })
@@ -398,6 +459,33 @@ r.post('/opportunities/:id/won', authRequired, authorize('sales', 'create'), asy
   if (error) throw error
   await logAudit(req.user, 'opportunity', req.params.id, 'won', {})
   res.json(data)
+}))
+
+// Prefill payload for creating a quotation FROM an opportunity (mandatory workflow)
+r.get('/opportunities/:id/quotation-prefill', authRequired, authorize('sales', 'read'), asyncWrap(async (req, res) => {
+  const { data: opp, error } = await supabase.from('opportunities').select('*').eq('id', req.params.id).single()
+  if (error || !opp) return res.status(404).json({ error: 'Opportunity not found' })
+  const { data: user } = await supabase.from('users').select('name, email, phone').eq('id', req.user.id).maybeSingle()
+  res.json({
+    opportunity_id: opp.id,
+    customer: opp.customer,
+    contact_person: opp.contact_person || null,
+    customer_email: opp.customer_email || null,
+    project_name: opp.project_name || null,
+    project_location: opp.project_location || [opp.project_city, opp.project_district].filter(Boolean).join(' → ') || null,
+    opportunity_type: opp.opportunity_type || 'Retail Sale',
+    sales_consultant: user?.name || req.user.name,
+    sales_consultant_email: user?.email || req.user.email,
+    sales_consultant_phone: user?.phone || null,
+  })
+}))
+
+// Payment term templates (not free text)
+r.get('/payment-templates', authRequired, authorize('sales', 'read'), asyncWrap(async (req, res) => {
+  const { data, error } = await supabase.from('commercial_terms').select('*')
+    .eq('is_active', true).eq('category', 'Payment').order('is_default', { ascending: false }).order('name')
+  if (error) throw error
+  res.json(data || [])
 }))
 
 // ============================================================

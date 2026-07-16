@@ -7,7 +7,12 @@ export const RULES = {
   DIRECT_DISCOUNT: 20,  // fallback direct limit
   MIN_GP: 35,           // #5 below 35% needs approval
   TARGET_GP: 45,        // #5 target
-  VALID_DAYS: [15, 30, 60], // #9
+  VALID_DAYS: [7, 15, 30, 60], // #9 — includes 7 days; custom allowed via positive integer
+}
+
+export function isValidValidityDays(days) {
+  const n = Number(days)
+  return Number.isFinite(n) && n > 0 && n <= 365
 }
 
 // SEC-002 — discount a role can grant DIRECTLY (no approval). Above it → manager/CEO approval.
@@ -24,7 +29,7 @@ export const isApprover = (role) => role === 'Management' || role === 'System Ad
 export function validateRequiredFields(p) {
   const need = ['customer', 'contact_person', 'project_name', 'project_location', 'validity_days', 'payment_terms']
   const missing = need.filter((f) => !p[f] && p[f] !== 0)
-  if (!RULES.VALID_DAYS.includes(Number(p.validity_days))) missing.push('validity_days (15/30/60)')
+  if (!isValidValidityDays(p.validity_days)) missing.push('validity_days (1–365 days)')
   return missing
 }
 

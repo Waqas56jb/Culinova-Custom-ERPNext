@@ -1,19 +1,20 @@
 import { useState } from 'react'
-import { Plus, Trophy, X, Loader2 } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Plus, Trophy, X, Loader2, FileText, Wrench } from 'lucide-react'
 import { PageHeader, Badge, statusTone } from '../components/ui.jsx'
 import { sar } from '../data/mockData.js'
+import { api } from '../api.js'
 import { useData } from '../store/DataContext.jsx'
 
 const stages = ['Prospecting', 'Quotation', 'Negotiation', 'Won']
 const stageColor = { Prospecting: '#94a3b8', Quotation: '#3b82f6', Negotiation: '#E0A82E', Won: '#0EA99A' }
 
 export default function Opportunities() {
-  const { opportunities, salesOrders, openForm, wonOpportunity, lostOpportunity } = useData()
+  const { opportunities, salesOrders, openForm, wonOpportunity, lostOpportunity, getOpportunityQuotationPrefill } = useData()
+  const navigate = useNavigate()
   const lost = opportunities.filter((o) => o.stage === 'Lost')
   const [busy, setBusy] = useState(null)
 
-  // Won / Lost were only ever set automatically (by the accept / reject chain). A deal that is won or
-  // lost outside the portal — on the phone, in a meeting — had no way to be recorded at all.
   const run = async (id, fn) => { setBusy(id); try { await fn() } catch (e) { alert(e.message) } finally { setBusy(null) } }
   const markWon = (o) => { if (window.confirm(`Mark ${o.customer} as WON?`)) run(o.id, () => wonOpportunity(o.id)) }
   const markLost = (o) => {
@@ -22,16 +23,30 @@ export default function Opportunities() {
     if (!reason.trim()) { alert('A reason is required to mark an opportunity as Lost.'); return }
     run(o.id, () => lostOpportunity(o.id, reason.trim()))
   }
+  const createQuote = async (o) => {
+    setBusy(o.id)
+    try {
+      const prefill = await getOpportunityQuotationPrefill(o.id)
+      navigate('/sales/quotations', { state: { quotePrefill: prefill } })
+    } catch (e) { alert(e.message) } finally { setBusy(null) }
+  }
+  const sendEngineering = async (o) => {
+    if (!window.confirm(`Send "${o.project_name || o.customer}" to Engineering?`)) return
+    setBusy(o.id)
+    try {
+      await api(`/engineering/requests/from-opportunity/${o.id}`, { method: 'POST', body: {} })
+      alert('Engineering request submitted')
+    } catch (e) { alert(e.message) } finally { setBusy(null) }
+  }
 
   return (
     <>
-      <PageHeader title="Opportunities" subtitle="Auto pipeline: chat → Prospecting · quote sent → Quotation · concession → Negotiation · customer accepts → Won · rejects → Lost">
+      <PageHeader title="Opportunities" subtitle="Lead → Opportunity → Quotation — project info flows automatically">
         <button className="btn-primary" onClick={() => openForm('opportunity')}><Plus size={16} /> New Opportunity</button>
       </PageHeader>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         {stages.map((stage) => {
-          // first column is a catch-all for early stages (Prospecting / Qualified / Lead / …)
           const items = stage === 'Prospecting'
             ? opportunities.filter((o) => o.stage !== 'Lost' && !['Quotation', 'Negotiation', 'Won'].includes(o.stage))
             : opportunities.filter((o) => o.stage === stage)
@@ -53,6 +68,9 @@ export default function Opportunities() {
                       <p className="text-sm font-semibold text-ink">{o.customer}</p>
                       <Badge tone={statusTone(o.stage)}>{o.prob}%</Badge>
                     </div>
+                    {o.project_name && <p className="mt-0.5 text-[11px] font-medium text-brand-600">{o.project_name}</p>}
+                    {o.opportunity_type && <p className="text-[10px] text-slate-400">{o.opportunity_type}</p>}
+                    {o.location && <p className="text-[10px] text-slate-400">{o.location}</p>}
                     <p className="mt-1 text-lg font-extrabold text-ink">{sar(o.value)}</p>
                     <div className="mt-2 flex items-center justify-between text-xs text-muted">
                       <span>Next: {o.close || '—'}</span>
@@ -62,20 +80,31 @@ export default function Opportunities() {
                       <div className="h-1.5 rounded-full" style={{ width: `${o.prob}%`, background: stageColor[stage] }} />
                     </div>
                     {stage !== 'Won' && (
-                      <div className="mt-3 flex gap-1.5 border-t border-slate-100 pt-2.5">
+                      <div className="mt-3 flex flex-wrap gap-1.5 border-t border-slate-100 pt-2.5">
+                        {o.opportunity_type === 'Project Requiring Engineering' ? (
+                          <button onClick={() => sendEngineering(o)} disabled={busy === o.id}
+                            className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg bg-violet-50 px-2 py-1.5 text-[11px] font-bold text-violet-700 transition hover:bg-violet-100 disabled:opacity-50">
+                            {busy === o.id ? <Loader2 size={12} className="animate-spin" /> : <Wrench size={12} />} Engineering
+                          </button>
+                        ) : (
+                          <button onClick={() => createQuote(o)} disabled={busy === o.id}
+                            className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg bg-brand-50 px-2 py-1.5 text-[11px] font-bold text-brand-700 transition hover:bg-brand-100 disabled:opacity-50">
+                            {busy === o.id ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />} Quotation
+                          </button>
+                        )}
                         <button onClick={() => markWon(o)} disabled={busy === o.id}
-                          className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg bg-emerald-50 px-2 py-1.5 text-[11px] font-bold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-50">
-                          {busy === o.id ? <Loader2 size={12} className="animate-spin" /> : <Trophy size={12} />} Won
+                          className="inline-flex items-center justify-center gap-1 rounded-lg bg-emerald-50 px-2 py-1.5 text-[11px] font-bold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-50">
+                          <Trophy size={12} /> Won
                         </button>
                         <button onClick={() => markLost(o)} disabled={busy === o.id}
-                          className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg bg-rose-50 px-2 py-1.5 text-[11px] font-bold text-rose-700 transition hover:bg-rose-100 disabled:opacity-50">
+                          className="inline-flex items-center justify-center gap-1 rounded-lg bg-rose-50 px-2 py-1.5 text-[11px] font-bold text-rose-700 transition hover:bg-rose-100 disabled:opacity-50">
                           <X size={12} /> Lost
                         </button>
                       </div>
                     )}
                     {stage === 'Won' && (() => {
                       const order = salesOrders.find((s) => s.customer === o.customer)
-                      if (!order || !order.boqTotal) return <p className="mt-2 text-[11px] font-semibold text-emerald-600">🏆 Won — project starting</p>
+                      if (!order || !order.boqTotal) return <p className="mt-2 text-[11px] font-semibold text-emerald-600">Won — project starting</p>
                       const done = order.boqDone >= order.boqTotal
                       return (
                         <div className="mt-2 rounded-lg bg-emerald-50 p-2">

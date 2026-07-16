@@ -26,7 +26,9 @@ import { boqRouter } from '../modules/boq/boq.routes.js'                     // 
 import { prRouter, procurementReportsRouter } from '../modules/procurement/pr.routes.js' // M7 Procurement
 import { equipmentRouter } from '../modules/pm/equipment.routes.js'          // M8 Project Equipment
 import { aiRouter } from '../modules/ai/ai.routes.js'                        // M9 AI Business Intelligence
-import { lookupsRouter } from '../modules/lookups/lookups.routes.js'         // shared cross-panel pickers
+import engineeringRoutes from '../modules/engineering/engineering.routes.js'
+import { lookupsRouter } from '../modules/lookups/lookups.routes.js'
+import eosInboundRoutes from '../modules/integrations/eosInbound.routes.js'
 import { resources } from '../core/resources.js'
 import { crudRouter } from '../core/crud.js'
 import { rolePanels } from '../rbac/permissions.js'
@@ -71,6 +73,8 @@ api.use('/procurement', procurementReportsRouter()) // M7 delivery-tracking + su
 api.use('/project-equipment', equipmentRouter())// M8 Project Equipment (assign · status workflow · summary)
 api.use('/ai', aiRouter())                      // M9 AI Business Intelligence (real analytics + optional narrative)
 api.use('/lookups', lookupsRouter())            // shared read-only pickers (projects/customers/suppliers/items/warehouses)
+api.use('/engineering', engineeringRoutes)      // Engineering Request ERP ↔ EOS handoff
+api.use('/integrations/eos', eosInboundRoutes)  // EOS → ERP push (engineering sync)
 
 // STOCK MOVEMENT — these intercept POST at the same paths as the generic CRUD so creating a
 // document ALSO moves real stock (stock_balances + stock_ledger). Other verbs fall through.

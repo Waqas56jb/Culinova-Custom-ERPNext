@@ -86,7 +86,8 @@ function useTerritoryOptions(d) {
 
 // Lead-source options — distinct sources already in the DB merged with defaults, so the
 // business can introduce a new source just by typing it (no code change required).
-const LEAD_SOURCE_DEFAULTS = ['Website', 'Referral', 'Exhibition', 'Cold Call', 'WhatsApp', 'Social Media']
+const LEAD_SOURCE_DEFAULTS = ['Website', 'Referral', 'Existing Customer', 'Consultant', 'Contractor', 'Direct Visit', 'LinkedIn', 'Exhibition', 'Tender Platform', 'Phone Call', 'WhatsApp', 'Other']
+const PROJECT_TYPES = ['Hospital', 'Café', 'Restaurant', 'Hotel', 'Central Kitchen', 'Laundry', 'Retail', 'Other']
 function useLeadSourceOptions(d) {
   return useMemo(() => {
     const set = new Set(LEAD_SOURCE_DEFAULTS)
@@ -155,35 +156,76 @@ function SaveButton({ onClick, children, className = 'btn-primary' }) {
 
 function LeadModal({ open, d }) {
   const prefill = d.form.editing
-  const [v, setV] = useState({ name: '', company: '', source: 'Website', value: '' })
-  useEffect(() => { if (open) setV({ name: prefill?.name || '', company: prefill?.company || '', source: 'Website', value: '' }) }, [open, prefill])
+  const [v, setV] = useState({
+    name: '', company: '', source: 'Website', value: '', mobile: '', email: '',
+    project_name: '', project_type: 'Restaurant', project_city: '', project_district: '',
+    next_follow_up: '', notes: '',
+  })
+  useEffect(() => {
+    if (open) setV({
+      name: prefill?.name || '', company: prefill?.company || '', source: 'Website', value: '',
+      mobile: '', email: '', project_name: '', project_type: 'Restaurant',
+      project_city: '', project_district: '', next_follow_up: '', notes: '',
+    })
+  }, [open, prefill])
   const on = (k) => (e) => setV((s) => ({ ...s, [k]: e.target.value }))
-  const reset = () => setV({ name: '', company: '', source: 'Website', value: '' })
+  const reset = () => setV({ name: '', company: '', source: 'Website', value: '', mobile: '', email: '', project_name: '', project_type: 'Restaurant', project_city: '', project_district: '', next_follow_up: '', notes: '' })
   const sources = useLeadSourceOptions(d)
-  const save = async () => { try { await d.addLead(v) } catch (e) { alert(e.message); return } reset(); d.closeForm() }
+  const save = async () => {
+    if (!v.name && !v.company) { alert('Contact name or company is required'); return }
+    try { await d.addLead(v) } catch (e) { alert(e.message); return }
+    reset(); d.closeForm()
+  }
   return (
-    <Modal open={open} onClose={d.closeForm} title="New Lead" subtitle="Capture a new customer enquiry"
+    <Modal open={open} onClose={d.closeForm} title="New Lead" subtitle="Capture project enquiry with location & follow-up"
       footer={<><button className="btn-ghost" onClick={d.closeForm}>Cancel</button><SaveButton onClick={save}>Create Lead</SaveButton></>}>
-      <Field label="Contact Name" value={v.name} onChange={on('name')} placeholder="e.g. Mohammed Khalid" />
-      <Field label="Company" value={v.company} onChange={on('company')} placeholder="e.g. Riyadh Grand Hotel" />
+      <Row>
+        <Field label="Contact Name *" value={v.name} onChange={on('name')} placeholder="e.g. Mohammed Khalid" />
+        <Field label="Company" value={v.company} onChange={on('company')} placeholder="e.g. Riyadh Grand Hotel" />
+      </Row>
+      <Row>
+        <Field label="Mobile" value={v.mobile} onChange={on('mobile')} placeholder="05xxxxxxxx" />
+        <Field label="Email" type="email" value={v.email} onChange={on('email')} placeholder="name@company.com" />
+      </Row>
+      <Row>
+        <Field label="Project Name" value={v.project_name} onChange={on('project_name')} placeholder="e.g. Main Kitchen Fit-out" />
+        <Select label="Project Type" value={v.project_type} onChange={on('project_type')} options={PROJECT_TYPES} />
+      </Row>
+      <Row>
+        <Field label="City" value={v.project_city} onChange={on('project_city')} placeholder="e.g. Riyadh" />
+        <Field label="District / Area" value={v.project_district} onChange={on('project_district')} placeholder="e.g. Al Malqa" />
+      </Row>
       <Row>
         <div>
-          <Field label="Source" value={v.source} onChange={on('source')} list="lead-sources" placeholder="e.g. Website (pick or type new)" autoComplete="off" />
+          <Field label="Source" value={v.source} onChange={on('source')} list="lead-sources" placeholder="e.g. Website" autoComplete="off" />
           <datalist id="lead-sources">{sources.map((s) => <option key={s} value={s} />)}</datalist>
         </div>
         <Field label="Estimated Value (SAR)" type="number" value={v.value} onChange={on('value')} placeholder="850000" />
       </Row>
+      <Row>
+        <Field label="Next Follow-up Date" type="date" value={v.next_follow_up} onChange={on('next_follow_up')} />
+      </Row>
+      <TextArea label="Notes" value={v.notes} onChange={on('notes')} placeholder="Site visit notes, BOQ received, etc." rows={3} />
       <OwnerField />
     </Modal>
   )
 }
 
 function OpportunityModal({ open, d }) {
-  const [v, on, reset] = useFormState({ customer: '', stage: 'Prospecting', value: '', prob: 30, close: '' })
+  const [v, on, reset] = useFormState({
+    customer: '', stage: 'Prospecting', value: '', prob: 30, close: '',
+    opportunity_type: 'Retail Sale', project_name: '', project_type: 'Restaurant',
+    project_city: '', project_district: '', contact_person: '', customer_email: '', mobile: '',
+  })
   const save = async () => {
     if (!v.customer) { alert('Customer is required'); return }
     if (!v.close) { alert('Next action / expected close date is required (business rule).'); return }
-    try { await d.addOpportunity(v) } catch (e) { alert(e.message); return }
+    try {
+      await d.addOpportunity({
+        ...v,
+        project_location: [v.project_city, v.project_district].filter(Boolean).join(' → ') || null,
+      })
+    } catch (e) { alert(e.message); return }
     reset(); d.closeForm()
   }
   return (
@@ -191,13 +233,26 @@ function OpportunityModal({ open, d }) {
       footer={<><button className="btn-ghost" onClick={d.closeForm}>Cancel</button><SaveButton onClick={save}>Create Opportunity</SaveButton></>}>
       <CustomerField d={d} open={open} value={v.customer} onChange={on('customer')} />
       <Row>
+        <Select label="Type" value={v.opportunity_type} onChange={on('opportunity_type')} options={['Retail Sale', 'Project Requiring Engineering']} />
         <Select label="Stage" value={v.stage} onChange={on('stage')} options={['Prospecting', 'Quotation', 'Negotiation', 'Won']} />
-        <Field label="Deal Value (SAR)" type="number" value={v.value} onChange={on('value')} placeholder="850000" />
       </Row>
       <Row>
-        <Field label="Probability (%)" type="number" value={v.prob} onChange={on('prob')} />
-        <Field label="Next Action / Close Date *" type="date" value={v.close} onChange={on('close')} />
+        <Field label="Project Name" value={v.project_name} onChange={on('project_name')} placeholder="Kitchen fit-out" />
+        <Select label="Project Type" value={v.project_type} onChange={on('project_type')} options={PROJECT_TYPES} />
       </Row>
+      <Row>
+        <Field label="City" value={v.project_city} onChange={on('project_city')} placeholder="Riyadh" />
+        <Field label="District / Area" value={v.project_district} onChange={on('project_district')} placeholder="Al Malqa" />
+      </Row>
+      <Row>
+        <Field label="Contact Person" value={v.contact_person} onChange={on('contact_person')} />
+        <Field label="Customer Email" type="email" value={v.customer_email} onChange={on('customer_email')} />
+      </Row>
+      <Row>
+        <Field label="Deal Value (SAR)" type="number" value={v.value} onChange={on('value')} placeholder="850000" />
+        <Field label="Probability (%)" type="number" value={v.prob} onChange={on('prob')} />
+      </Row>
+      <Field label="Next Action / Close Date *" type="date" value={v.close} onChange={on('close')} />
       <OwnerField />
     </Modal>
   )

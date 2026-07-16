@@ -4,7 +4,8 @@ import { PageHeader, Badge, statusTone } from '../components/ui.jsx'
 import { sar } from '../data/mockData.js'
 import { useData } from '../store/DataContext.jsx'
 
-const filters = ['All', 'Open', 'Replied', 'Opportunity', 'Converted']
+const filters = ['All', 'New', 'Contacted', 'Meeting Scheduled', 'Site Visit', 'Quotation Preparation', 'Open', 'Opportunity', 'On Hold', 'Lost']
+const CONVERTABLE = ['New', 'Contacted', 'Meeting Scheduled', 'Site Visit', 'Quotation Preparation', 'Open', 'Qualified', 'Replied']
 
 export default function Leads() {
   const { leads, openForm, convertLead } = useData()
@@ -15,24 +16,25 @@ export default function Leads() {
   const rows = leads.filter(
     (l) =>
       (f === 'All' || l.status === f) &&
-      ((l.name || '').toLowerCase().includes(q.toLowerCase()) || (l.company || '').toLowerCase().includes(q.toLowerCase())),
+      ((l.name || '').toLowerCase().includes(q.toLowerCase()) ||
+        (l.company || '').toLowerCase().includes(q.toLowerCase()) ||
+        (l.project_name || '').toLowerCase().includes(q.toLowerCase()) ||
+        (l.mobile || '').includes(q)),
   )
   const total = leads.length
-  const openCount = leads.filter((l) => l.status === 'Open').length
-  // converting a lead sets its status to 'Opportunity' (see convertLead) — counting only 'Converted'
-  // meant this KPI could never be anything but 0
+  const openCount = leads.filter((l) => !['Opportunity', 'Converted', 'Lost', 'Do Not Contact'].includes(l.status)).length
   const converted = leads.filter((l) => ['Opportunity', 'Converted'].includes(l.status)).length
   const conversion = total ? Math.round((converted / total) * 100) : 0
 
   return (
     <>
-      <PageHeader title="Leads" subtitle="Capture and qualify new enquiries">
+      <PageHeader title="Leads" subtitle="Capture project enquiries with location, follow-up & assignment">
         <button className="btn-primary" onClick={() => openForm('lead')}><Plus size={16} /> New Lead</button>
       </PageHeader>
 
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Total Leads" value={total} tone="text-ink" />
-        <Stat label="Open" value={openCount} tone="text-blue-600" />
+        <Stat label="Active" value={openCount} tone="text-blue-600" />
         <Stat label="Converted" value={converted} tone="text-emerald-600" />
         <Stat label="Conversion" value={`${conversion}%`} tone="text-brand-600" />
       </div>
@@ -57,7 +59,7 @@ export default function Leads() {
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="Search leads…"
+              placeholder="Search name, company, project, mobile…"
               className="w-full rounded-lg border border-slate-200 bg-slate-50/70 py-2 pl-9 pr-3 text-sm outline-none focus:border-brand-400 focus:bg-white"
             />
           </div>
@@ -65,11 +67,12 @@ export default function Leads() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px]">
+          <table className="w-full min-w-[1100px]">
             <thead>
               <tr className="bg-slate-50/60">
-                <th className="th">Lead ID</th><th className="th">Contact</th><th className="th">Company</th>
-                <th className="th">Source</th><th className="th">Est. Value</th><th className="th">Owner</th>
+                <th className="th">Lead ID</th><th className="th">Contact</th><th className="th">Mobile</th>
+                <th className="th">Project</th><th className="th">Location</th><th className="th">Source</th>
+                <th className="th">Est. Value</th><th className="th">Next Follow-up</th><th className="th">Owner</th>
                 <th className="th">Status</th><th className="th"></th>
               </tr>
             </thead>
@@ -80,18 +83,27 @@ export default function Leads() {
                   <td className="td">
                     <div className="flex items-center gap-2.5">
                       <span className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-navy-700 to-brand-600 text-[11px] font-bold text-white">
-                        {l.name.split(' ').map((n) => n[0]).join('').slice(0, 2)}
+                        {(l.name || '?').split(' ').map((n) => n[0]).join('').slice(0, 2)}
                       </span>
-                      <span className="font-medium text-ink">{l.name}</span>
+                      <div>
+                        <span className="font-medium text-ink">{l.name}</span>
+                        <p className="text-[11px] text-slate-400">{l.company}</p>
+                      </div>
                     </div>
                   </td>
-                  <td className="td">{l.company}</td>
+                  <td className="td text-slate-600">{l.mobile || '—'}</td>
+                  <td className="td">
+                    <p className="font-medium text-ink">{l.project_name || '—'}</p>
+                    {l.project_type && <p className="text-[11px] text-slate-400">{l.project_type}</p>}
+                  </td>
+                  <td className="td text-slate-500">{l.location || '—'}</td>
                   <td className="td text-slate-500">{l.source}</td>
                   <td className="td font-semibold">{l.value ? sar(l.value) : '—'}</td>
-                  <td className="td text-slate-500">{l.owner}</td>
+                  <td className="td text-slate-500">{l.next_follow_up || '—'}</td>
+                  <td className="td text-slate-500">{l.assignedTo || l.owner}</td>
                   <td className="td"><Badge tone={statusTone(l.status)}>{l.status}</Badge></td>
                   <td className="td">
-                    {['Open', 'Replied', 'Qualified'].includes(l.status) ? (
+                    {CONVERTABLE.includes(l.status) ? (
                       <button onClick={() => doConvert(l)} disabled={converting === l.id}
                         className="flex items-center gap-1 text-xs font-semibold text-brand-600 opacity-0 transition group-hover:opacity-100 disabled:opacity-100 disabled:text-slate-400">
                         {converting === l.id ? <><Loader2 size={13} className="animate-spin" /> Converting…</> : <>Convert <ArrowRight size={13} /></>}

@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Users2, Target, FileText, ClipboardList, Building2,
   FolderKanban, ShoppingCart, Boxes, Wallet, HardHat, Wrench,
-  X, Sparkles, MessageSquare, Truck, Receipt, BarChart3, Coins, Ticket, CalendarClock, UserCheck, Lock, Package, Settings, ShieldCheck, Contact, Tags, ArrowLeftRight, Calculator, FileSpreadsheet,
+  X, Sparkles, MessageSquare, Truck, Receipt, BarChart3, Coins, Ticket, CalendarClock, UserCheck, Lock, Package, Settings, ShieldCheck, Contact, Tags, ArrowLeftRight, Calculator, FileSpreadsheet, Send,
 } from 'lucide-react'
 import { useData } from '../store/DataContext.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
@@ -12,6 +12,7 @@ const sections = [
     { to: '/sales/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { to: '/sales/leads', label: 'Leads', icon: Users2 },
     { to: '/sales/opportunities', label: 'Opportunities', icon: Target },
+    { to: '/sales/engineering', label: 'Engineering Requests', icon: Send },
     { to: '/sales/quotations', label: 'Quotations / Estimation', icon: FileText },
     { to: '/sales/orders', label: 'Sales Orders', icon: ClipboardList },
     { to: '/sales/customers', label: 'Customers', icon: Contact },

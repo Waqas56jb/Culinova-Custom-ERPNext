@@ -62,13 +62,52 @@ const tc = await fetch(`${BASE}/sales/top-customers`, { headers: A })
 ok(tc.status === 200, `Top Customers chart → GET /sales/top-customers ${tc.status} (invoices are finance-gated)`)
 
 // ─────────────────────────────────────────────────────────────────────────────
+S('LEAD CONVERT — Sales User (Create level) must convert without PATCH permission')
+const testLead = await fetch(`${BASE}/leads`, {
+  method: 'POST', headers: A,
+  body: JSON.stringify({
+    name: 'ZZ Verify Contact', company: 'ZZVERIFY Lead Co', source: 'Website',
+    est_value: 50000, project_name: 'ZZ Test Kitchen', project_city: 'Riyadh', project_district: 'Al Malqa',
+    status: 'New',
+  }),
+}).then(j)
+ok(testLead.id, `POST /leads → test lead created (${testLead.number || testLead.id})`)
+if (testLead.id) cleanup.leads.push(testLead.id)
+
+if (testLead.id) {
+  const conv = await fetch(`${BASE}/sales/leads/${testLead.id}/convert`, { method: 'POST', headers: A, body: '{}' })
+  const convBody = await conv.json().catch(() => ({}))
+  ok(conv.status === 201, `Sales User convert → ${conv.status} (was 403 before fix)`)
+  ok(convBody.opportunity?.id, `convert created opportunity ${convBody.opportunity?.number || convBody.opportunity?.id}`)
+  ok(convBody.lead?.status === 'Opportunity', `lead status → "${convBody.lead?.status}"`)
+  if (convBody.opportunity?.id) cleanup.opportunities.push(convBody.opportunity.id)
+}
+
+// reuse opportunity for quotation tests (create one if convert failed)
+let testOppId = null
+if (testLead.id) {
+  const { data: oppRow } = await supabase.from('opportunities').select('id').ilike('customer', 'ZZVERIFY Lead Co').maybeSingle()
+  testOppId = oppRow?.id
+}
+if (!testOppId) {
+  const opp = await fetch(`${BASE}/sales/opportunities`, {
+    method: 'POST', headers: A,
+    body: JSON.stringify({ customer: 'ZZVERIFY Sales Co', stage: 'Prospecting', value: 50000, next_action_date: '2026-08-01' }),
+  }).then(j)
+  testOppId = opp.id
+  if (testOppId) cleanup.opportunities.push(testOppId)
+}
+ok(!!testOppId, `test opportunity ready for quotation (${testOppId})`)
+
+// ─────────────────────────────────────────────────────────────────────────────
 S('DISCOUNT RULES — the builder must obey the SAME limits as the legacy route')
-const anItem = items.find((i) => i.id)
+const anItem = items.find((i) => i.id && (Number(i.selling_price) || Number(i.selling_rate) || Number(i.standard_rate) || 0) > 0) || items.find((i) => i.id)
 const mkQuote = (headers, discount_pct) => fetch(`${BASE}/quotations`, {
   method: 'POST', headers,
   body: JSON.stringify({
     customer: 'ZZVERIFY Sales Co', customer_email: 'zzverify@example.com',
-    items: [{ item_id: anItem.id, qty: 1, rate: 10000 }], discount_pct,
+    opportunity_id: testOppId,
+    items: [{ item_id: anItem.id, qty: 1 }], discount_pct,
   }),
 })
 

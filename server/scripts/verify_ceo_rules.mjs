@@ -133,10 +133,15 @@ ok(check.summary?.needs_procurement === true && check.summary?.stock_coverage_pc
   `summary: ${check.summary?.stock_coverage_pct}% covered by stock, ${check.summary?.to_purchase} unit(s) must be bought`)
 
 S('R1 — the split is PERSISTED on the quotation')
+const ceoOpp = await fetch(`${BASE}/sales/opportunities`, {
+  method: 'POST', headers: A,
+  body: JSON.stringify({ customer: 'ZZCEO Verify Co', stage: 'Prospecting', value: 50000, next_action_date: '2026-08-01' }),
+}).then(j)
 const q = await fetch(`${BASE}/quotations`, {
   method: 'POST', headers: A,
   body: JSON.stringify({
     customer: 'ZZCEO Verify Co', customer_email: 'zzceo@example.com', project_name: 'ZZ CEO Kitchen',
+    opportunity_id: ceoOpp.id,
     items: [{ item_id: item.id, qty: 5, rate: 1000 }],
   }),
 }).then(j)

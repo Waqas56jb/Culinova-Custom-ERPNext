@@ -3,6 +3,7 @@ import Layout from './components/Layout.jsx'
 import SalesDashboard from './pages/SalesDashboard.jsx'
 import Leads from './pages/Leads.jsx'
 import Opportunities from './pages/Opportunities.jsx'
+import EngineeringRequests from './pages/EngineeringRequests.jsx'
 import Quotations from './pages/Quotations.jsx'
 import SalesOrders from './pages/SalesOrders.jsx'
 import Chat from './pages/Chat.jsx'
@@ -72,6 +73,7 @@ export default function App() {
           <Route path="/sales/dashboard" element={<SalesDashboard />} />
           <Route path="/sales/leads" element={<Leads />} />
           <Route path="/sales/opportunities" element={<Opportunities />} />
+          <Route path="/sales/engineering" element={<EngineeringRequests />} />
           <Route path="/sales/quotations" element={<Quotations />} />
           <Route path="/sales/orders" element={<SalesOrders />} />
           <Route path="/sales/customers" element={<PartyMaster party="customer" />} />

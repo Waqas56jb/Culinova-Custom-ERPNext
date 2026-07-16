@@ -1,4 +1,6 @@
-const BASE = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? 'https://culinova-backend.vercel.app/api' : 'http://localhost:5050/api')
+import { erpApiBase } from '../../shared/deploy.js'
+
+const BASE = erpApiBase()
 
 export const getToken = () => localStorage.getItem('culinova_token')
 

@@ -4,13 +4,54 @@ import { PageHeader, Badge, statusTone, sar } from '../components/ui.jsx'
 import { useCustomer } from '../store/CustomerContext.jsx'
 import QuotationDoc from '../components/QuotationDoc.jsx'
 
+const blankProfile = () => ({ cr_number: '', vat_number: '', national_address: '', billing_address: '' })
+
 export default function Quotations() {
-  const { quotations, acceptQuote, rejectQuote, requestConcession, deleteQuote } = useCustomer()
+  const { quotations, acceptQuote, rejectQuote, requestConcession, deleteQuote, saveCommercialProfile, getCommercialProfile } = useCustomer()
   const [busy, setBusy] = useState(null)
   const [doc, setDoc] = useState(null)
+  const [profileModal, setProfileModal] = useState(null)
+  const [profile, setProfile] = useState(blankProfile())
+  const [profileErr, setProfileErr] = useState('')
+
   const run = async (id, fn) => { setBusy(id); try { await fn() } catch (e) { alert(e.message) } finally { setBusy(null) } }
 
-  const accept = (q) => { if (window.confirm(`Accept ${q.ref}? This confirms your order — CULINOVA will start your project.`)) run(q.id, () => acceptQuote(q.id)) }
+  const accept = async (q) => {
+    if (!window.confirm(`Accept ${q.ref}? This confirms your order — CULINOVA will start your project.`)) return
+    setBusy(q.id)
+    try {
+      await acceptQuote(q.id)
+    } catch (e) {
+      if (e.code === 'COMMERCIAL_PROFILE_REQUIRED') {
+        setProfileErr('')
+        setProfile(blankProfile())
+        setProfileModal(q)
+        try {
+          const existing = await getCommercialProfile()
+          if (existing?.cr_number) setProfile({
+            cr_number: existing.cr_number || '',
+            vat_number: existing.vat_number || '',
+            national_address: existing.national_address || '',
+            billing_address: existing.billing_address || '',
+          })
+        } catch { /* fresh form */ }
+      } else alert(e.message)
+    } finally { setBusy(null) }
+  }
+
+  const saveProfileAndAccept = async () => {
+    if (!profileModal) return
+    setProfileErr('')
+    setBusy(profileModal.id)
+    try {
+      await saveCommercialProfile(profile)
+      await acceptQuote(profileModal.id)
+      setProfileModal(null)
+    } catch (e) {
+      setProfileErr(e.message)
+    } finally { setBusy(null) }
+  }
+
   const reject = (q) => { const r = window.prompt(`Reject ${q.ref} — please tell us why:`); if (r && r.trim()) run(q.id, () => rejectQuote(q.id, r.trim())) }
   const concession = (q) => { const n = window.prompt(`Request a better price on ${q.ref} — your note to the sales team:`); if (n !== null) run(q.id, () => requestConcession(q.id, n.trim())) }
   const remove = (q) => { if (window.confirm(`Delete ${q.ref}? This removes it from your list.`)) run(q.id, () => deleteQuote(q.id)) }
@@ -66,9 +107,42 @@ export default function Quotations() {
           </table>
         </div>
       </div>
-      <p className="mt-3 text-xs text-muted">Tap <b>View PDF</b> to see full rates. On <b>Accept</b>, your order &amp; project are created automatically. <b>Concession</b> messages your salesperson.</p>
+      <p className="mt-3 text-xs text-muted">Tap <b>View PDF</b> to see full rates. On <b>Accept</b>, your order &amp; project are created automatically. CR/VAT details are required before order confirmation.</p>
 
       <QuotationDoc open={!!doc} onClose={() => setDoc(null)} quotation={doc} />
+
+      {profileModal && (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-navy-900/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+            <h3 className="font-display text-lg font-bold text-ink">Commercial Registration</h3>
+            <p className="mt-1 text-sm text-slate-500">Before confirming order <b>{profileModal.ref}</b>, please provide your CR number, VAT number, and billing address (ZATCA requirement).</p>
+            <div className="mt-4 space-y-3">
+              {['cr_number', 'vat_number', 'national_address', 'billing_address'].map((f) => (
+                <label key={f} className="block">
+                  <span className="mb-1 block text-xs font-semibold text-slate-600">
+                    {f === 'cr_number' ? 'CR Number *' : f === 'vat_number' ? 'VAT Number *' : f === 'national_address' ? 'National Address *' : 'Billing Address *'}
+                  </span>
+                  {f.includes('address') ? (
+                    <textarea value={profile[f]} onChange={(e) => setProfile((p) => ({ ...p, [f]: e.target.value }))} rows={2}
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-500/15" />
+                  ) : (
+                    <input value={profile[f]} onChange={(e) => setProfile((p) => ({ ...p, [f]: e.target.value }))}
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-500/15" />
+                  )}
+                </label>
+              ))}
+            </div>
+            {profileErr && <p className="mt-3 text-xs font-semibold text-rose-600">{profileErr}</p>}
+            <div className="mt-5 flex justify-end gap-2">
+              <button onClick={() => setProfileModal(null)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">Cancel</button>
+              <button onClick={saveProfileAndAccept} disabled={busy === profileModal.id}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-brand-500 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-60">
+                {busy === profileModal.id ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Save &amp; Accept
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }
