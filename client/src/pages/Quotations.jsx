@@ -116,6 +116,7 @@ export default function Quotations() {
     setError('')
     const preLines = (prefill.lines || []).map((l) => ({
       item_id: l.item_id,
+      item_code: l.item_code,
       item_name: l.item_name,
       brand: l.brand,
       model: l.model,
@@ -124,6 +125,7 @@ export default function Quotations() {
       specifications: l.specifications,
       image_url: l.image_url,
       datasheet_url: l.datasheet_url,
+      pos: l.pos || l.area || '',
       qty: n0(l.qty) || 1,
       rate: n0(l.rate),
       cost: l.cost != null ? n0(l.cost) : null,
@@ -154,8 +156,9 @@ export default function Quotations() {
     try {
       const full = await api(`/quotations/${q.id}`)
       const lines = (full.quotation_items || []).sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)).map((l) => ({
-        item_id: l.item_id, item_name: l.item_name, brand: l.brand, model: l.model, uom: l.uom,
+        item_id: l.item_id, item_code: l.item_code, item_name: l.item_name, brand: l.brand, model: l.model, uom: l.uom,
         description: l.description, specifications: l.specifications, image_url: l.image_url, datasheet_url: l.datasheet_url,
+        pos: l.pos || l.area || '',
         qty: n0(l.qty), rate: n0(l.rate), cost: l.cost, discount_pct: n0(l.discount_pct),
       }))
       setBuilder({
@@ -179,9 +182,10 @@ export default function Quotations() {
     if (b.lines.some((l) => l.item_id === it.id)) return b
     return {
       ...b, lines: [...b.lines, {
-        item_id: it.id, item_name: it.item_name || it.name, brand: it.brand, model: it.model,
+        item_id: it.id, item_code: it.item_code || it.code, item_name: it.item_name || it.name, brand: it.brand, model: it.model,
         uom: it.uom || it.stock_uom || 'Nos', description: it.description, specifications: it.specifications,
-        image_url: it.image_url, datasheet_url: it.datasheet_url, qty: 1, rate: itemRate(it), cost: itemCost(it), discount_pct: 0,
+        image_url: it.image_url, datasheet_url: it.datasheet_url, pos: '',
+        qty: 1, rate: itemRate(it), cost: itemCost(it), discount_pct: 0,
       }],
     }
   })
@@ -222,8 +226,9 @@ export default function Quotations() {
       sales_consultant: builder.sales_consultant || null, sales_consultant_phone: builder.sales_consultant_phone || null,
       sales_consultant_email: builder.sales_consultant_email || null, area: builder.area || null, language: builder.language || 'en',
       items: builder.lines.map((l, i) => ({
-        item_id: l.item_id, item_name: l.item_name, brand: l.brand, model: l.model, uom: l.uom,
+        item_id: l.item_id, item_code: l.item_code, item_name: l.item_name, brand: l.brand, model: l.model, uom: l.uom,
         description: l.description, specifications: l.specifications, image_url: l.image_url, datasheet_url: l.datasheet_url,
+        pos: l.pos || null,
         qty: n0(l.qty), rate: n0(l.rate), discount_pct: n0(l.discount_pct), sort_order: i,
       })),
     }

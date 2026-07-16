@@ -13,6 +13,7 @@ import { notifyManagementApproval } from '../../core/notify.js'
 import { recomputeProject } from '../../core/projectcost.js'
 import { reserveForSalesOrder } from '../../core/inventory.js'
 import { allocateLines } from '../../core/availability.js'
+import { enrichQuotationList, enrichQuotationRecord } from '../../core/quotationLines.js'
 import { validateRequiredFields, computeFinancials, evaluateApproval, discountSource, RULES } from './quotation.rules.js'
 import { nextNumber } from '../../core/numbering.js'
 
@@ -177,13 +178,15 @@ r.get('/orders/:id/items', authRequired, authorize('sales', 'read'), asyncWrap(a
 r.get('/quotations', authRequired, authorize('sales', 'read'), asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('quotations').select('*, quotation_items(*)').order('created_at', { ascending: false })
   if (error) throw error
-  res.json(redactFinancials(req.user.role, data))
+  const enriched = await enrichQuotationList(data || [])
+  res.json(redactFinancials(req.user.role, enriched))
 }))
 
 r.get('/quotations/:id', authRequired, authorize('sales', 'read'), asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('quotations').select('*, quotation_items(*)').eq('id', req.params.id).single()
   if (error) return res.status(404).json({ error: 'Not found' })
-  res.json(redactFinancials(req.user.role, data))
+  const enriched = await enrichQuotationRecord(data)
+  res.json(redactFinancials(req.user.role, enriched))
 }))
 
 // ── CREATE — enforces ALL sales rules ──

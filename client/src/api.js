@@ -1,4 +1,4 @@
-import { erpApiBase } from '../../shared/deploy.js'
+import { erpApiBase } from '@deploy'
 
 const BASE = erpApiBase()
 

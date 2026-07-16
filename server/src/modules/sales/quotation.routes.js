@@ -31,6 +31,7 @@ import { discountSource, evaluateApproval, effectiveDiscountPct, RULES, isValidV
 import { ensureLeadAndOpportunity, advanceOpportunity } from '../../core/crmflow.js'
 import { notifyManagementApproval } from '../../core/notify.js'
 import { allocateLines, allocationSummary, allocationColumns } from '../../core/availability.js'
+import { enrichQuotationRecord, enrichQuotationList } from '../../core/quotationLines.js'
 
 // CEO rule R1 — STOCK FIRST. Every quotation is allocated against live stock BEFORE it is saved:
 // each line records how much is served from stock we already own and how much is a shortfall that
@@ -115,6 +116,7 @@ async function buildLine(input = {}, idx = 0, { lockRate = false } = {}) {
   const pref = (field, fallback) => (input[field] !== undefined && input[field] !== null && input[field] !== '' ? input[field] : fallback)
   return {
     item_id: itemId,
+    item_code: pref('item_code', itemRow?.item_code ?? itemRow?.code ?? null),
     item_name: pref('item_name', itemRow?.item_name || itemRow?.name || 'Item'),
     brand: pref('brand', itemRow?.brand ?? null),
     model: pref('model', itemRow?.model ?? null),
@@ -123,6 +125,7 @@ async function buildLine(input = {}, idx = 0, { lockRate = false } = {}) {
     specifications: pref('specifications', itemRow?.specifications ?? null),
     image_url: pref('image_url', itemRow?.image_url ?? null),
     datasheet_url: pref('datasheet_url', itemRow?.datasheet_url ?? null),
+    pos: clean(input.pos) || clean(input.area) || null,
     qty, rate, cost, discount_pct: disc,
     amount: round(qty * rate * (1 - disc / 100)),
     sort_order: num(input.sort_order) ?? idx,
@@ -332,7 +335,8 @@ export function quotationRouter() {
       item_id: l.item_id, item_name: l.item_name, qty: l.qty,
       from_stock: l.from_stock, to_purchase: l.to_purchase, available: l.available_qty,
     })))
-    res.json(redactFinancials(req.user.role, { ...q, revisions: revisions || [], terms: terms || [], stock }))
+    const enriched = await enrichQuotationRecord(q)
+    res.json(redactFinancials(req.user.role, { ...enriched, revisions: revisions || [], terms: terms || [], stock }))
   }))
 
   // ── LIVE AVAILABILITY for the builder ──
@@ -461,7 +465,7 @@ export function quotationRouter() {
     if (p.qty !== undefined) { const v = num(p.qty); patch.qty = v == null ? line.qty : v }
     if (p.rate !== undefined && isManagement(req.user.role)) { const v = num(p.rate); patch.rate = v == null ? line.rate : v }
     if (p.discount_pct !== undefined) patch.discount_pct = Math.max(0, Math.min(100, n0(p.discount_pct)))
-    for (const f of ['item_name', 'brand', 'model', 'uom', 'description', 'specifications', 'image_url', 'datasheet_url']) {
+    for (const f of ['item_name', 'item_code', 'pos', 'brand', 'model', 'uom', 'description', 'specifications', 'image_url', 'datasheet_url']) {
       if (p[f] !== undefined) patch[f] = clean(p[f])
     }
     const merged = { ...line, ...patch }

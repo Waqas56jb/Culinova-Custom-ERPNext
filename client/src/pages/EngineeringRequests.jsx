@@ -1,15 +1,16 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Loader2, Send, FileText, RefreshCw } from 'lucide-react'
+import { Plus, Loader2, Send, FileText, RefreshCw, Info } from 'lucide-react'
 import { PageHeader, Badge, statusTone } from '../components/ui.jsx'
 import { Modal, Field, TextArea, Row } from '../components/Modal.jsx'
 import { api } from '../api.js'
 import { useData } from '../store/DataContext.jsx'
 
 const STATUSES = ['Pending Engineering Review', 'Under Design', 'Awaiting Information', 'Equipment Selection Completed', 'Ready for Quotation']
+const ENG_TYPE = 'Project Requiring Engineering'
 
 export default function EngineeringRequests() {
-  const { opportunities } = useData()
+  const { opportunities, reload, openForm } = useData()
   const navigate = useNavigate()
   const [rows, setRows] = useState([])
   const [busy, setBusy] = useState(null)
@@ -19,7 +20,27 @@ export default function EngineeringRequests() {
   const load = () => api('/engineering/requests').then(setRows).catch(() => setRows([]))
   useEffect(() => { load() }, [])
 
-  const engOpps = opportunities.filter((o) => o.opportunity_type === 'Project Requiring Engineering' && !['Won', 'Lost'].includes(o.stage))
+  const openCreate = async () => {
+    setForm({ opportunity_id: '', boq_text: '', sales_notes: '', required_date: '' })
+    setModal(true)
+    try { await reload('opportunities') } catch { /* list may still be cached */ }
+  }
+
+  // Client rule: only "Project Requiring Engineering" opps go to EOS — Retail Sale skips engineering
+  const engOpps = useMemo(() => {
+    const openEngOppIds = new Set(
+      rows.filter((r) => r.opportunity_id && r.status !== 'Ready for Quotation').map((r) => r.opportunity_id),
+    )
+    return opportunities.filter(
+      (o) => o.opportunity_type === ENG_TYPE
+        && !['Won', 'Lost'].includes(o.stage)
+        && !openEngOppIds.has(o.id),
+    )
+  }, [opportunities, rows])
+
+  const retailOpen = opportunities.filter(
+    (o) => o.opportunity_type !== ENG_TYPE && !['Won', 'Lost'].includes(o.stage),
+  ).length
 
   const submit = async () => {
     if (!form.opportunity_id) { alert('Select an opportunity'); return }
@@ -50,7 +71,7 @@ export default function EngineeringRequests() {
   return (
     <>
       <PageHeader title="Engineering Requests" subtitle="Sales → EOS handoff for project-based equipment selection">
-        <button className="btn-primary" onClick={() => { setForm({ opportunity_id: '', boq_text: '', sales_notes: '', required_date: '' }); setModal(true) }}>
+        <button className="btn-primary" onClick={openCreate}>
           <Plus size={16} /> New Request
         </button>
       </PageHeader>
@@ -98,8 +119,29 @@ export default function EngineeringRequests() {
             <span className="mb-1.5 block text-xs font-semibold text-slate-600">Opportunity *</span>
             <select value={form.opportunity_id} onChange={(e) => setForm((s) => ({ ...s, opportunity_id: e.target.value }))} className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm">
               <option value="">— select —</option>
-              {engOpps.map((o) => <option key={o.id} value={o.id}>{o.customer} · {o.project_name || o.ref}</option>)}
+              {engOpps.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.ref || o.number} · {o.customer}{o.project_name ? ` · ${o.project_name}` : ''} · {o.stage}
+                </option>
+              ))}
             </select>
+            {engOpps.length === 0 && (
+              <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50/80 p-3 text-[11px] leading-relaxed text-amber-900">
+                <p className="flex items-start gap-1.5 font-semibold"><Info size={14} className="mt-0.5 shrink-0" /> No engineering opportunities available</p>
+                <p className="mt-1.5 text-amber-800">
+                  Client workflow: create an Opportunity with type <b>Project Requiring Engineering</b> (not Retail Sale).
+                  Sales fills BOQ / drawings here → EOS engineering team selects equipment → returns approved BOQ → you create Quotation.
+                </p>
+                <p className="mt-1.5 text-amber-700">
+                  {retailOpen > 0
+                    ? `You have ${retailOpen} open Retail Sale opportunit${retailOpen === 1 ? 'y' : 'ies'} — those go straight to Quotation, not Engineering.`
+                    : 'Convert a Lead or add a new Opportunity first, then pick the engineering type.'}
+                </p>
+                <button type="button" onClick={() => { setModal(null); openForm('opportunity') }} className="mt-2 font-bold text-brand-600 hover:underline">
+                  + New Opportunity (Project Requiring Engineering)
+                </button>
+              </div>
+            )}
           </label>
           <Field label="Required Date" type="date" value={form.required_date} onChange={(e) => setForm((s) => ({ ...s, required_date: e.target.value }))} />
         </Row>

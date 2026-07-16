@@ -9,7 +9,7 @@ import { sar } from '../data/mockData.js'
 import { useData } from '../store/DataContext.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
 import { api, getToken } from '../api.js'
-import { erpApiBase } from '../../shared/deploy.js'
+import { erpApiBase } from '@deploy'
 
 // Roles allowed to see cost / margin / supplier price (mirrors server rbac/permissions.financialRoles).
 // The server ALSO redacts, so a non-financial viewer simply gets undefined — we never render it.

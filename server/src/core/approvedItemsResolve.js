@@ -94,6 +94,7 @@ export async function resolveApprovedItems(approvedItems = []) {
     const { selling, landed } = await rateForItem(item)
     lines.push({
       item_id: item.id,
+      item_code: item.item_code || item.code || raw.item_code || null,
       item_name: item.item_name || item.name,
       brand: item.brand,
       model: item.model,
@@ -106,7 +107,7 @@ export async function resolveApprovedItems(approvedItems = []) {
       rate: selling,
       cost: landed,
       discount_pct: n0(raw.discount_pct),
-      area: raw.area || raw.pos || null,
+      pos: raw.pos || raw.area || null,
       _match: match,
     })
   }

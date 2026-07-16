@@ -34,6 +34,13 @@ const groupCount = (arr, key) => Object.entries(arr.reduce((a, x) => { const k =
 export default function SalesDashboard() {
   const d = useData()
   const { openForm, leads, opportunities, quotations, salesOrders, invoices } = d
+  const [topRows, setTopRows] = useState(null)
+  const [dashMetrics, setDashMetrics] = useState(null)
+
+  useEffect(() => {
+    d.resList('sales/top-customers').then((r) => setTopRows(Array.isArray(r) ? r : [])).catch(() => setTopRows(null))
+    api('/engineering/dashboard-metrics').then(setDashMetrics).catch(() => setDashMetrics(null))
+  }, [d])
 
   const openOpps = opportunities.filter((o) => !['Won', 'Lost'].includes(o.stage))
   const wonOpps = opportunities.filter((o) => o.stage === 'Won').length
@@ -71,12 +78,6 @@ export default function SalesDashboard() {
   // role can never read it — which used to leave this chart permanently dead. GET /sales/top-customers
   // returns just the aggregate a salesperson may see (customer + outstanding, no cost/margin/detail).
   // Fall back to the invoices store for roles (Finance/Management) that do hold them.
-  const [topRows, setTopRows] = useState(null)
-  const [dashMetrics, setDashMetrics] = useState(null)
-  useEffect(() => {
-    d.resList('sales/top-customers').then((r) => setTopRows(Array.isArray(r) ? r : [])).catch(() => setTopRows(null))
-    api('/engineering/dashboard-metrics').then(setDashMetrics).catch(() => setDashMetrics(null))
-  }, [d])
   const topCustomers = (topRows !== null
     ? topRows.map((r) => ({ name: r.customer, bal: Number(r.outstanding) || 0 }))
     : Object.entries(invoices.reduce((acc, inv) => {

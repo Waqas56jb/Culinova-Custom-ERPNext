@@ -9,6 +9,7 @@ import { projectFieldsFromQuote } from '../../core/handover.js'
 import { customerCommercialGate } from '../../core/customerGate.js'
 import { recomputeProject } from '../../core/projectcost.js'
 import { reserveForSalesOrder } from '../../core/inventory.js'
+import { enrichQuotationList } from '../../core/quotationLines.js'
 
 const r = Router()
 const num = (p) => `${p}-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`
@@ -45,8 +46,9 @@ r.get('/customer/overview', authRequired, asyncWrap(async (req, res) => {
     p.progress = total ? Math.round((done / total) * 100) : (p.progress || 0)
     p.boq = items
   }
+  const enrichedQuotes = await enrichQuotationList(rows(q))
   // never expose our cost / GP / margin to the customer — strip it (recursively, incl. quotation line items)
-  res.json({ quotations: redactFinancials(req.user.role, rows(q)), invoices: rows(inv), projects, tickets: rows(tk) })
+  res.json({ quotations: redactFinancials(req.user.role, enrichedQuotes), invoices: rows(inv), projects, tickets: rows(tk) })
 }))
 r.post('/customer/tickets', authRequired, asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('service_tickets').insert({ number: num('TKT'), customer: req.user.name, subject: req.body.subject, priority: req.body.priority || 'Medium' }).select().single()
