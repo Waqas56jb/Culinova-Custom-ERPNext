@@ -31,6 +31,8 @@ import { discountSource, evaluateApproval, effectiveDiscountPct, RULES, isValidV
 import { ensureLeadAndOpportunity, advanceOpportunity } from '../../core/crmflow.js'
 import { notifyManagementApproval } from '../../core/notify.js'
 import { allocateLines, allocationSummary, allocationColumns } from '../../core/availability.js'
+import { priceItems, redactPricing } from '../../core/quotationPricing.js'
+import { canSeeFinancials } from '../../rbac/permissions.js'
 import { enrichQuotationRecord, enrichQuotationList } from '../../core/quotationLines.js'
 
 // CEO rule R1 — STOCK FIRST. Every quotation is allocated against live stock BEFORE it is saved:
@@ -321,6 +323,24 @@ export function quotationRouter() {
     const { data, error } = await supabase.from('commercial_terms').select('*').eq('is_active', true).order('category', { ascending: true }).order('name', { ascending: true })
     if (error) throw error
     res.json(data || [])
+  }))
+
+  /**
+   * Automatic pricing for quotation lines (feedback item 5) — registered BEFORE '/:id'.
+   *   GET /sales/quotations/price-items?ids=<uuid>,<uuid>,…
+   *
+   * Estimated cost and selling price derived from the item's valuation rate and its Brand Master
+   * factors. Cost, GP and the factors themselves are stripped for roles that must not see them, so
+   * a Sales User receives the selling price only.
+   */
+  r.get('/price-items', authRequired, authorize('sales', 'read'), asyncWrap(async (req, res) => {
+    const ids = String(req.query.ids || '').split(',').map((s) => s.trim()).filter(Boolean).slice(0, 200)
+    if (!ids.length) return res.json({})
+    const priced = await priceItems(ids)
+    const fin = canSeeFinancials(req.user?.role)
+    const out = {}
+    for (const [id, p] of Object.entries(priced)) out[id] = redactPricing(p, fin)
+    res.json(out)
   }))
 
   // ── READ one quotation + items + revisions + resolved commercial terms ──

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Plus, Search, Filter, ArrowRight, Loader2 } from 'lucide-react'
 import { PageHeader, Badge, statusTone } from '../components/ui.jsx'
+import CrmDetailModal from '../components/CrmDetailModal.jsx'
 import { sar } from '../data/mockData.js'
 import { useData } from '../store/DataContext.jsx'
 
@@ -8,7 +9,8 @@ const filters = ['All', 'New', 'Contacted', 'Meeting Scheduled', 'Site Visit', '
 const CONVERTABLE = ['New', 'Contacted', 'Meeting Scheduled', 'Site Visit', 'Quotation Preparation', 'Open', 'Qualified', 'Replied']
 
 export default function Leads() {
-  const { leads, openForm, convertLead } = useData()
+  const { leads, openForm, convertLead, reload } = useData()
+  const [openId, setOpenId] = useState(null)   // the lead being viewed / edited
   const [f, setF] = useState('All')
   const [q, setQ] = useState('')
   const [converting, setConverting] = useState(null)
@@ -78,7 +80,11 @@ export default function Leads() {
             </thead>
             <tbody>
               {rows.map((l) => (
-                <tr key={l.id} className="group hover:bg-slate-50/60">
+                <tr
+                  key={l.id}
+                  onClick={() => setOpenId(l.id)}
+                  className="group cursor-pointer hover:bg-slate-50/60"
+                >
                   <td className="td font-semibold text-brand-600">{l.ref || l.number || '—'}</td>
                   <td className="td">
                     <div className="flex items-center gap-2.5">
@@ -104,7 +110,7 @@ export default function Leads() {
                   <td className="td"><Badge tone={statusTone(l.status)}>{l.status}</Badge></td>
                   <td className="td">
                     {CONVERTABLE.includes(l.status) ? (
-                      <button onClick={() => doConvert(l)} disabled={converting === l.id}
+                      <button onClick={(e) => { e.stopPropagation(); doConvert(l) }} disabled={converting === l.id}
                         className="flex items-center gap-1 text-xs font-semibold text-brand-600 opacity-0 transition group-hover:opacity-100 disabled:opacity-100 disabled:text-slate-400">
                         {converting === l.id ? <><Loader2 size={13} className="animate-spin" /> Converting…</> : <>Convert <ArrowRight size={13} /></>}
                       </button>
@@ -118,6 +124,14 @@ export default function Leads() {
           </table>
         </div>
       </div>
+
+      <CrmDetailModal
+        kind="lead"
+        id={openId}
+        open={!!openId}
+        onClose={() => setOpenId(null)}
+        onSaved={() => reload('leads')}
+      />
     </>
   )
 }

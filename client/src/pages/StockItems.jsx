@@ -1,15 +1,21 @@
 import { useState } from 'react'
-import { Search } from 'lucide-react'
+import { Search, Upload } from 'lucide-react'
 import { PageHeader, Badge } from '../components/ui.jsx'
 import { sar } from '../data/mockData.js'
 import { useData } from '../store/DataContext.jsx'
+import { useAuth } from '../auth/AuthContext.jsx'
+import OpeningStockImport from '../components/OpeningStockImport.jsx'
 
 const statusOf = (it) => (it.available <= 0 ? { t: 'Out of Stock', tone: 'red' } : it.available <= it.reorder ? { t: 'Low Stock', tone: 'amber' } : { t: 'In Stock', tone: 'green' })
 
 export default function StockItems() {
-  const { stockItems, items } = useData()
+  const { stockItems, items, reload } = useData()
+  const { user } = useAuth()
+  // Opening stock posts through the warehouse engine, so gate the entry on warehouse-write roles.
+  const canImport = ['Management', 'System Admin', 'Stock User'].includes(user?.role)
   const [q, setQ] = useState('')
   const [g, setG] = useState('All')
+  const [importing, setImporting] = useState(false)
   const groups = ['All', ...new Set(stockItems.map((it) => it.group))]
   const rows = stockItems.filter((it) => (g === 'All' || it.group === g) && (it.name + it.code).toLowerCase().includes(q.toLowerCase()))
   // Valuation basis = COST (accounting-correct), matching StockDashboard — NOT the selling rate.
@@ -28,7 +34,19 @@ export default function StockItems() {
 
   return (
     <>
-      <PageHeader title="Stock / Items" subtitle="Live inventory balance & valuation" />
+      <PageHeader title="Stock / Items" subtitle="Live inventory balance & valuation">
+        {canImport && (
+          <button className="btn-primary" onClick={() => setImporting(true)}>
+            <Upload size={16} /> Import Opening Stock
+          </button>
+        )}
+      </PageHeader>
+
+      <OpeningStockImport
+        open={importing}
+        onClose={() => setImporting(false)}
+        onDone={() => reload('stockItems')}
+      />
 
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Stock Value" value={totalValue == null ? '—' : sar(totalValue)} tone="text-brand-600" />

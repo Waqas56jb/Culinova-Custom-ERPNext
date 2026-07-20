@@ -5,12 +5,14 @@ import { PageHeader, Badge, statusTone } from '../components/ui.jsx'
 import { sar } from '../data/mockData.js'
 import { api } from '../api.js'
 import { useData } from '../store/DataContext.jsx'
+import CrmDetailModal from '../components/CrmDetailModal.jsx'
 
 const stages = ['Prospecting', 'Quotation', 'Negotiation', 'Won']
 const stageColor = { Prospecting: '#94a3b8', Quotation: '#3b82f6', Negotiation: '#E0A82E', Won: '#0EA99A' }
 
 export default function Opportunities() {
-  const { opportunities, salesOrders, openForm, wonOpportunity, lostOpportunity, getOpportunityQuotationPrefill } = useData()
+  const { opportunities, salesOrders, openForm, wonOpportunity, lostOpportunity, getOpportunityQuotationPrefill, reload } = useData()
+  const [openId, setOpenId] = useState(null)   // the opportunity being viewed / edited
   const navigate = useNavigate()
   const lost = opportunities.filter((o) => o.stage === 'Lost')
   const [busy, setBusy] = useState(null)
@@ -63,7 +65,11 @@ export default function Opportunities() {
               <p className="mb-3 px-1 text-xs font-semibold text-muted">{sar(total)}</p>
               <div className="space-y-3">
                 {items.map((o) => (
-                  <div key={o.id} className="group card card-pad hover:shadow-glow transition">
+                  <div
+                    key={o.id}
+                    onClick={() => setOpenId(o.id)}
+                    className="group card card-pad cursor-pointer transition hover:shadow-glow"
+                  >
                     <div className="flex items-center justify-between">
                       <p className="text-sm font-semibold text-ink">{o.customer}</p>
                       <Badge tone={statusTone(o.stage)}>{o.prob}%</Badge>
@@ -82,21 +88,21 @@ export default function Opportunities() {
                     {stage !== 'Won' && (
                       <div className="mt-3 flex flex-wrap gap-1.5 border-t border-slate-100 pt-2.5">
                         {o.opportunity_type === 'Project Requiring Engineering' ? (
-                          <button onClick={() => sendEngineering(o)} disabled={busy === o.id}
+                          <button onClick={(e) => { e.stopPropagation(); sendEngineering(o) }} disabled={busy === o.id}
                             className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg bg-violet-50 px-2 py-1.5 text-[11px] font-bold text-violet-700 transition hover:bg-violet-100 disabled:opacity-50">
                             {busy === o.id ? <Loader2 size={12} className="animate-spin" /> : <Wrench size={12} />} Engineering
                           </button>
                         ) : (
-                          <button onClick={() => createQuote(o)} disabled={busy === o.id}
+                          <button onClick={(e) => { e.stopPropagation(); createQuote(o) }} disabled={busy === o.id}
                             className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg bg-brand-50 px-2 py-1.5 text-[11px] font-bold text-brand-700 transition hover:bg-brand-100 disabled:opacity-50">
                             {busy === o.id ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />} Quotation
                           </button>
                         )}
-                        <button onClick={() => markWon(o)} disabled={busy === o.id}
+                        <button onClick={(e) => { e.stopPropagation(); markWon(o) }} disabled={busy === o.id}
                           className="inline-flex items-center justify-center gap-1 rounded-lg bg-emerald-50 px-2 py-1.5 text-[11px] font-bold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-50">
                           <Trophy size={12} /> Won
                         </button>
-                        <button onClick={() => markLost(o)} disabled={busy === o.id}
+                        <button onClick={(e) => { e.stopPropagation(); markLost(o) }} disabled={busy === o.id}
                           className="inline-flex items-center justify-center gap-1 rounded-lg bg-rose-50 px-2 py-1.5 text-[11px] font-bold text-rose-700 transition hover:bg-rose-100 disabled:opacity-50">
                           <X size={12} /> Lost
                         </button>
@@ -135,6 +141,14 @@ export default function Opportunities() {
           </div>
         </div>
       )}
+
+      <CrmDetailModal
+        kind="opportunity"
+        id={openId}
+        open={!!openId}
+        onClose={() => setOpenId(null)}
+        onSaved={() => reload('opportunities')}
+      />
     </>
   )
 }

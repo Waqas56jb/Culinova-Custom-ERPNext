@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
+import { specPreview, specGroups } from '../data/specs'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   Plus, AlertTriangle, Pencil, Check, X, ThumbsUp, FileText, Loader2, Search, Trash2,
@@ -25,14 +26,9 @@ const SENDERS = ['Management', 'System Admin', 'Sales Manager', 'Sales User']
 
 const n0 = (v) => Number(v) || 0
 const fmtDec = (n) => Number(n || 0).toLocaleString('en-SA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-// strip HTML/JSON noise for a compact spec/description preview
-const preview = (s, len = 90) => {
-  if (!s) return ''
-  let t = String(s)
-  if (t.trim().startsWith('{')) { try { t = Object.entries(JSON.parse(t)).filter(([k]) => k !== 'source' && k !== 'eos_entry_id').map(([k, v]) => `${k}: ${v}`).join(' · ') } catch { /* keep */ } }
-  t = t.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
-  return t.length > len ? t.slice(0, len) + '…' : t
-}
+// Compact spec/description preview. The EOS specification is an ARRAY of attribute objects, so the
+// old `${key}: ${value}` interpolation rendered it as "[object Object]" — see data/specs.js.
+const preview = (s, len = 90) => specPreview(s, len)
 const itemRate = (it) => n0(it.selling_price) || n0(it.selling_rate) || n0(it.standard_rate) || 0
 const itemCost = (it) => (it.landed_cost != null ? n0(it.landed_cost) : it.cost != null ? n0(it.cost) : null)
 const plural = (n) => (n === 1 ? '' : 's')
@@ -369,6 +365,7 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
   const [pickTerm, setPickTerm] = useState('')
   const [customValidity, setCustomValidity] = useState(false)
   const [smartFamily, setSmartFamily] = useState('')
+  const [smartBrand, setSmartBrand] = useState('')
   const [smartRecs, setSmartRecs] = useState([])
   const [smartBusy, setSmartBusy] = useState(false)
 
@@ -376,11 +373,34 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
     return Array.from(new Set((items || []).map((it) => it.product_family).filter(Boolean))).sort()
   }, [items])
 
+  // Brands stocked in the chosen family. The recommender can only report "preferred brand" as a
+  // reason if it is TOLD the preference — nothing else in the quotation implies one, which is why
+  // that reason never appeared.
+  const familyBrands = useMemo(() => {
+    const pool = smartFamily ? (items || []).filter((it) => it.product_family === smartFamily) : []
+    return Array.from(new Set(pool.map((it) => it.brand).filter(Boolean))).sort()
+  }, [items, smartFamily])
+
+  // Live availability for whatever the search is currently showing — one bulk call per result set,
+  // so the estimator sees stock before committing a line instead of after saving the quotation.
+  const [avail, setAvail] = useState({})
+  useEffect(() => {
+    const ids = (results || []).map((r) => r.id).filter(Boolean)
+    if (!ids.length) { setAvail({}); return }
+    let cancelled = false
+    api(`/inventory/availability-bulk?ids=${ids.join(',')}`)
+      .then((r) => { if (!cancelled) setAvail(r || {}) })
+      .catch(() => { if (!cancelled) setAvail({}) })   // availability is a hint, never a blocker
+    return () => { cancelled = true }
+  }, [results])
+
   const loadSmartRecs = async () => {
     if (!smartFamily) return
     setSmartBusy(true)
     try {
-      const recs = await api(`/engineering/equipment-recommendations?product_family=${encodeURIComponent(smartFamily)}&limit=5`)
+      const qs = new URLSearchParams({ product_family: smartFamily, limit: '5' })
+      if (smartBrand) qs.set('brand', smartBrand)
+      const recs = await api(`/engineering/equipment-recommendations?${qs}`)
       setSmartRecs(Array.isArray(recs) ? recs : [])
     } catch (e) {
       setSmartRecs([])
@@ -553,8 +573,10 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
 
         {productFamilies.length > 0 && (
           <div className="mb-3 flex flex-wrap items-end gap-2 rounded-xl border border-brand-100 bg-brand-50/40 p-3">
-            <Select label="Smart selection — Product Family" value={smartFamily} onChange={(e) => { setSmartFamily(e.target.value); setSmartRecs([]) }}
+            <Select label="Smart selection — Product Family" value={smartFamily} onChange={(e) => { setSmartFamily(e.target.value); setSmartBrand(''); setSmartRecs([]) }}
               options={[{ value: '', label: '— pick family —' }, ...productFamilies.map((f) => ({ value: f, label: f }))]} />
+            <Select label="Preferred brand (optional)" value={smartBrand} onChange={(e) => { setSmartBrand(e.target.value); setSmartRecs([]) }}
+              options={[{ value: '', label: '— no preference —' }, ...familyBrands.map((b) => ({ value: b, label: b }))]} />
             <button type="button" onClick={loadSmartRecs} disabled={!smartFamily || smartBusy}
               className="mb-0.5 inline-flex items-center gap-1.5 rounded-xl bg-brand-500 px-3 py-2.5 text-xs font-semibold text-white hover:bg-brand-600 disabled:opacity-50">
               {smartBusy ? <Loader2 size={14} className="animate-spin" /> : <Boxes size={14} />} Suggest equipment
@@ -586,6 +608,7 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold text-ink">{it.item_name || it.name}</p>
                     <p className="truncate text-[11px] text-slate-500">{[it.brand, it.model].filter(Boolean).join(' · ') || it.item_group}{(() => { const pv = preview(it.specifications || it.description, 60); return pv ? ` — ${pv}` : '' })()}</p>
+                    <AvailabilityChips a={avail[it.id]} />
                   </div>
                   <span className="shrink-0 text-xs font-semibold text-brand-600">{sar(itemRate(it))}</span>
                 </button>
@@ -845,5 +868,34 @@ function RevisionsModal({ open, onClose, data, showFin }) {
         })}
       </ol>
     </Modal>
+  )
+}
+
+/**
+ * Availability of an item at the moment it is being picked.
+ *   In Stock   — physical minus reserved: what this quotation may actually promise
+ *   Reserved   — committed to an accepted order, so it is NOT available here
+ *   In Transit — on an open purchase order, coming but not on the shelf
+ * 'To Purchase' is the shortfall against a quantity, so it belongs to the stock-first allocation
+ * on the quotation lines rather than to a single item in the picker.
+ */
+function AvailabilityChips({ a }) {
+  if (!a) return null
+  const chips = []
+  if (a.in_stock > 0) chips.push({ label: `In Stock ${a.in_stock}`, cls: 'bg-emerald-50 text-emerald-700' })
+  if (a.reserved > 0) chips.push({ label: `Reserved ${a.reserved}`, cls: 'bg-amber-50 text-amber-700' })
+  if (a.in_transit > 0) chips.push({ label: `In Transit ${a.in_transit}`, cls: 'bg-sky-50 text-sky-700' })
+  if (!chips.length) {
+    chips.push({
+      label: a.lead_time_days ? `To Purchase · ${a.lead_time_days}d lead` : 'To Purchase',
+      cls: 'bg-slate-100 text-slate-600',
+    })
+  }
+  return (
+    <span className="mt-1 flex flex-wrap gap-1">
+      {chips.map((c) => (
+        <span key={c.label} className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${c.cls}`}>{c.label}</span>
+      ))}
+    </span>
   )
 }
