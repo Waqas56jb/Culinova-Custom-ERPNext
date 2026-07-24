@@ -46,7 +46,8 @@ r.post('/brands', authRequired, authorize('warehouse', 'create'), eosOnlyItemCre
 // A brand's IDENTITY belongs to EOS (the EOS import creates it). Only its PRICING factors are the
 // ERP's — EOS carries no prices — so under the EOS policy this route accepts nothing else.
 r.patch('/brands/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async (req, res) => {
-  const PRICING = ['currency', 'exchange_factor', 'price_factor']
+  // The full Brand Master pricing chain: valuation × exchange → × price factor → ×(1+margin) ×(1−offer).
+  const PRICING = ['currency', 'exchange_factor', 'price_factor', 'add_margin_pct', 'special_offer_pct']
   const IDENTITY = ['description', 'country_of_origin', 'country_of_purchase']
   const eosOwns = await itemsComeFromEosOnly()
   const editable = eosOwns ? PRICING : [...PRICING, ...IDENTITY]

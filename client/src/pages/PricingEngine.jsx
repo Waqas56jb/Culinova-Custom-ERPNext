@@ -25,6 +25,7 @@ const markupOf = (it) => {
 
 const TABS = [
   { key: 'items', label: 'Price Items', icon: Calculator },
+  { key: 'brands', label: 'Brand Master', icon: TrendingUp },
   { key: 'templates', label: 'Landed Cost Templates', icon: Layers },
   { key: 'discounts', label: 'Discount Rules', icon: Percent },
   { key: 'fx', label: 'Currencies & FX', icon: Coins },
@@ -59,6 +60,7 @@ export default function PricingEngine() {
       </div>
 
       {tab === 'items' && <PriceItemsTab />}
+      {tab === 'brands' && <BrandMasterTab />}
       {tab === 'templates' && <TemplatesTab />}
       {tab === 'discounts' && <DiscountRulesTab />}
       {tab === 'fx' && <FxTab />}
@@ -413,6 +415,131 @@ function FxTab() {
             </tbody>
           </table>
         </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * BRAND MASTER — the pricing factors that turn a valuation rate into a selling price.
+ *
+ * The client asked: "Every Brand has pricing factors configured in the Brand Master." This is that
+ * screen. For each brand you set the four factors; the worked column shows exactly what a SAR 1,000
+ * valuation rate becomes, so the effect of a change is visible before it is saved.
+ *
+ *   selling = valuation × exchange × price factor × (1 + margin%) × (1 − offer%)
+ *
+ * Items themselves come from EOS; the ERP only owns these commercial factors — which is why this is
+ * the one place a brand's numbers are edited.
+ */
+function BrandMasterTab() {
+  const d = useData()
+  const [q, setQ] = useState('')
+  const [edits, setEdits] = useState({})   // id → { field: value }
+  const [savingId, setSavingId] = useState(null)
+  const [msg, setMsg] = useState('')
+
+  const brands = useMemo(() => {
+    const term = q.trim().toLowerCase()
+    const list = (d.brands || []).filter((b) => !term || String(b.brand || '').toLowerCase().includes(term))
+    return [...list].sort((a, b) => String(a.brand).localeCompare(String(b.brand)))
+  }, [d.brands, q])
+
+  const val = (b, f, dflt) => {
+    const e = edits[b.id]
+    return e && f in e ? e[f] : (b[f] ?? dflt)
+  }
+  const setVal = (b, f, v) => setEdits((s) => ({ ...s, [b.id]: { ...(s[b.id] || {}), [f]: v } }))
+  const dirty = (b) => !!edits[b.id]
+
+  // SAR 1,000 valuation worked through the current (possibly unsaved) factors.
+  const example = (b) => {
+    const exch = Number(val(b, 'exchange_factor', 1)) || 1
+    const pf = Number(val(b, 'price_factor', 1)) || 1
+    const margin = Number(val(b, 'add_margin_pct', 0)) || 0
+    const offer = Number(val(b, 'special_offer_pct', 0)) || 0
+    const cost = 1000 * exch
+    const selling = cost * pf * (1 + margin / 100) * (1 - offer / 100)
+    return { cost, selling, gp: selling > 0 ? ((selling - cost) / selling) * 100 : 0 }
+  }
+
+  const save = async (b) => {
+    setSavingId(b.id); setMsg('')
+    try {
+      const e = edits[b.id] || {}
+      await d.updateBrand(b.id, {
+        exchange_factor: Number(val(b, 'exchange_factor', 1)) || 1,
+        price_factor: Number(val(b, 'price_factor', 1)) || 1,
+        add_margin_pct: Number(val(b, 'add_margin_pct', 0)) || 0,
+        special_offer_pct: Number(val(b, 'special_offer_pct', 0)) || 0,
+        currency: val(b, 'currency', 'SAR'),
+      })
+      setEdits((s) => { const n = { ...s }; delete n[b.id]; return n })
+      setMsg(`Saved ${b.brand}`)
+    } catch (e) { setMsg(e.message || 'Save failed') } finally { setSavingId(null) }
+  }
+
+  const numCell = (b, f, step = '0.01') => (
+    <input
+      type="number" step={step}
+      value={val(b, f, f.includes('pct') ? 0 : 1)}
+      onChange={(e) => setVal(b, f, e.target.value)}
+      className="w-20 rounded-lg border border-slate-200 bg-slate-50/60 px-2 py-1.5 text-right text-sm tabular-nums outline-none focus:border-brand-400 focus:bg-white"
+    />
+  )
+
+  return (
+    <div className="card overflow-hidden">
+      <div className="flex flex-col gap-2 border-b border-slate-100 p-4 sm:flex-row sm:items-center">
+        <div>
+          <p className="text-sm font-bold text-ink">Brand Master — Pricing Factors</p>
+          <p className="text-[11px] text-muted">selling = valuation × exchange × price factor × (1 + margin%) × (1 − offer%)</p>
+        </div>
+        <div className="relative sm:ml-auto sm:w-64">
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search brand…"
+            className="w-full rounded-lg border border-slate-200 bg-slate-50/60 py-2 pl-9 pr-3 text-sm outline-none focus:border-brand-400 focus:bg-white" />
+        </div>
+      </div>
+      {msg && <div className="border-b border-slate-100 bg-emerald-50/60 px-4 py-2 text-xs font-semibold text-emerald-700">{msg}</div>}
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[880px]">
+          <thead>
+            <tr className="bg-slate-50/60">
+              <th className="th">Brand</th><th className="th">Currency</th>
+              <th className="th text-right">Exchange</th><th className="th text-right">Price Factor</th>
+              <th className="th text-right">Add Margin %</th><th className="th text-right">Special Offer %</th>
+              <th className="th text-right">SAR 1,000 →</th><th className="th text-right">GP%</th><th className="th"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {brands.map((b) => {
+              const ex = example(b)
+              return (
+                <tr key={b.id} className="group hover:bg-slate-50/40">
+                  <td className="td font-semibold text-ink">{b.brand}</td>
+                  <td className="td">
+                    <input value={val(b, 'currency', 'SAR')} onChange={(e) => setVal(b, 'currency', e.target.value)}
+                      className="w-16 rounded-lg border border-slate-200 bg-slate-50/60 px-2 py-1.5 text-sm uppercase outline-none focus:border-brand-400 focus:bg-white" />
+                  </td>
+                  <td className="td text-right">{numCell(b, 'exchange_factor')}</td>
+                  <td className="td text-right">{numCell(b, 'price_factor')}</td>
+                  <td className="td text-right">{numCell(b, 'add_margin_pct', '0.1')}</td>
+                  <td className="td text-right">{numCell(b, 'special_offer_pct', '0.1')}</td>
+                  <td className="td text-right font-semibold tabular-nums text-brand-600">{money(ex.selling)}</td>
+                  <td className="td text-right tabular-nums text-slate-500">{ex.gp.toFixed(1)}%</td>
+                  <td className="td text-right">
+                    <button onClick={() => save(b)} disabled={!dirty(b) || savingId === b.id}
+                      className="rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400">
+                      {savingId === b.id ? <Loader2 size={13} className="animate-spin" /> : 'Save'}
+                    </button>
+                  </td>
+                </tr>
+              )
+            })}
+            {brands.length === 0 && <tr><td colSpan={9} className="td text-center text-slate-400">No brands found</td></tr>}
+          </tbody>
+        </table>
       </div>
     </div>
   )
