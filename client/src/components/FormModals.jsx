@@ -86,14 +86,24 @@ function useTerritoryOptions(d) {
 
 // Lead-source options — distinct sources already in the DB merged with defaults, so the
 // business can introduce a new source just by typing it (no code change required).
-const LEAD_SOURCE_DEFAULTS = ['Website', 'Referral', 'Existing Customer', 'Consultant', 'Contractor', 'Direct Visit', 'LinkedIn', 'Exhibition', 'Tender Platform', 'Phone Call', 'WhatsApp', 'Other']
-const PROJECT_TYPES = ['Hospital', 'Café', 'Restaurant', 'Hotel', 'Central Kitchen', 'Laundry', 'Retail', 'Other']
+const LEAD_SOURCE_DEFAULTS = ['Website', 'Referral', 'Existing Customer', 'Consultant', 'Contractor', 'Walk-in', 'Direct Visit', 'LinkedIn', 'Exhibition', 'Tender Platform', 'Phone Call', 'WhatsApp', 'Other']
+const PROJECT_TYPE_DEFAULTS = ['Hospital', 'Café', 'Restaurant', 'Hotel', 'Central Kitchen', 'Catering', 'Laundry', 'Retail', 'Other']
 function useLeadSourceOptions(d) {
   return useMemo(() => {
     const set = new Set(LEAD_SOURCE_DEFAULTS)
     for (const l of d.leads || []) { const s = String(l.source || '').trim(); if (s) set.add(s) }
     return [...set]
   }, [d.leads])
+}
+// Project types work the same way — defaults merged with whatever is already in the data, so the
+// business can introduce a new type by typing it, moving toward a master list without a code change.
+function useProjectTypeOptions(d) {
+  return useMemo(() => {
+    const set = new Set(PROJECT_TYPE_DEFAULTS)
+    for (const l of d.leads || []) { const s = String(l.project_type || '').trim(); if (s) set.add(s) }
+    for (const o of d.opportunities || []) { const s = String(o.project_type || '').trim(); if (s) set.add(s) }
+    return [...set]
+  }, [d.leads, d.opportunities])
 }
 
 export default function FormModals() {
@@ -171,6 +181,7 @@ function LeadModal({ open, d }) {
   const on = (k) => (e) => setV((s) => ({ ...s, [k]: e.target.value }))
   const reset = () => setV({ name: '', company: '', source: 'Website', value: '', mobile: '', email: '', project_name: '', project_type: 'Restaurant', project_city: '', project_district: '', next_follow_up: '', notes: '' })
   const sources = useLeadSourceOptions(d)
+  const projectTypes = useProjectTypeOptions(d)
   const save = async () => {
     if (!v.name && !v.company) { alert('Contact name or company is required'); return }
     try { await d.addLead(v) } catch (e) { alert(e.message); return }
@@ -189,7 +200,7 @@ function LeadModal({ open, d }) {
       </Row>
       <Row>
         <Field label="Project Name" value={v.project_name} onChange={on('project_name')} placeholder="e.g. Main Kitchen Fit-out" />
-        <Select label="Project Type" value={v.project_type} onChange={on('project_type')} options={PROJECT_TYPES} />
+        <Select label="Project Type" value={v.project_type} onChange={on('project_type')} options={projectTypes} />
       </Row>
       <Row>
         <Field label="City" value={v.project_city} onChange={on('project_city')} placeholder="e.g. Riyadh" />
@@ -217,6 +228,7 @@ function OpportunityModal({ open, d }) {
     opportunity_type: 'Retail Sale', project_name: '', project_type: 'Restaurant',
     project_city: '', project_district: '', contact_person: '', customer_email: '', mobile: '',
   })
+  const projectTypes = useProjectTypeOptions(d)
   const save = async () => {
     if (!v.customer) { alert('Customer is required'); return }
     if (!v.close) { alert('Next action / expected close date is required (business rule).'); return }
@@ -238,7 +250,7 @@ function OpportunityModal({ open, d }) {
       </Row>
       <Row>
         <Field label="Project Name" value={v.project_name} onChange={on('project_name')} placeholder="Kitchen fit-out" />
-        <Select label="Project Type" value={v.project_type} onChange={on('project_type')} options={PROJECT_TYPES} />
+        <Select label="Project Type" value={v.project_type} onChange={on('project_type')} options={projectTypes} />
       </Row>
       <Row>
         <Field label="City" value={v.project_city} onChange={on('project_city')} placeholder="Riyadh" />

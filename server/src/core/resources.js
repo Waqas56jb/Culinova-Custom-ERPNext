@@ -3,8 +3,10 @@
 export const resources = {
   // sales
   customers: { table: 'customers', panel: 'sales' },
-  leads: { table: 'leads', panel: 'sales' },
-  opportunities: { table: 'opportunities', panel: 'sales' },
+  // Sales Users hold "create" access; managing their own leads/opportunities (status, owner,
+  // follow-up) is core sales work, so updates are allowed at create level — not held back to "update".
+  leads: { table: 'leads', panel: 'sales', updateLevel: 'create' },
+  opportunities: { table: 'opportunities', panel: 'sales', updateLevel: 'create' },
   // sales_orders are created only by the quotation→customer-accept chain — never via blanket CRUD
   'sales-orders': { table: 'sales_orders', panel: 'sales', readOnly: true },
   interactions: { table: 'customer_interactions', panel: 'sales' },

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { Plus, Loader2, Send, FileText, RefreshCw, Info } from 'lucide-react'
 import { PageHeader, Badge, statusTone } from '../components/ui.jsx'
 import { Modal, Field, TextArea, Row } from '../components/Modal.jsx'
@@ -12,6 +12,7 @@ const ENG_TYPE = 'Project Requiring Engineering'
 export default function EngineeringRequests() {
   const { opportunities, reload, openForm } = useData()
   const navigate = useNavigate()
+  const location = useLocation()
   const [rows, setRows] = useState([])
   const [busy, setBusy] = useState(null)
   const [modal, setModal] = useState(null)
@@ -20,11 +21,22 @@ export default function EngineeringRequests() {
   const load = () => api('/engineering/requests').then(setRows).catch(() => setRows([]))
   useEffect(() => { load() }, [])
 
-  const openCreate = async () => {
-    setForm({ opportunity_id: '', boq_text: '', sales_notes: '', required_date: '' })
+  const openCreate = async (opportunityId = '') => {
+    setForm({ opportunity_id: opportunityId, boq_text: '', sales_notes: '', required_date: '' })
     setModal(true)
     try { await reload('opportunities') } catch { /* list may still be cached */ }
   }
+
+  // Arriving from an Opportunity ("Send to Engineering") pre-selects that opportunity, so the sales
+  // person only adds the requirements and attachments — they never re-pick what they came from.
+  useEffect(() => {
+    const oppId = location.state?.opportunityId
+    if (oppId) {
+      openCreate(oppId)
+      navigate(location.pathname, { replace: true, state: {} }) // consume it so a refresh doesn't re-open
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state])
 
   // Client rule: only "Project Requiring Engineering" opps go to EOS — Retail Sale skips engineering
   const engOpps = useMemo(() => {
@@ -145,8 +157,8 @@ export default function EngineeringRequests() {
           </label>
           <Field label="Required Date" type="date" value={form.required_date} onChange={(e) => setForm((s) => ({ ...s, required_date: e.target.value }))} />
         </Row>
-        <TextArea label="BOQ / Requirements" value={form.boq_text} onChange={(e) => setForm((s) => ({ ...s, boq_text: e.target.value }))} rows={4} placeholder="Equipment list, quantities, areas…" />
-        <TextArea label="Sales Notes" value={form.sales_notes} onChange={(e) => setForm((s) => ({ ...s, sales_notes: e.target.value }))} rows={3} placeholder="Drawings received, site visit notes…" />
+        <TextArea label="Engineering Requirements" value={form.boq_text} onChange={(e) => setForm((s) => ({ ...s, boq_text: e.target.value }))} rows={4} placeholder="Equipment list, quantities, areas…" />
+        <TextArea label="Sales Instructions to Engineering" value={form.sales_notes} onChange={(e) => setForm((s) => ({ ...s, sales_notes: e.target.value }))} rows={3} placeholder="Client preferences, drawings received, site visit notes…" />
       </Modal>
     </>
   )

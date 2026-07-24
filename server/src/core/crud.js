@@ -101,7 +101,10 @@ export function crudRouter(name, cfg) {
   }))
 
   // UPDATE
-  r.patch('/:id', authRequired, authorize(cfg.panel, 'update'), asyncWrap(async (req, res) => {
+  // Some resources are the day-to-day work of a role that only holds "create" access. A Sales User
+  // manages their own leads and opportunities (status, owner, follow-up) — that is the job, not a
+  // privileged edit — so those resources set updateLevel: 'create'. Everything else stays at 'update'.
+  r.patch('/:id', authRequired, authorize(cfg.panel, cfg.updateLevel || 'update'), asyncWrap(async (req, res) => {
     const body = sanitizeBody(req.body, cfg, req.user.role)
     // Everything the caller sent was stripped (immutable or protected for their role) → there is nothing
     // to update. An empty UPDATE makes Postgres 500; tell them WHY instead of returning a mystery error.

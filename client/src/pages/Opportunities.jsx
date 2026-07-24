@@ -32,13 +32,11 @@ export default function Opportunities() {
       navigate('/sales/quotations', { state: { quotePrefill: prefill } })
     } catch (e) { alert(e.message) } finally { setBusy(null) }
   }
-  const sendEngineering = async (o) => {
-    if (!window.confirm(`Send "${o.project_name || o.customer}" to Engineering?`)) return
-    setBusy(o.id)
-    try {
-      await api(`/engineering/requests/from-opportunity/${o.id}`, { method: 'POST', body: {} })
-      alert('Engineering request submitted')
-    } catch (e) { alert(e.message) } finally { setBusy(null) }
+  const sendEngineering = (o) => {
+    // Take the sales person to the Engineering Request form with THIS opportunity pre-selected, so
+    // they can add the requirements, instructions and attachments before it goes to EOS — rather than
+    // firing a blank request that engineering then has to chase details for.
+    navigate('/sales/engineering', { state: { opportunityId: o.id } })
   }
 
   return (
