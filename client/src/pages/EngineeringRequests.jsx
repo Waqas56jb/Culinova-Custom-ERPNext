@@ -16,13 +16,13 @@ export default function EngineeringRequests() {
   const [rows, setRows] = useState([])
   const [busy, setBusy] = useState(null)
   const [modal, setModal] = useState(null)
-  const [form, setForm] = useState({ opportunity_id: '', boq_text: '', sales_notes: '', required_date: '' })
+  const [form, setForm] = useState({ opportunity_id: '', boq_text: '', sales_notes: '', required_date: '', attachments: [] })
 
   const load = () => api('/engineering/requests').then(setRows).catch(() => setRows([]))
   useEffect(() => { load() }, [])
 
   const openCreate = async (opportunityId = '') => {
-    setForm({ opportunity_id: opportunityId, boq_text: '', sales_notes: '', required_date: '' })
+    setForm({ opportunity_id: opportunityId, boq_text: '', sales_notes: '', required_date: '', attachments: [] })
     setModal(true)
     try { await reload('opportunities') } catch { /* list may still be cached */ }
   }
@@ -60,7 +60,10 @@ export default function EngineeringRequests() {
     try {
       await api(`/engineering/requests/from-opportunity/${form.opportunity_id}`, {
         method: 'POST',
-        body: { boq_text: form.boq_text, sales_notes: form.sales_notes, required_date: form.required_date || null },
+        body: {
+          boq_text: form.boq_text, sales_notes: form.sales_notes, required_date: form.required_date || null,
+          attachments: (form.attachments || []).map((a) => ({ category: a.category, name: a.name, dataUrl: a.dataUrl })),
+        },
       })
       setModal(null)
       await load()
@@ -159,7 +162,71 @@ export default function EngineeringRequests() {
         </Row>
         <TextArea label="Engineering Requirements" value={form.boq_text} onChange={(e) => setForm((s) => ({ ...s, boq_text: e.target.value }))} rows={4} placeholder="Equipment list, quantities, areas…" />
         <TextArea label="Sales Instructions to Engineering" value={form.sales_notes} onChange={(e) => setForm((s) => ({ ...s, sales_notes: e.target.value }))} rows={3} placeholder="Client preferences, drawings received, site visit notes…" />
+        <AttachmentsField attachments={form.attachments} onChange={(atts) => setForm((s) => ({ ...s, attachments: atts }))} />
       </Modal>
     </>
+  )
+}
+
+/**
+ * Attachments for an engineering request — BOQ, drawings, client specs, site photos, layouts.
+ *
+ * Files are read to base64 data URLs and posted with the request; the server stores them privately
+ * and hands EOS a signed link, so the engineer can open every supporting document from the inbox
+ * (client feedback #3). Kept to a sensible size so the JSON payload stays reasonable.
+ */
+const ATTACH_CATEGORIES = ['BOQ', 'Drawings', 'Client Specifications', 'Site Photos', 'Layouts', 'Other']
+const MAX_ATTACH = 8 * 1024 * 1024
+
+function AttachmentsField({ attachments = [], onChange }) {
+  const [category, setCategory] = useState('BOQ')
+  const [err, setErr] = useState('')
+
+  const add = (files) => {
+    setErr('')
+    const list = Array.from(files || [])
+    Promise.all(list.map((file) => new Promise((resolve) => {
+      if (file.size > MAX_ATTACH) { setErr(`${file.name} is larger than 8 MB`); return resolve(null) }
+      const reader = new FileReader()
+      reader.onload = () => resolve({ category, name: file.name, dataUrl: reader.result })
+      reader.onerror = () => resolve(null)
+      reader.readAsDataURL(file)
+    }))).then((read) => {
+      const next = [...attachments, ...read.filter(Boolean)]
+      onChange(next)
+    })
+  }
+
+  const remove = (i) => onChange(attachments.filter((_, idx) => idx !== i))
+
+  return (
+    <div>
+      <span className="mb-1.5 block text-xs font-semibold text-slate-600">
+        Attachments <span className="font-normal text-slate-400">— BOQ, drawings, client specs, site photos, layouts (opened inside EOS)</span>
+      </span>
+      <div className="flex flex-wrap items-center gap-2">
+        <select value={category} onChange={(e) => setCategory(e.target.value)} className="rounded-xl border border-slate-200 px-2.5 py-2 text-sm">
+          {ATTACH_CATEGORIES.map((c) => <option key={c}>{c}</option>)}
+        </select>
+        <label className="btn-ghost cursor-pointer text-xs">
+          <Plus size={14} /> Add file(s)
+          <input type="file" multiple hidden onChange={(e) => { add(e.target.files); e.target.value = '' }} />
+        </label>
+      </div>
+      {err && <p className="mt-1 text-[11px] font-semibold text-rose-600">{err}</p>}
+      {attachments.length > 0 && (
+        <ul className="mt-2 space-y-1">
+          {attachments.map((a, i) => (
+            <li key={i} className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-1.5 text-xs">
+              <span className="flex items-center gap-2 min-w-0">
+                <span className="rounded bg-brand-100 px-1.5 py-0.5 text-[10px] font-bold text-brand-700">{a.category}</span>
+                <span className="truncate text-ink">{a.name}</span>
+              </span>
+              <button type="button" onClick={() => remove(i)} className="shrink-0 text-slate-400 hover:text-rose-600">×</button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   )
 }

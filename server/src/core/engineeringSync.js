@@ -45,6 +45,7 @@ export async function pushEngineeringRequest(row) {
       project_type: row.project_type,
       project_location: row.project_location,
       drawings: row.drawings || [],
+      attachments: row.attachments || [], // BOQ / drawings / specs / photos, each with a signed link
       boq_text: row.boq_text,
       sales_notes: row.sales_notes,
       required_date: row.required_date,

@@ -9,9 +9,41 @@ import { nextNumber } from '../../core/numbering.js'
 import { pushEngineeringRequest, syncEngineeringStatus, patchEngineeringOnEos, STATUSES } from '../../core/engineeringSync.js'
 import { recommendEquipment } from '../../core/equipmentRecommend.js'
 import { resolveApprovedItems } from '../../core/approvedItemsResolve.js'
+import { uploadAttachment } from '../../core/chatfiles.js'
 
 const r = Router()
 const clean = (v) => (v === '' || v === undefined ? null : v)
+
+const ATTACH_CATEGORIES = ['BOQ', 'Drawings', 'Client Specifications', 'Site Photos', 'Layouts', 'Other']
+
+/**
+ * Store any newly-uploaded files (base64 data URLs) in the private bucket and return the attachment
+ * records to persist: [{ category, name, path }]. Files are kept private — EOS receives short-lived
+ * signed links, never the raw bucket path — because these are the client's project documents.
+ */
+async function ingestAttachments(list = []) {
+  const out = []
+  for (const a of Array.isArray(list) ? list : []) {
+    if (a?.path && a?.name) { out.push({ category: a.category || 'Other', name: a.name, path: a.path }); continue } // already stored
+    if (!a?.dataUrl) continue
+    const stored = await uploadAttachment({ dataUrl: a.dataUrl, name: a.name })
+    if (stored.attachment_path) {
+      out.push({ category: ATTACH_CATEGORIES.includes(a.category) ? a.category : 'Other', name: stored.attachment_name, path: stored.attachment_path })
+    }
+  }
+  return out
+}
+
+/** Add a short-lived signed URL to each stored attachment so it can be opened (private bucket). */
+async function signAttachmentList(attachments = []) {
+  const signed = []
+  for (const a of attachments || []) {
+    if (!a?.path) { signed.push(a); continue }
+    const { data } = await supabase.storage.from('chat-uploads').createSignedUrl(a.path, 3600)
+    signed.push({ ...a, url: data?.signedUrl || null })
+  }
+  return signed
+}
 
 r.get('/requests', authRequired, authorize('sales', 'read'), asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('engineering_requests').select('*').order('created_at', { ascending: false })
@@ -30,7 +62,7 @@ r.get('/requests/:id', authRequired, authorize('sales', 'read'), asyncWrap(async
     await supabase.from('engineering_requests').update(patch).eq('id', data.id)
     Object.assign(data, patch)
   }
-  res.json({ ...data, _eos: eos || null })
+  res.json({ ...data, attachments: await signAttachmentList(data.attachments), _eos: eos || null })
 }))
 
 r.post('/requests', authRequired, authorize('sales', 'create'), asyncWrap(async (req, res) => {
@@ -86,6 +118,7 @@ r.post('/requests/from-opportunity/:id', authRequired, authorize('sales', 'creat
     project_type: opp.project_type,
     project_location: opp.project_location || [opp.project_city, opp.project_district].filter(Boolean).join(' → '),
     drawings: Array.isArray(p.drawings) ? p.drawings : [],
+    attachments: await ingestAttachments(p.attachments),
     boq_text: clean(p.boq_text),
     sales_notes: clean(p.sales_notes) || clean(p.notes),
     required_date: clean(p.required_date) || opp.next_action_date,
@@ -95,7 +128,9 @@ r.post('/requests/from-opportunity/:id', authRequired, authorize('sales', 'creat
   }
   const { data, error } = await supabase.from('engineering_requests').insert(row).select().single()
   if (error) throw error
-  const eos = await pushEngineeringRequest(data)
+  // EOS receives the request WITH signed links to the attachments, so the engineer can open the
+  // BOQ / drawings / specs / photos from inside the Engineering Inbox.
+  const eos = await pushEngineeringRequest({ ...data, attachments: await signAttachmentList(data.attachments) })
   if (eos?.id) {
     await supabase.from('engineering_requests').update({ eos_request_id: eos.id }).eq('id', data.id)
     data.eos_request_id = eos.id
