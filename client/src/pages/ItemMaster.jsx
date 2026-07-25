@@ -257,13 +257,16 @@ export default function ItemMaster() {
         <div className="overflow-x-auto">
           <table className="w-full min-w-[920px]">
             <thead><tr className="bg-slate-50/60">
-              <th className="th">Code</th><th className="th">Item</th><th className="th">Family</th><th className="th">Category</th><th className="th">Brand</th>
+              <th className="th">Model</th><th className="th">Item</th><th className="th">Family</th><th className="th">Category</th><th className="th">Brand</th>
               <th className="th">Type</th>{seeCost && <th className="th">Cost</th>}<th className="th">Sell Rate</th><th className="th">Status</th>
             </tr></thead>
             <tbody>
               {rows.map((i) => (
                 <tr key={i.id} onClick={() => setView(i.id)} className="cursor-pointer hover:bg-slate-50/60">
-                  <td className="td font-semibold text-brand-600">{i.item_code}</td>
+                  <td className="td">
+                    <div className="font-semibold text-brand-600">{i.model || i.item_name || i.item_code}</div>
+                    <div className="text-[10px] text-slate-400" title="Internal item code — for database references only">{i.item_code}</div>
+                  </td>
                   <td className="td font-medium text-ink">
                     <div className="flex items-center gap-2">
                       {i.image_url ? <img src={i.image_url} alt="" onClick={(e) => { e.stopPropagation(); setLightbox(i.image_url) }} className="h-12 w-12 shrink-0 cursor-zoom-in rounded-lg border border-slate-200 object-cover transition hover:ring-2 hover:ring-brand-400" /> : <span className="grid h-12 w-12 shrink-0 place-items-center rounded-lg border border-dashed border-slate-200 text-[9px] text-slate-300">IMG</span>}
