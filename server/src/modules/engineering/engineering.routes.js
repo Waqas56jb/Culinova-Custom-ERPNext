@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { supabase } from '../../config/supabase.js'
 import { authRequired } from '../../middleware/auth.js'
-import { authorize } from '../../middleware/rbac.js'
+import { authorize, redactFinancials } from '../../middleware/rbac.js'
 import { isManagement } from '../../rbac/permissions.js'
 import { asyncWrap } from '../../middleware/error.js'
 import { logAudit } from '../../core/audit.js'
@@ -158,7 +158,12 @@ r.get('/requests/:id/quotation-prefill', authRequired, authorize('sales', 'read'
   }
   const { data: opp } = await supabase.from('opportunities').select('*').eq('id', er.opportunity_id).maybeSingle()
   const { lines, unresolved } = await resolveApprovedItems(er.approved_items || [])
-  res.json({
+  // resolveApprovedItems puts landed `cost` on every line. Every other quotation endpoint redacts its
+  // output; this one must too, or a Sales user sees each item's cost in the prefill payload (Sales must
+  // never see cost/margin). redactFinancials recurses into `lines` and strips cost for non-financial
+  // roles, and passes the payload through unchanged for Management — and the save path re-derives cost
+  // from the Item Master server-side, so GP is unaffected.
+  res.json(redactFinancials(req.user.role, {
     opportunity_id: er.opportunity_id,
     customer: er.customer || opp?.customer,
     contact_person: opp?.contact_person || null,
@@ -169,7 +174,7 @@ r.get('/requests/:id/quotation-prefill', authRequired, authorize('sales', 'read'
     approved_items: er.approved_items || [],
     lines,
     unresolved,
-  })
+  }))
 }))
 
 r.get('/equipment-recommendations', authRequired, authorize('sales', 'read'), asyncWrap(async (req, res) => {

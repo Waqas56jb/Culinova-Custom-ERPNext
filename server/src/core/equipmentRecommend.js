@@ -52,7 +52,10 @@ export async function recommendEquipment({ product_family, brand_preference, lim
       brand: it.brand,
       model: it.model,
       product_family: it.product_family,
-      selling_price: includeMargin ? n0(it.selling_price) : undefined,
+      // Always returned: the selling price is the customer-facing rate Sales quotes with everywhere —
+      // it is NOT cost or margin. Gating it left Sales seeing "SAR 0" on every suggestion. Margin (gp)
+      // stays management-only: it only ever influences `score` and the "Better Margin" reason above.
+      selling_price: n0(it.selling_price),
       available_qty: available,
       reserved_qty: n0(a.reserved),
       incoming_qty: incoming,

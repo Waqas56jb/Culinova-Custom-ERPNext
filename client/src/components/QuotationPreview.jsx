@@ -19,6 +19,14 @@ export default function QuotationPreview({ open, onClose, quotation }) {
       .finally(() => setLoading(false))
   }, [open, quotation?.id])
 
+  // The modal is mounted once (with quotation===null) and only toggled via `open`, so the useState
+  // initializer above ran when there was no quotation and locked lang to 'en'. Re-derive the default
+  // language every time a different quotation is previewed, otherwise an Arabic quotation always
+  // opened in English until the user hit AR by hand.
+  useEffect(() => {
+    if (open && quotation) setLang(quotation.language === 'ar' ? 'ar' : 'en')
+  }, [open, quotation?.id, quotation?.language])
+
   const company = (settings?.companies || [])[0] || {}
   const vs = settings?.vatSettings || []
   const vatPct = Number(vs.find((v) => v.is_active && v.is_default)?.rate ?? vs.find((v) => v.is_active)?.rate ?? 15)
