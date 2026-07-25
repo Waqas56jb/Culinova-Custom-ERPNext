@@ -381,6 +381,19 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
     return Array.from(new Set(pool.map((it) => it.brand).filter(Boolean))).sort()
   }, [items, smartFamily])
 
+  // Item-Master search results. MUST be declared before the availability effect below, which lists it
+  // as a dependency — a dependency array is read during render, so referencing this const from that
+  // array before this line runs throws "Cannot access 'results' before initialization" (its temporal
+  // dead zone), which crashes the whole Quotations page to a blank screen.
+  const results = useMemo(() => {
+    const s = q.trim().toLowerCase()
+    if (!s) return []
+    return (items || []).filter((it) => {
+      const hay = `${it.item_name || it.name || ''} ${it.brand || ''} ${it.model || ''} ${it.item_group || ''}`.toLowerCase()
+      return hay.includes(s)
+    }).slice(0, 8)
+  }, [q, items])
+
   // Live availability for whatever the search is currently showing — one bulk call per result set,
   // so the estimator sees stock before committing a line instead of after saving the quotation.
   const [avail, setAvail] = useState({})
@@ -490,15 +503,6 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
     const same = l.item_id ? s.item_id === l.item_id : s.item_name === l.item_name
     return same ? s : null
   }
-
-  const results = useMemo(() => {
-    const s = q.trim().toLowerCase()
-    if (!s) return []
-    return (items || []).filter((it) => {
-      const hay = `${it.item_name || it.name || ''} ${it.brand || ''} ${it.model || ''} ${it.item_group || ''}`.toLowerCase()
-      return hay.includes(s)
-    }).slice(0, 8)
-  }, [q, items])
 
   const insertTerm = (id) => {
     const t = terms.find((x) => x.id === id)
