@@ -214,6 +214,11 @@ export function DataProvider({ children }) {
       const m = {}; (tm || []).forEach((u) => { if (u?.id) m[u.id] = u })
       const cur = me(); if (cur?.id) m[cur.id] = m[cur.id] || { id: cur.id, name: cur.name }
       _maps.users = m
+      // Expose the internal roster as `team` state too. The projects panel loads a richer /pm/team,
+      // but Sales (no projects panel) never runs loadProjects — so without this the Owner / assign-to
+      // dropdown on the Lead/Opportunity modal would be empty for every non-PM role. Fill only when the
+      // PM path hasn't already populated a list, so its richer team wins when present.
+      setTeam((prev) => (prev && prev.length ? prev : (tm || [])))
     } catch { const cur = me(); if (cur?.id && !_maps.users[cur.id]) _maps.users = { ..._maps.users, [cur.id]: { id: cur.id, name: cur.name } } }
     try {
       // a Project Manager cannot read the sales panel, so the project's originating Sales Order could
