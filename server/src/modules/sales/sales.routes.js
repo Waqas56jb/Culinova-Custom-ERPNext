@@ -6,7 +6,7 @@ import { isManagement } from '../../rbac/permissions.js'
 import { asyncWrap } from '../../middleware/error.js'
 import { logAudit } from '../../core/audit.js'
 import { uploadAttachment, signAttachments } from '../../core/chatfiles.js'
-import { ensureLeadAndOpportunity, advanceOpportunity, winOpportunityForCustomer } from '../../core/crmflow.js'
+import { ensureLeadAndOpportunity, advanceOpportunity, winOpportunityForCustomer, loseOpportunityForCustomer } from '../../core/crmflow.js'
 import { projectFieldsFromQuote } from '../../core/handover.js'
 import { customerCommercialGate } from '../../core/customerGate.js'
 import { notifyManagementApproval } from '../../core/notify.js'
@@ -102,44 +102,16 @@ r.get('/top-customers', authRequired, authorize('sales', 'read'), asyncWrap(asyn
   res.json(rows)
 }))
 
-// ── CREATE a direct Sales Order (walk-in / phone order not raised from a quotation) ──
-// Mirrors the accept-chain: creates the sales_order + an auto-linked Project (+ BOQ lines when items
-// are supplied) in ONE call, so the "New Sales Order" button actually persists everything.
+// ── DIRECT Sales Order creation is DISABLED ──
+// Per the business flow, a Sales Order is created ONLY when a customer approves a quotation
+// (Lead → Opportunity → Quotation → Customer Approved → Sales Order). The old walk-in path let an SO
+// be raised with no quotation and no opportunity, bypassing the whole flow — so it is now refused. A
+// Sales Order comes from accepting a quotation (/quotations/:id/accept or the customer portal accept).
 r.post('/orders', authRequired, authorize('sales', 'create'), asyncWrap(async (req, res) => {
-  const b = req.body || {}
-  const customer = (b.customer || '').trim()
-  if (!customer) return res.status(422).json({ error: 'Customer is required' })
-  const items = Array.isArray(b.items) ? b.items.filter((it) => it && (it.item_name || it.item)) : []
-  const amount = b.amount != null && b.amount !== ''
-    ? Number(b.amount)
-    : items.reduce((s, it) => s + (Number(it.qty) || 1) * (Number(it.rate) || 0), 0)
-
-  // 1) Sales Order
-  const { data: so, error: soErr } = await supabase.from('sales_orders').insert({
-    number: await nextNumber('sales_orders', 'SO'), quotation_id: b.quotation_id || null, customer, amount,
-  }).select().single()
-  if (soErr) throw soErr
-
-  // 2) auto Project (linked) — one place owns project creation, so no duplicate client-side insert
-  const { data: proj, error: pErr } = await supabase.from('projects').insert({
-    number: await nextNumber('projects', 'PRJ'),
-    name: `${customer} — ${b.project_name || b.project || 'Project'}`,
-    customer, sales_order_id: so.id, contract_value: amount, manager_id: req.user.id, status: 'On Track',
-    location: b.location || null, delivery_date: b.delivery_date || null,
-  }).select().single()
-  if (pErr) throw pErr
-
-  // 3) BOQ lines from the supplied items (budget cost seeded from the Item Master cost)
-  if (items.length) {
-    await supabase.from('project_boq').insert(items.map((it) => ({
-      project_id: proj.id, item_name: it.item_name || it.item, qty: Number(it.qty) || 1, status: 'Waiting',
-      budget_cost: (Number(it.cost) || 0) * (Number(it.qty) || 1),
-    })))
-  }
-  await supabase.from('sales_orders').update({ project_id: proj.id }).eq('id', so.id)
-  await recomputeProject(proj.id)
-  await logAudit(req.user, 'sales_order', so.id, 'created', { number: so.number, project: proj.number })
-  res.status(201).json(redactFinancials(req.user.role, { ...so, project_id: proj.id, project_number: proj.number, project: proj }))
+  res.status(422).json({
+    error: 'Direct Sales Orders are disabled. A Sales Order is created only when the customer approves a quotation — build a Quotation from the Opportunity and accept it.',
+    code: 'DIRECT_SO_DISABLED',
+  })
 }))
 
 // ── SO-007: item-level Procurement / Inventory / Delivery / Installation status ──
@@ -370,6 +342,16 @@ r.post('/quotations/:id/lost', authRequired, authorize('sales', 'create'), async
   const { data, error } = await supabase.from('quotations').update({ status: 'Lost' }).eq('id', req.params.id).select().single()
   if (error) throw error
   await supabase.from('quotation_revisions').insert({ quotation_id: req.params.id, revision: 9999, changed_by: req.user.id, changes: { action: 'lost', reason } })
+  // Flow: "Customer Approved? → No → Close the Opportunity". A rejected quotation must close its
+  // opportunity, exactly like the customer-portal reject already does — otherwise a lost quote left the
+  // opportunity dangling open. Guard against multi-quote opportunities: only close when no OTHER
+  // quotation on the same opportunity is still live (Draft / Open / Pending Approval / Ordered).
+  if (data?.opportunity_id) {
+    const { data: siblings } = await supabase.from('quotations')
+      .select('id, status').eq('opportunity_id', data.opportunity_id).neq('id', data.id)
+    const stillLive = (siblings || []).some((s) => ['Draft', 'Open', 'Pending Approval', 'Ordered'].includes(s.status))
+    if (!stillLive) { try { await loseOpportunityForCustomer(data.customer, reason) } catch { /* CRM close is best-effort */ } }
+  }
   await logAudit(req.user, 'quotation', req.params.id, 'lost', { reason })
   res.json(redactFinancials(req.user.role, data))
 }))
@@ -420,6 +402,26 @@ r.post('/leads/:id/convert', authRequired, authorize('sales', 'create'), asyncWr
   res.status(201).json({ lead: updated, opportunity: opp })
 }))
 
+// ── CLOSE / DISQUALIFY a lead — the "Qualified? → No → Close Lead" branch ──
+// Create-level (not generic PATCH) for the same reason Convert is: a Sales User has Create but not
+// Update, so without this dedicated route the sales team could never close an unqualified lead.
+r.post('/leads/:id/close', authRequired, authorize('sales', 'create'), asyncWrap(async (req, res) => {
+  const reason = (req.body.reason || '').trim()
+  const { data: lead, error: le } = await supabase.from('leads').select('*').eq('id', req.params.id).single()
+  if (le || !lead) return res.status(404).json({ error: 'Lead not found' })
+  if (['Opportunity', 'Converted'].includes(lead.status)) {
+    return res.status(422).json({ error: `Lead is already ${lead.status} — it cannot be closed` })
+  }
+  // The leads table has no lost_reason column, so the reason is appended to notes for the audit trail.
+  const notes = reason ? `${lead.notes ? lead.notes + '\n' : ''}[Closed] ${reason}` : lead.notes
+  const { data, error } = await supabase.from('leads')
+    .update({ status: 'Lost', notes, last_activity_at: new Date().toISOString() })
+    .eq('id', req.params.id).select().single()
+  if (error) throw error
+  await logAudit(req.user, 'lead', req.params.id, 'closed', { reason: reason || null })
+  res.json(data)
+}))
+
 // ============================================================
 // OPPORTUNITIES — enforce next-action date (#2) & lost reason (#13)
 // ============================================================
@@ -457,12 +459,10 @@ r.post('/opportunities/:id/lost', authRequired, authorize('sales', 'create'), as
   res.json(data)
 }))
 
-r.post('/opportunities/:id/won', authRequired, authorize('sales', 'create'), asyncWrap(async (req, res) => {
-  const { data, error } = await supabase.from('opportunities').update({ stage: 'Won', probability: 100 }).eq('id', req.params.id).select().single()
-  if (error) throw error
-  await logAudit(req.user, 'opportunity', req.params.id, 'won', {})
-  res.json(data)
-}))
+// NOTE: there is deliberately NO manual "mark opportunity Won" endpoint. Per the business flow an
+// opportunity becomes Won ONLY when the customer approves a quotation and a Sales Order is created
+// (see /quotations/:id/accept and the customer portal accept, both of which call
+// winOpportunityForCustomer). A manual Won shortcut would close deals off-flow with no quotation.
 
 // Prefill payload for creating a quotation FROM an opportunity (mandatory workflow)
 r.get('/opportunities/:id/quotation-prefill', authRequired, authorize('sales', 'read'), asyncWrap(async (req, res) => {

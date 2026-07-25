@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Plus, FolderKanban, FileText, CheckCircle2, ListChecks } from 'lucide-react'
+import { FolderKanban, FileText, CheckCircle2, ListChecks } from 'lucide-react'
 import { PageHeader } from '../components/ui.jsx'
 import { Modal } from '../components/Modal.jsx'
 import { sar } from '../data/mockData.js'
@@ -7,7 +7,7 @@ import { useData } from '../store/DataContext.jsx'
 import QuotationPreview from '../components/QuotationPreview.jsx'
 
 export default function SalesOrders() {
-  const { salesOrders, quotations, openForm, getOrderItems } = useData()
+  const { salesOrders, quotations, getOrderItems } = useData()
   const [preview, setPreview] = useState(null)
   const [track, setTrack] = useState(null)
   const total = salesOrders.reduce((s, o) => s + o.amount, 0)
@@ -18,9 +18,9 @@ export default function SalesOrders() {
 
   return (
     <>
-      <PageHeader title="Sales Orders" subtitle="Confirmed orders — auto-linked to Projects with live installation tracking">
-        <button className="btn-primary" onClick={() => openForm('order')}><Plus size={16} /> New Order</button>
-      </PageHeader>
+      {/* No "New Order" button: a Sales Order is created only when the customer approves a quotation
+          (Opportunity → Quotation → Customer Approved → Sales Order). Direct/walk-in orders are disabled. */}
+      <PageHeader title="Sales Orders" subtitle="Created automatically when a customer approves a quotation — auto-linked to Projects with live installation tracking" />
 
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Total Orders" value={salesOrders.length} tone="text-ink" />

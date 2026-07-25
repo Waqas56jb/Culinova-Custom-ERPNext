@@ -218,9 +218,23 @@ export function quotationRouter() {
     const p = req.body || {}
     if (!p.customer || !String(p.customer).trim()) return res.status(422).json({ error: 'Customer is required' })
     if (!p.opportunity_id) return res.status(422).json({ error: 'Quotation must be created from an Opportunity (opportunity_id required)' })
-    const { data: oppCheck } = await supabase.from('opportunities').select('id, stage').eq('id', p.opportunity_id).maybeSingle()
+    const { data: oppCheck } = await supabase.from('opportunities').select('id, stage, opportunity_type').eq('id', p.opportunity_id).maybeSingle()
     if (!oppCheck) return res.status(422).json({ error: 'Linked opportunity not found' })
     if (oppCheck.stage === 'Lost') return res.status(422).json({ error: 'Cannot create quotation for a Lost opportunity' })
+    // Flow: a PROJECT opportunity must go through Engineering (EOS) before it can be quoted. The UI
+    // already hides the direct-quote button for these, but enforce it server-side too: require an
+    // engineering request for this opportunity that has come back "Ready for Quotation". Retail Sale
+    // opportunities skip this and quote straight from the Item Master.
+    if (oppCheck.opportunity_type === 'Project Requiring Engineering') {
+      const { data: eng } = await supabase.from('engineering_requests')
+        .select('id, status').eq('opportunity_id', p.opportunity_id).eq('status', 'Ready for Quotation').limit(1)
+      if (!eng || !eng.length) {
+        return res.status(422).json({
+          error: 'This is a Project (Requiring Engineering) opportunity — it must go through Engineering first. Create an Engineering Request to EOS and wait until it is "Ready for Quotation" before quoting.',
+          code: 'ENGINEERING_REQUIRED',
+        })
+      }
+    }
     if (!isValidValidityDays(p.validity_days ?? 30)) return res.status(422).json({ error: 'validity_days must be between 1 and 365' })
 
     const lockRate = !isManagement(req.user.role)

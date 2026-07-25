@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Trophy, X, Loader2, FileText, Wrench } from 'lucide-react'
+import { Plus, X, Loader2, FileText, Wrench } from 'lucide-react'
 import { PageHeader, Badge, statusTone } from '../components/ui.jsx'
 import { sar } from '../data/mockData.js'
 import { api } from '../api.js'
@@ -11,14 +11,15 @@ const stages = ['Prospecting', 'Quotation', 'Negotiation', 'Won']
 const stageColor = { Prospecting: '#94a3b8', Quotation: '#3b82f6', Negotiation: '#E0A82E', Won: '#0EA99A' }
 
 export default function Opportunities() {
-  const { opportunities, salesOrders, openForm, wonOpportunity, lostOpportunity, getOpportunityQuotationPrefill, reload } = useData()
+  const { opportunities, salesOrders, openForm, lostOpportunity, getOpportunityQuotationPrefill, reload } = useData()
   const [openId, setOpenId] = useState(null)   // the opportunity being viewed / edited
   const navigate = useNavigate()
   const lost = opportunities.filter((o) => o.stage === 'Lost')
   const [busy, setBusy] = useState(null)
 
   const run = async (id, fn) => { setBusy(id); try { await fn() } catch (e) { alert(e.message) } finally { setBusy(null) } }
-  const markWon = (o) => { if (window.confirm(`Mark ${o.customer} as WON?`)) run(o.id, () => wonOpportunity(o.id)) }
+  // No manual "Won": an opportunity is Won only when the customer approves its quotation (which creates
+  // the Sales Order). Marking Lost is the flow's "Customer Approved? → No → Close the Opportunity".
   const markLost = (o) => {
     const reason = window.prompt(`Mark ${o.customer} as LOST — reason (required):`)
     if (reason == null) return
@@ -96,10 +97,6 @@ export default function Opportunities() {
                             {busy === o.id ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />} Quotation
                           </button>
                         )}
-                        <button onClick={(e) => { e.stopPropagation(); markWon(o) }} disabled={busy === o.id}
-                          className="inline-flex items-center justify-center gap-1 rounded-lg bg-emerald-50 px-2 py-1.5 text-[11px] font-bold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-50">
-                          <Trophy size={12} /> Won
-                        </button>
                         <button onClick={(e) => { e.stopPropagation(); markLost(o) }} disabled={busy === o.id}
                           className="inline-flex items-center justify-center gap-1 rounded-lg bg-rose-50 px-2 py-1.5 text-[11px] font-bold text-rose-700 transition hover:bg-rose-100 disabled:opacity-50">
                           <X size={12} /> Lost

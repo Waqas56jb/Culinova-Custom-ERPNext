@@ -43,7 +43,7 @@ const OPP_FIELDS = [
   { key: 'contact_person', label: 'Contact person' },
   { key: 'mobile', label: 'Mobile' },
   { key: 'customer_email', label: 'Email', type: 'email' },
-  { key: 'opportunity_type', label: 'Opportunity type' },
+  { key: 'opportunity_type', label: 'Opportunity type', options: ['Retail Sale', 'Project Requiring Engineering'] },
   { key: 'value', label: 'Value (SAR)', type: 'number' },
   { key: 'probability', label: 'Probability (%)', type: 'number' },
   { key: 'next_action_date', label: 'Next action', type: 'date' },
@@ -233,7 +233,9 @@ export default function CrmDetailModal({ kind, id, open, onClose, onSaved }) {
                     <div key={f.key} className={f.full ? 'sm:col-span-2' : ''}>
                       {f.textarea
                         ? <TextArea {...common} rows={3} />
-                        : <Field {...common} type={f.type || 'text'} />}
+                        : f.options
+                          ? <Select {...common} options={f.options} />
+                          : <Field {...common} type={f.type || 'text'} />}
                     </div>
                   )
                 })}

@@ -402,7 +402,9 @@ export function DataProvider({ children }) {
     await reload('opportunities')
   }
   const lostOpportunity = async (id, reason) => { await post(`sales/opportunities/${id}/lost`, { reason }); await reload('opportunities') }
-  const wonOpportunity = async (id) => { await post(`sales/opportunities/${id}/won`, {}); await reload('opportunities') }
+  // No wonOpportunity handler: an opportunity is Won only when the customer approves a quotation and a
+  // Sales Order is created (acceptQuotation → server winOpportunityForCustomer). There is no off-flow
+  // manual Won shortcut.
   // Customer interactions / meeting log (rule #12)
   const addInteraction = async (d) => { await post('interactions', { customer: d.customer, type: d.type, notes: d.notes, next_action: d.nextAction, user_id: me()?.id }); await reload('interactions') }
   const addCustomer = async (d) => { await post('customers', { code: d.code || slugCode('CUST', d.name), name: d.name, category: d.category, territory: d.territory, contact: d.contact, email: d.email, phone: d.phone }); await reload('customers') }
@@ -410,6 +412,12 @@ export function DataProvider({ children }) {
     if (['Opportunity', 'Converted', 'Lost', 'Do Not Contact'].includes(lead.status)) return
     await post(`sales/leads/${lead.id}/convert`, {})
     await Promise.all([reload('leads'), reload('opportunities')])
+  }
+  // "Qualified? → No → Close Lead" — disqualify an unqualified lead (Create-level route so Sales can do it).
+  const closeLead = async (lead, reason) => {
+    if (['Opportunity', 'Converted'].includes(lead.status)) return
+    await post(`sales/leads/${lead.id}/close`, { reason: reason || '' })
+    await reload('leads')
   }
   const getOpportunityQuotationPrefill = (id) => api(`/sales/opportunities/${id}/quotation-prefill`)
   const getPaymentTemplates = () => api('/sales/payment-templates')
@@ -587,7 +595,7 @@ export function DataProvider({ children }) {
     lookupSalesOrders, lookupQuotations, lookupTeam, sendToProcurement,
     getPrefs, savePref,
     reload, loadAll,
-    addLead, addOpportunity, lostOpportunity, wonOpportunity, addInteraction, addQuotation, updateQuotation, addOrder, addCustomer, convertLead, getOpportunityQuotationPrefill, getPaymentTemplates, checkAvailability, getOrderItems,
+    addLead, addOpportunity, lostOpportunity, addInteraction, addQuotation, updateQuotation, addOrder, addCustomer, convertLead, closeLead, getOpportunityQuotationPrefill, getPaymentTemplates, checkAvailability, getOrderItems,
     approveQuotation, rejectQuotation, sendQuotation, acceptQuotation, lostQuotation,
     sendChatReply, markChatRead,
     addProject, addTask, updateTask, deleteTask, addVariation, updateBoqItem, updateProject,

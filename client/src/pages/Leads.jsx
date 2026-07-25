@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, Search, Filter, ArrowRight, Loader2 } from 'lucide-react'
+import { Plus, Search, Filter, ArrowRight, Loader2, XCircle } from 'lucide-react'
 import { PageHeader, Badge, statusTone } from '../components/ui.jsx'
 import CrmDetailModal from '../components/CrmDetailModal.jsx'
 import { sar } from '../data/mockData.js'
@@ -9,12 +9,20 @@ const filters = ['All', 'New', 'Contacted', 'Meeting Scheduled', 'Site Visit', '
 const CONVERTABLE = ['New', 'Contacted', 'Meeting Scheduled', 'Site Visit', 'Quotation Preparation', 'Open', 'Qualified', 'Replied']
 
 export default function Leads() {
-  const { leads, openForm, convertLead, reload } = useData()
+  const { leads, openForm, convertLead, closeLead, reload } = useData()
   const [openId, setOpenId] = useState(null)   // the lead being viewed / edited
   const [f, setF] = useState('All')
   const [q, setQ] = useState('')
   const [converting, setConverting] = useState(null)
+  const [closing, setClosing] = useState(null)
   const doConvert = async (l) => { setConverting(l.id); try { await convertLead(l) } catch (e) { alert(e.message) } finally { setConverting(null) } }
+  // "Qualified? → No → Close Lead" — disqualify a lead that will not become an opportunity.
+  const doClose = async (l) => {
+    const reason = window.prompt(`Close lead "${l.name || l.company}" — reason (optional):`)
+    if (reason == null) return   // cancelled
+    setClosing(l.id)
+    try { await closeLead(l, reason.trim()) } catch (e) { alert(e.message) } finally { setClosing(null) }
+  }
   const rows = leads.filter(
     (l) =>
       (f === 'All' || l.status === f) &&
@@ -110,12 +118,18 @@ export default function Leads() {
                   <td className="td"><Badge tone={statusTone(l.status)}>{l.status}</Badge></td>
                   <td className="td">
                     {CONVERTABLE.includes(l.status) ? (
-                      <button onClick={(e) => { e.stopPropagation(); doConvert(l) }} disabled={converting === l.id}
-                        className="flex items-center gap-1 text-xs font-semibold text-brand-600 opacity-0 transition group-hover:opacity-100 disabled:opacity-100 disabled:text-slate-400">
-                        {converting === l.id ? <><Loader2 size={13} className="animate-spin" /> Converting…</> : <>Convert <ArrowRight size={13} /></>}
-                      </button>
+                      <div className="flex items-center gap-3">
+                        <button onClick={(e) => { e.stopPropagation(); doConvert(l) }} disabled={converting === l.id || closing === l.id}
+                          className="flex items-center gap-1 text-xs font-semibold text-brand-600 opacity-0 transition group-hover:opacity-100 disabled:opacity-100 disabled:text-slate-400">
+                          {converting === l.id ? <><Loader2 size={13} className="animate-spin" /> Converting…</> : <>Convert <ArrowRight size={13} /></>}
+                        </button>
+                        <button onClick={(e) => { e.stopPropagation(); doClose(l) }} disabled={converting === l.id || closing === l.id}
+                          className="flex items-center gap-1 text-xs font-semibold text-rose-500 opacity-0 transition group-hover:opacity-100 disabled:opacity-100 disabled:text-slate-400">
+                          {closing === l.id ? <><Loader2 size={13} className="animate-spin" /> Closing…</> : <>Close <XCircle size={13} /></>}
+                        </button>
+                      </div>
                     ) : (
-                      <span className="text-xs text-slate-400">{l.status === 'Opportunity' ? 'Converted ✓' : ''}</span>
+                      <span className="text-xs text-slate-400">{l.status === 'Opportunity' ? 'Converted ✓' : l.status === 'Lost' ? 'Closed' : ''}</span>
                     )}
                   </td>
                 </tr>
