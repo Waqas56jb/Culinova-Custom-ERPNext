@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { X, Minus, Paperclip, Trash2, Send, FileText, Eye, Pencil, Loader2 } from 'lucide-react'
 import { useData } from '../store/DataContext.jsx'
 import QuotationPreview from './QuotationPreview.jsx'
 
 export default function ComposeModal() {
-  const { compose, closeCompose, sendEmail, saveDraft, openForm } = useData()
+  const navigate = useNavigate()
+  const { compose, closeCompose, sendEmail, saveDraft } = useData()
   const [v, setV] = useState({ to: '', subject: '', body: '', attachment: '', quotation: null })
   const [min, setMin] = useState(false)
   const [preview, setPreview] = useState(false)
@@ -23,7 +25,7 @@ export default function ComposeModal() {
 
   const send = async () => { setSending(true); await new Promise((r) => setTimeout(r, 600)); sendEmail(v); setSending(false); closeCompose() }
   const draft = () => { saveDraft(v); closeCompose() }
-  const editQuote = () => { if (v.quotation) openForm('quotation', v.quotation) }
+  const editQuote = () => { if (v.quotation) navigate('/sales/quotations') }
 
   return (
     <div className="fixed bottom-0 right-2 z-[70] w-full max-w-[540px] sm:right-6">

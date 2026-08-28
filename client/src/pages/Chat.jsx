@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Send, FileText, UserPlus, Mail, Phone, MessageSquare, Loader2, ArrowLeft, Paperclip, X, Download, Search, FolderKanban, Package, Plus } from 'lucide-react'
 import { useData } from '../store/DataContext.jsx'
 import QuotationPreview from '../components/QuotationPreview.jsx'
@@ -31,6 +32,7 @@ function Attachment({ m, mine }) {
 }
 
 export default function Chat() {
+  const navigate = useNavigate()
   const { chatMessages, sendChatReply, markChatRead, openForm, salesOrders, quotations, customerDir } = useData()
   const [active, setActive] = useState(null)
   const [text, setText] = useState('')
@@ -121,7 +123,7 @@ export default function Chat() {
               </div>
               {/* right side of profile: locked quotation PDF + actions */}
               {latestQuote && <button onClick={() => setPreview(latestQuote)} title="View quotation PDF" className="inline-flex items-center gap-1.5 rounded-lg border border-brand-200 px-3 py-1.5 text-xs font-semibold text-brand-600 hover:bg-brand-50"><FileText size={14} /> PDF</button>}
-              <button onClick={() => openForm('quotation', { customer: current.name, email: current.email })} className="hidden items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 sm:inline-flex"><Plus size={14} /> Quote</button>
+              <button onClick={() => navigate('/sales/opportunities')} className="hidden items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 sm:inline-flex"><Plus size={14} /> Quote</button>
               <button onClick={() => openForm('lead', { company: current.name, email: current.email, name: current.name })} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"><UserPlus size={14} /><span className="hidden sm:inline">Lead</span></button>
             </div>
 

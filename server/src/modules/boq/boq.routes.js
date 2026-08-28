@@ -11,7 +11,7 @@ import { authorize, redactFinancials } from '../../middleware/rbac.js'
 import { asyncWrap } from '../../middleware/error.js'
 import { nextNumber } from '../../core/numbering.js'
 import { logAudit } from '../../core/audit.js'
-import { priceItem } from '../../core/pricing.js'
+import { priceItemLive } from '../../core/priceEngine.js'
 import { canSeeFinancials } from '../../rbac/permissions.js'
 import { recomputeProject } from '../../core/projectcost.js'
 
@@ -20,16 +20,15 @@ const num = (v) => { if (v === '' || v === null || v === undefined) return null;
 const uuid = (v) => (v === '' || v === undefined ? null : v) // never send '' to a uuid column (22P02)
 const nowIso = () => new Date().toISOString()
 
-// Resolve a line's cost & sell rate: prefer the item's stored chain output; if either is missing run
-// THE pricing chain (priceItem) so a never-priced item still gets a real number instead of a crash.
+// Resolve cost & sell from VR chain (priceEngine); stored values preferred, live recompute as fallback.
 async function ratesForItem(item) {
   let cost = num(item.landed_cost)
   let sell = num(item.selling_price)
   if (cost == null || sell == null) {
-    const chain = await priceItem(item).catch(() => null)
+    const chain = await priceItemLive(item).catch(() => null)
     if (chain?.priced) {
-      if (cost == null) cost = chain.landed_cost
-      if (sell == null) sell = chain.selling_price
+      if (cost == null) cost = chain.expected_landed ?? chain.estimated_cost
+      if (sell == null) sell = chain.selling ?? chain.selling_price
     }
   }
   return { cost_rate: round(cost || 0), sell_rate: round(sell || 0) }

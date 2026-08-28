@@ -14,17 +14,17 @@ const num = (v) => (v === '' || v === null || v === undefined ? null : Number(v)
 const nOrNull = (v) => { const n = num(v); return n == null || Number.isNaN(n) ? null : n }
 const toBool = (v) => v === true || v === 'true' || v === 1 || v === '1'
 
-// Owner's rule: an item can only be priced with a REAL supplier cost or a REAL factory cost.
-// The core chain treats factory_cost = 0 (a column default) as "has a cost" and would emit a fake
-// 0 selling price — so priceability is decided here instead, and no-cost items are reported honestly.
-const hasRealCost = (it) => {
-  const sp = num(it?.supplier_price)
-  const fc = num(it?.factory_cost)
-  return (sp != null && sp !== 0) || (fc != null && fc > 0)
+// VR chain (Block 4): priceable when valuation_rate or item.cost is set — supplier fields are for
+// future Actual Landed Cost only and do not gate selling price anymore.
+const hasPriceableBasis = (it) => {
+  const vr = num(it?.valuation_rate)
+  const c = num(it?.cost)
+  return (vr != null && vr > 0) || (c != null && c > 0)
 }
-// Price an item only when it genuinely has a cost; otherwise return the honest unpriced reason.
 async function pricedChain(item) {
-  if (!hasRealCost(item)) return { priced: false, reason: 'No supplier price or factory cost — enter one to price this item.' }
+  if (!hasPriceableBasis(item)) {
+    return { priced: false, reason: 'No valuation rate on the item — set it in the Pricing Engine or from opening stock.' }
+  }
   return priceItem(item)
 }
 
@@ -84,9 +84,9 @@ export function pricingRouter() {
       overrides[k] = (k === 'currency' || k === 'landed_template_id') ? (body[k] || null) : nOrNull(body[k])
     }
     const merged = { ...item, ...overrides }
-    if (!hasRealCost(merged)) return res.status(422).json({ error: 'This item cannot be priced — enter a supplier price or factory cost first.' })
+    if (!hasPriceableBasis(merged)) return res.status(422).json({ error: 'This item cannot be priced — set a valuation rate first.' })
     const chain = await priceItem(merged)
-    if (!chain.priced) return res.status(422).json({ error: chain.reason || 'This item cannot be priced — enter a supplier price or factory cost.' })
+    if (!chain.priced) return res.status(422).json({ error: chain.reason || 'This item cannot be priced — set a valuation rate first.' })
 
     // persist the raw inputs the user changed + the computed chain fields
     const update = { ...overrides, ...persistable(chain), updated_at: new Date().toISOString() }
@@ -116,17 +116,35 @@ export function pricingRouter() {
 
     let updated = 0, skipped = 0
     const unpriced = []
+    const samples = []
     for (const item of items || []) {
-      if (!hasRealCost(item)) { unpriced.push(item.item_name || item.id); continue }
+      if (!hasPriceableBasis(item)) { unpriced.push(item.item_name || item.id); continue }
+      const before = {
+        selling_price: item.selling_price,
+        landed_cost: item.landed_cost,
+        gp_percent: item.gp_percent,
+      }
       const chain = await priceItem(item)
       if (!chain.priced) { unpriced.push(item.item_name || item.id); continue }
       const { error: e } = await supabase.from('items')
         .update({ ...persistable(chain), updated_at: new Date().toISOString() }).eq('id', item.id)
       if (e) { skipped++; continue }
       updated++
+      if (samples.length < 5) {
+        samples.push({
+          item_id: item.id,
+          item_name: item.item_name,
+          before,
+          after: {
+            selling_price: chain.selling_price,
+            landed_cost: chain.landed_cost,
+            gp_percent: chain.gp_percent,
+          },
+        })
+      }
     }
     await logAudit(req.user, 'item_pricing', null, 'recalc', { updated, skipped, unpriced: unpriced.length }).catch(() => {})
-    res.json({ updated, skipped, unpriced })
+    res.json({ updated, skipped, unpriced, samples })
   }))
 
   // ── LANDED-COST TEMPLATES CRUD ────────────────────────────────────────────────

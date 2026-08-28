@@ -1,20 +1,9 @@
-// THE pricing chain. Every module that needs a cost or a price (Item Master, Quotation, BOQ,
-// Cost Sheet, RFQ award, Project Equipment) goes through here — there is no second implementation.
-//
-//   supplier_price (in the item's currency)
-//     × FX rate  → supplier cost in SAR
-//     + factory + freight + insurance + customs + local transport + other
-//                                                        = LANDED COST
-//     × markup factor                                    = calculated sale price
-//     × (1 + add_margin%) × (1 − special_offer%) × (1 − discount%)
-//                                                        = SELLING PRICE
-//   gross profit = selling − landed              gp% = gp / selling
-//   net profit   = gross profit − selling × opex%
-//
-// Each landed component is either an explicit amount on the item, or derived as a PERCENTAGE of the
-// supplier cost from the item's landed-cost template — so the owner configures rates once instead of
-// typing five numbers per item. Nothing here is hardcoded: every factor comes from the DB.
+// THE pricing module. Selling / GP / expected landed cost come from core/priceEngine.js (VR chain).
+// computeChain() below still resolves supplier + landed-template breakdown for future Actual Landed Cost
+// (Ali §8) — it does NOT feed selling_price anymore (Block 4).
 import { supabase } from '../config/supabase.js'
+import { getBrand } from './itempricing.js'
+import { priceItem as vrPriceItem } from './priceEngine.js'
 
 const round = (n) => Math.round((Number(n) || 0) * 100) / 100
 const num = (v) => (v === '' || v === null || v === undefined ? null : Number(v))
@@ -163,40 +152,72 @@ export function computeChain(item = {}, ctx = {}) {
   }
 }
 
-// Resolve everything an item needs from the DB, then run the chain. This is what routes call.
-// A landed-cost template is applied ONLY when the item explicitly references one (landed_template_id),
-// or the caller forces it (opts.useTemplate) — never silently to every item. This keeps the CEO's
-// original chain (supplier × exchange × price_factor × margin × offer) intact for items that have not
-// opted into a full landed-cost breakdown, while the Pricing Engine can opt in per item.
+// Resolve supplier landed breakdown + VR-chain selling. Routes call this for Item Master reprice.
 export async function priceItem(item, opts = {}) {
+  const brand = item?.brand ? await getBrand(item.brand) : null
+  const vr = vrPriceItem(item, brand)
+
   const wantTemplate = item.landed_template_id || opts.useTemplate
   const [tpl, disc] = await Promise.all([
     wantTemplate ? landedTemplate(item.landed_template_id) : Promise.resolve(null),
     opts.applyDiscount === false ? Promise.resolve({ pct: 0, rule: null }) : discountFor(item),
   ])
   const fx = await fxRate(item.currency)
-  const out = computeChain(item, {
+  const supplierChain = computeChain(item, {
     fx,
     template: tpl,
     discount_pct: opts.discount_pct != null ? opts.discount_pct : disc.pct,
     opex_pct: opts.opex_pct,
   })
-  return { ...out, discount_rule: disc.rule }
+
+  // VR chain is authoritative for selling / GP / items.landed_cost (expected landed)
+  const out = {
+    ...supplierChain,
+    priced: vr.priced,
+    reason: vr.priced ? undefined : (vr.reason || supplierChain.reason),
+    basis: vr.basis,
+    basis_value: vr.basis_value,
+    expected_landed: vr.expected_landed,
+    base_selling: vr.base_selling,
+    factors: vr.factors,
+    currency: vr.currency || item.currency || null,
+    discount_rule: disc.rule,
+  }
+  if (vr.priced) {
+    out.landed_cost = vr.expected_landed
+    out.calculated_sale_price = vr.base_selling
+    out.selling_price = vr.selling
+    out.gp_percent = vr.gp_pct
+    out.gross_profit = round(vr.selling - vr.expected_landed)
+    out.net_profit = round(out.gross_profit - (vr.selling * n0(tpl?.opex_pct)) / 100)
+    out.np_percent = vr.selling > 0 ? round((out.net_profit / vr.selling) * 100) : 0
+  } else {
+    out.selling_price = null
+    out.calculated_sale_price = null
+    out.gp_percent = null
+    out.landed_cost = supplierChain.landed_cost ?? null
+  }
+  return out
 }
 
-// The subset of the chain that is persisted back onto the items row.
+// Persist VR-chain outputs onto items.* (expected_landed → landed_cost / cost).
 export function persistable(chain) {
   if (!chain?.priced) return {}
   const keys = [
     'supplier_price', 'factory_cost', 'freight_cost', 'insurance_cost', 'customs_duty', 'local_transport',
-    'other_landed_cost', 'landed_cost', 'markup_factor', 'calculated_sale_price', 'selling_price',
-    'gp_percent', 'net_profit', 'np_percent',
+    'other_landed_cost', 'markup_factor',
   ]
   const out = {}
   for (const k of keys) if (chain[k] != null) out[k] = chain[k]
-  // keep the legacy columns the rest of the app already reads in sync with the chain
-  out.cost = chain.landed_cost
-  out.selling_rate = chain.selling_price
-  out.avg_cost = chain.landed_cost
+  out.landed_cost = chain.expected_landed ?? chain.landed_cost
+  out.calculated_sale_price = chain.base_selling ?? chain.calculated_sale_price
+  out.selling_price = chain.selling_price
+  out.standard_rate = chain.selling_price
+  out.gp_percent = chain.gp_percent
+  out.cost = out.landed_cost
+  out.selling_rate = out.selling_price
+  out.avg_cost = out.landed_cost
+  if (chain.net_profit != null) out.net_profit = chain.net_profit
+  if (chain.np_percent != null) out.np_percent = chain.np_percent
   return out
 }

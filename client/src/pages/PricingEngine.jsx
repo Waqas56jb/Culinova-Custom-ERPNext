@@ -608,6 +608,7 @@ function BrandMasterTab() {
   const dirty = (b) => !!edits[b.id]
 
   const example = (b) => {
+    // Must stay numerically identical to core/priceEngine.js previewBrandExample() — VR basis 1000.
     const exch = Number(val(b, 'exchange_factor', 1)) || 1
     const pf = Number(val(b, 'price_factor', 1)) || 1
     const margin = Number(val(b, 'add_margin_pct', 0)) || 0

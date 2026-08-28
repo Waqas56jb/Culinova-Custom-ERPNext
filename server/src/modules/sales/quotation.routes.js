@@ -10,8 +10,8 @@
 //  • Every line SNAPSHOTS the engineering data (brand/model/uom/description/specifications/
 //    image_url/datasheet_url) off the Item Master at add-time — a later EOS change can never
 //    silently rewrite a quotation the customer already holds.
-//  • rate defaults to the item's selling_price (THE pricing chain, core/pricing.js); cost = the
-//    item's landed_cost, stored for Management GP but redacted for Sales/Engineering.
+//  • rate defaults from core/priceEngine.js (VR × brand factors); cost = expected_landed, stored for
+//    Management GP but redacted for Sales/Engineering.
 //  • VAT comes from the vat_settings table (never hardcoded); nothing invents numbers.
 //  • A quotation's discount can never exceed the item's max_discount cap (discount_rules + the
 //    item's own max_discount column).
@@ -26,12 +26,13 @@ import { isManagement } from '../../rbac/permissions.js'
 import { asyncWrap } from '../../middleware/error.js'
 import { logAudit } from '../../core/audit.js'
 import { nextNumber } from '../../core/numbering.js'
-import { priceItem, discountFor, baseCurrency } from '../../core/pricing.js'
+import { discountFor, baseCurrency } from '../../core/pricing.js'
+import { getBrand } from '../../core/itempricing.js'
+import { priceItem as enginePrice, priceItems, redactPricing } from '../../core/priceEngine.js'
 import { discountSource, evaluateApproval, effectiveDiscountPct, RULES, isValidValidityDays } from './quotation.rules.js'
 import { ensureLeadAndOpportunity, advanceOpportunity } from '../../core/crmflow.js'
 import { notifyManagementApproval } from '../../core/notify.js'
 import { allocateLines, allocationSummary, allocationColumns } from '../../core/availability.js'
-import { priceItems, redactPricing } from '../../core/quotationPricing.js'
 import { canSeeFinancials } from '../../rbac/permissions.js'
 import { enrichQuotationRecord, enrichQuotationList } from '../../core/quotationLines.js'
 
@@ -78,24 +79,20 @@ async function vatRatePct() {
   return any?.rate != null ? Number(any.rate) : 15 // last-resort only if the table is empty
 }
 
-// Resolve an item's quotation rate (selling) + cost (landed) through THE pricing chain.
-// Prefer the value already persisted on the item; fall back to a live chain (discount excluded —
-// the quotation applies its own discount). Never invents a number: falls back to 0.
+// Live VR + brand-factor pricing for quotation lines (never stale stored selling_price).
 async function priceOf(item) {
-  let selling = num(item.selling_price)
-  let landed = num(item.landed_cost)
-  if (selling == null || selling === 0 || landed == null) {
-    try {
-      const chain = await priceItem(item, { applyDiscount: false })
-      if (chain?.priced) {
-        if (selling == null || selling === 0) selling = num(chain.selling_price)
-        if (landed == null) landed = num(chain.landed_cost)
-      }
-    } catch { /* item not priceable — fall through to legacy columns */ }
+  const brand = item?.brand ? await getBrand(item.brand) : null
+  const p = enginePrice(item, brand)
+  if (!p.priced) {
+    return { selling: 0, landed: 0, basis: p.basis || 'none', basis_value: p.basis_value ?? 0, priced: false }
   }
-  if (selling == null || selling === 0) selling = num(item.selling_rate) ?? num(item.standard_rate) ?? 0
-  if (landed == null) landed = num(item.cost) ?? 0
-  return { selling: n0(selling), landed: n0(landed) }
+  return {
+    selling: n0(p.selling),
+    landed: n0(p.expected_landed),
+    basis: p.basis,
+    basis_value: p.basis_value,
+    priced: true,
+  }
 }
 
 // Build ONE quotation_items row: snapshot engineering data + resolve rate/cost.
@@ -107,7 +104,7 @@ async function buildLine(input = {}, idx = 0, { lockRate = false } = {}) {
     const { data } = await supabase.from('items').select('*').eq('id', itemId).maybeSingle()
     itemRow = data || null
   }
-  const priced = itemRow ? await priceOf(itemRow) : { selling: 0, landed: 0 }
+  const priced = itemRow ? await priceOf(itemRow) : { selling: 0, landed: 0, basis: 'none', priced: false }
   const qtyRaw = num(input.qty)
   const qty = qtyRaw == null ? 1 : qtyRaw
   const rateOverride = num(input.rate)
@@ -115,7 +112,7 @@ async function buildLine(input = {}, idx = 0, { lockRate = false } = {}) {
   const cost = itemRow ? n0(priced.landed) : n0(input.cost)
   const disc = Math.max(0, Math.min(100, n0(input.discount_pct)))
   const vr = num(itemRow?.valuation_rate)
-  const needs_rate = rate === 0 && !(vr != null && vr > 0)
+  const needs_rate = !priced.priced || (rate === 0 && !(vr != null && vr > 0))
   // provided field wins (keeps a prior snapshot intact on edit); else snapshot from the item
   const pref = (field, fallback) => (input[field] !== undefined && input[field] !== null && input[field] !== '' ? input[field] : fallback)
   return {
@@ -131,6 +128,8 @@ async function buildLine(input = {}, idx = 0, { lockRate = false } = {}) {
     datasheet_url: pref('datasheet_url', itemRow?.datasheet_url ?? null),
     pos: clean(input.pos) || clean(input.area) || null,
     qty, rate, cost, discount_pct: disc,
+    estimated_cost: itemRow && priced.priced ? n0(priced.landed) : null,
+    pricing_basis: itemRow ? (priced.basis || null) : null,
     amount: round(qty * rate * (1 - disc / 100)),
     sort_order: num(input.sort_order) ?? idx,
     needs_rate,
@@ -158,7 +157,7 @@ async function recomputeTotals(qid) {
   const vatRate = await vatRatePct()
   const vat = round((netAfter * vatRate) / 100)
   const total = round(netAfter + vat)
-  const gp = netAfter > 0 ? round(((netAfter - cost) / netAfter) * 100) : 0
+  const gp = netAfter > 0 ? round(((netAfter - cost) / netAfter) * 100) : 0 // line cost = expected_landed (VR chain)
   const patch = { net_amount: net, discount_amount: discountAmount, vat_amount: vat, total_amount: total, cost_amount: cost, gp_percent: gp, updated_at: new Date().toISOString() }
   const { data: updated } = await supabase.from('quotations').update(patch).eq('id', qid).select('*, quotation_items(*)').single()
   return updated
@@ -363,6 +362,55 @@ export function quotationRouter() {
     const out = {}
     for (const [id, p] of Object.entries(priced)) out[id] = redactPricing(p, fin)
     res.json(out)
+  }))
+
+  // ── Refresh line prices from live VR chain (Draft only; preview then apply) ──
+  r.post('/:id/refresh-prices', authRequired, authorize('sales', 'read'), asyncWrap(async (req, res) => {
+    const apply = req.body?.apply === true
+    const { data: q } = await supabase.from('quotations').select('*, quotation_items(*)').eq('id', req.params.id).single()
+    if (!q) return res.status(404).json({ error: 'Not found' })
+    if (q.status !== 'Draft') return res.status(422).json({ error: 'Only Draft quotations can refresh prices' })
+    if (apply) {
+      const draftBlock = assertDraftEditOr403(req, res, q)
+      if (draftBlock) return draftBlock
+    }
+    const lines = (q.quotation_items || []).sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+    const diff = []
+    for (const line of lines) {
+      if (!line.item_id) continue
+      const { data: itemRow } = await supabase.from('items').select('*').eq('id', line.item_id).maybeSingle()
+      if (!itemRow) continue
+      const priced = await priceOf(itemRow)
+      const newRate = priced.priced ? n0(priced.selling) : 0
+      const newCost = priced.priced ? n0(priced.landed) : null
+      const entry = {
+        line_id: line.id,
+        item_id: line.item_id,
+        item_name: line.item_name,
+        old_rate: n0(line.rate),
+        new_rate: newRate,
+        old_cost: line.cost != null ? n0(line.cost) : null,
+        new_cost: newCost,
+        pricing_basis: priced.basis || null,
+        needs_rate: !priced.priced || (newRate === 0 && !(num(itemRow.valuation_rate) > 0)),
+      }
+      diff.push(entry)
+      if (apply) {
+        const disc = n0(line.discount_pct)
+        const qty = n0(line.qty)
+        await supabase.from('quotation_items').update({
+          rate: newRate,
+          cost: newCost,
+          estimated_cost: newCost,
+          pricing_basis: priced.basis || null,
+          amount: round(qty * newRate * (1 - disc / 100)),
+        }).eq('id', line.id)
+      }
+    }
+    const full = apply ? await recomputeTotals(q.id) : null
+    if (apply) await logAudit(req.user, 'quotation', q.id, 'refresh-prices', { lines: diff.length }).catch(() => {})
+    const fin = canSeeFinancials(req.user?.role)
+    res.json(redactFinancials(req.user.role, { applied: apply, lines: diff, quotation: full }))
   }))
 
   // ── READ one quotation + items + revisions + resolved commercial terms ──

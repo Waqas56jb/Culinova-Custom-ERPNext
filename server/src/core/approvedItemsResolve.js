@@ -1,5 +1,5 @@
 import { supabase } from '../config/supabase.js'
-import { priceItem } from './pricing.js'
+import { priceItemLive } from './priceEngine.js'
 import { importEosEntry } from './eos.js'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -91,10 +91,10 @@ async function rateForItem(item) {
   let landed = item.landed_cost != null ? n0(item.landed_cost) : n0(item.cost)
   if (!selling) {
     try {
-      const chain = await priceItem(item, { applyDiscount: false })
+      const chain = await priceItemLive(item)
       if (chain?.priced) {
-        selling = n0(chain.selling_price) || selling
-        landed = chain.landed_cost != null ? n0(chain.landed_cost) : landed
+        selling = n0(chain.selling) || n0(chain.selling_price) || selling
+        landed = chain.expected_landed != null ? n0(chain.expected_landed) : (chain.landed_cost != null ? n0(chain.landed_cost) : landed)
       }
     } catch { /* not priceable */ }
   }

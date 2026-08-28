@@ -3,7 +3,7 @@ import { specPreview, specGroups } from '../data/specs'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   Plus, AlertTriangle, Pencil, Check, X, ThumbsUp, FileText, Loader2, Search, Trash2,
-  History, Send, Package, ClipboardList, Wallet, ScrollText,
+  History, Send, Package, ClipboardList, Wallet, ScrollText, RefreshCw,
   Boxes, CheckCircle2, ShoppingCart, PackageCheck, Truck,
 } from 'lucide-react'
 import { PageHeader, Badge, statusTone, KpiCard } from '../components/ui.jsx'
@@ -37,6 +37,36 @@ const fmtDec = (n) => Number(n || 0).toLocaleString('en-SA', { minimumFractionDi
 const preview = (s, len = 90) => specPreview(s, len)
 const itemRate = (it) => n0(it.selling_price) || n0(it.selling_rate) || n0(it.standard_rate) || 0
 const itemCost = (it) => (it.landed_cost != null ? n0(it.landed_cost) : it.cost != null ? n0(it.cost) : null)
+
+/** Live VR-chain price from server; falls back to stored fields when the request fails. */
+async function fetchServerPrice(it) {
+  if (!it?.id) {
+    return { rate: itemRate(it), cost: itemCost(it), needs_rate: n0(itemRate(it)) === 0, stale: true, pricing_basis: null }
+  }
+  try {
+    const priced = await api(`/quotations/price-items?ids=${it.id}`)
+    const p = priced[it.id]
+    if (!p) throw new Error('no price')
+    if (!p.priced) {
+      return { rate: 0, cost: null, needs_rate: true, stale: false, pricing_basis: p.basis || 'none' }
+    }
+    return {
+      rate: n0(p.selling),
+      cost: p.estimated_cost != null ? n0(p.estimated_cost) : (p.expected_landed != null ? n0(p.expected_landed) : null),
+      needs_rate: false,
+      stale: false,
+      pricing_basis: p.basis || null,
+    }
+  } catch {
+    return {
+      rate: itemRate(it),
+      cost: itemCost(it),
+      needs_rate: n0(itemRate(it)) === 0 && !(Number(it.valuation_rate) > 0),
+      stale: true,
+      pricing_basis: null,
+    }
+  }
+}
 const lineNeedsRateWarn = (l) => l.needs_rate || ((l.valuation_rate == null || n0(l.valuation_rate) === 0) && n0(l.rate) === 0)
 const plural = (n) => (n === 1 ? '' : 's')
 
@@ -191,19 +221,23 @@ export default function Quotations() {
   }
 
   const setH = (patch) => setBuilder((b) => ({ ...b, ...patch }))
-  const addLine = (it) => setBuilder((b) => {
-    if (b.lines.some((l) => l.item_id === it.id)) return b
-    return {
-      ...b, lines: [...b.lines, {
-        item_id: it.id, item_code: it.item_code || it.code, item_name: it.item_name || it.name, brand: it.brand, model: it.model,
-        uom: it.uom || it.stock_uom || 'Nos', description: it.description, specifications: it.specifications,
-        image_url: it.image_url, datasheet_url: it.datasheet_url, pos: '',
-        qty: 1, rate: itemRate(it), cost: itemCost(it), discount_pct: 0,
-        valuation_rate: it.valuation_rate != null ? n0(it.valuation_rate) : undefined,
-        needs_rate: n0(itemRate(it)) === 0 && !(Number(it.valuation_rate) > 0),
-      }],
-    }
-  })
+  const addLine = async (it) => {
+    if (builder?.lines?.some((l) => l.item_id === it.id)) return
+    const price = await fetchServerPrice(it)
+    setBuilder((b) => {
+      if (b.lines.some((l) => l.item_id === it.id)) return b
+      return {
+        ...b, lines: [...b.lines, {
+          item_id: it.id, item_code: it.item_code || it.code, item_name: it.item_name || it.name, brand: it.brand, model: it.model,
+          uom: it.uom || it.stock_uom || 'Nos', description: it.description, specifications: it.specifications,
+          image_url: it.image_url, datasheet_url: it.datasheet_url, pos: '',
+          qty: 1, rate: price.rate, cost: price.cost, discount_pct: 0,
+          valuation_rate: it.valuation_rate != null ? n0(it.valuation_rate) : undefined,
+          needs_rate: price.needs_rate, stale_price: price.stale, pricing_basis: price.pricing_basis,
+        }],
+      }
+    })
+  }
   const setLine = (i, patch) => setBuilder((b) => ({ ...b, lines: b.lines.map((l, idx) => (idx === i ? { ...l, ...patch } : l)) }))
   const removeLine = (i) => setBuilder((b) => ({ ...b, lines: b.lines.filter((_, idx) => idx !== i) }))
 
@@ -365,7 +399,7 @@ export default function Quotations() {
           currencies={settings?.currencies || []} addLine={addLine} setLine={setLine} removeLine={removeLine}
           totals={{ net: bNet, discAmt: bDiscAmt, vat: bVat, total: bTotal, gp: bGp, cost: bCost, vatRate }}
           showFin={showFin} canEditRate={showFin} onClose={() => setBuilder(null)} onSave={saveBuilder} onRevise={revise}
-          saving={saving} error={error}
+          saving={saving} error={error} canRefreshPrices={showFin || SENDERS.includes(user?.role)}
         />
       )}
 
@@ -376,7 +410,7 @@ export default function Quotations() {
 }
 
 // ── The quotation BUILDER ────────────────────────────────────────────────────
-function Builder({ builder, setH, items, customers, projects, opportunities, currencies, addLine, setLine, removeLine, totals, showFin, canEditRate, onClose, onSave, onRevise, saving, error }) {
+function Builder({ builder, setH, items, customers, projects, opportunities, currencies, addLine, setLine, removeLine, totals, showFin, canEditRate, onClose, onSave, onRevise, saving, error, canRefreshPrices }) {
   const d = useData()
   const nav = useNavigate()
   const [q, setQ] = useState('')
@@ -388,6 +422,8 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
   const [smartBrand, setSmartBrand] = useState('')
   const [smartRecs, setSmartRecs] = useState([])
   const [smartBusy, setSmartBusy] = useState(false)
+  const [searchPrices, setSearchPrices] = useState({})
+  const [refreshBusy, setRefreshBusy] = useState(false)
 
   const productFamilies = useMemo(() => {
     return Array.from(new Set((items || []).map((it) => it.product_family).filter(Boolean))).sort()
@@ -414,6 +450,22 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
     }).slice(0, 8)
   }, [q, items])
 
+  // Server VR-chain prices for search results (rates never invented client-side).
+  useEffect(() => {
+    const ids = (results || []).map((r) => r.id).filter(Boolean)
+    if (!ids.length) { setSearchPrices({}); return }
+    let cancelled = false
+    api(`/quotations/price-items?ids=${ids.join(',')}`)
+      .then((r) => { if (!cancelled) setSearchPrices(r || {}) })
+      .catch(() => { if (!cancelled) setSearchPrices({}) })
+    return () => { cancelled = true }
+  }, [results])
+
+  const displayRate = (it) => {
+    const p = searchPrices[it.id]
+    if (p?.priced && p.selling != null) return n0(p.selling)
+    return itemRate(it)
+  }
   // Live availability for whatever the search is currently showing — one bulk call per result set,
   // so the estimator sees stock before committing a line instead of after saving the quotation.
   const [avail, setAvail] = useState({})
@@ -441,14 +493,38 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
     } finally { setSmartBusy(false) }
   }
 
-  const addRecLine = (rec) => {
+  const addRecLine = async (rec) => {
     const it = (items || []).find((x) => x.id === rec.item_id)
-    if (it) addLine(it)
-    else addLine({
+    if (it) await addLine(it)
+    else await addLine({
       id: rec.item_id, item_name: rec.item_name, name: rec.item_name,
       brand: rec.brand, model: rec.model, selling_price: rec.selling_price,
       image_url: rec.image_url, specifications: rec.specifications, datasheet_url: rec.datasheet_url,
     })
+  }
+
+  const refreshPrices = async () => {
+    if (!builder.editingId) return
+    setRefreshBusy(true)
+    try {
+      const preview = await api(`/quotations/${builder.editingId}/refresh-prices`, { method: 'POST', body: { apply: false } })
+      const lines = preview.lines || []
+      const changed = lines.filter((l) => Math.abs(n0(l.old_rate) - n0(l.new_rate)) > 0.009)
+      if (!changed.length) { alert('All line prices are already up to date.'); return }
+      const msg = changed.map((l) => `${l.item_name}: ${fmtDec(l.old_rate)} → ${fmtDec(l.new_rate)} SAR`).join('\n')
+      if (!window.confirm(`Refresh prices for ${changed.length} line(s)?\n\n${msg}`)) return
+      const applied = await api(`/quotations/${builder.editingId}/refresh-prices`, { method: 'POST', body: { apply: true } })
+      const refreshed = (applied.quotation?.quotation_items || []).sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+      setH({
+        lines: refreshed.map((l) => ({
+          item_id: l.item_id, item_code: l.item_code, item_name: l.item_name, brand: l.brand, model: l.model, uom: l.uom,
+          description: l.description, specifications: l.specifications, image_url: l.image_url, datasheet_url: l.datasheet_url,
+          pos: l.pos || l.area || '',
+          qty: n0(l.qty), rate: n0(l.rate), cost: l.cost, discount_pct: n0(l.discount_pct),
+          needs_rate: l.needs_rate,
+        })),
+      })
+    } catch (e) { alert(e.message) } finally { setRefreshBusy(false) }
   }
 
   useEffect(() => { api('/quotations/terms').then(setTerms).catch(() => setTerms([])) }, [])
@@ -549,6 +625,11 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
               {toBuy} unit{plural(toBuy)} are not in stock — tick the purchase acknowledgement below the totals to save.
             </span>
           )}
+          {builder.editingId && canRefreshPrices && (
+            <button type="button" className="btn-ghost" onClick={refreshPrices} disabled={saving || refreshBusy}>
+              {refreshBusy ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />} Refresh prices
+            </button>
+          )}
           {builder.editingId && <button className="btn-ghost" onClick={onRevise} disabled={saving}><History size={15} /> Save Revision</button>}
           <button className="btn-ghost" onClick={onClose} disabled={saving}>Cancel</button>
           <button className="btn-primary" onClick={onSave} disabled={saving || blockedByStock}
@@ -634,7 +715,7 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
                     <p className="truncate text-[11px] text-slate-500">{[it.brand, it.model].filter(Boolean).join(' · ') || it.item_group}{(() => { const pv = preview(it.specifications || it.description, 60); return pv ? ` — ${pv}` : '' })()}</p>
                     <AvailabilityChips a={avail[it.id]} />
                   </div>
-                  <span className="shrink-0 text-xs font-semibold text-brand-600">{sar(itemRate(it))}</span>
+                  <span className="shrink-0 text-xs font-semibold text-brand-600">{sar(displayRate(it))}</span>
                 </button>
               ))}
             </div>
@@ -667,6 +748,9 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
                           <p className="text-sm font-semibold text-ink">{l.item_name}</p>
                           <p className="text-[11px] text-slate-500">{[l.brand, l.model].filter(Boolean).join(' · ')}</p>
                           {preview(l.specifications || l.description, 70) && <p className="mt-0.5 text-[11px] text-slate-400">{preview(l.specifications || l.description, 70)}</p>}
+                          {l.stale_price && (
+                            <p className="mt-1 text-[11px] font-medium text-slate-500">Stale price — server unavailable; using last stored rate</p>
+                          )}
                           {lineNeedsRateWarn(l) && (
                             <p className="mt-1 flex flex-wrap items-center gap-1 text-[11px] font-medium text-amber-700">
                               <AlertTriangle size={11} className="shrink-0" />

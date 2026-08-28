@@ -11,7 +11,7 @@ import { authRequired } from '../../middleware/auth.js'
 import { authorize, redactFinancials } from '../../middleware/rbac.js'
 import { asyncWrap } from '../../middleware/error.js'
 import { logAudit } from '../../core/audit.js'
-import { priceItem } from '../../core/pricing.js'
+import { priceItemLive } from '../../core/priceEngine.js'
 import { canSeeFinancials } from '../../rbac/permissions.js'
 import { recomputeProject } from '../../core/projectcost.js'
 
@@ -32,15 +32,15 @@ const DONE = { delivery: 'Delivered', installation: 'Completed', commissioning: 
 const COL = { delivery: 'delivery_status', installation: 'installation_status', commissioning: 'commissioning_status' }
 const DEFAULTS = { delivery_status: 'Pending', installation_status: 'Not Started', commissioning_status: 'Not Started' }
 
-// Resolve an item's cost & sell rate: prefer stored chain output; else run THE pricing chain; else 0.
+// Resolve cost & sell from VR chain (priceEngine); GP basis = expected_landed.
 async function ratesForItem(item) {
   let cost = num(item.landed_cost) ?? num(item.cost) ?? num(item.avg_cost)
   let sell = num(item.selling_price) ?? num(item.selling_rate)
   if (cost == null || sell == null) {
-    const chain = await priceItem(item).catch(() => null)
+    const chain = await priceItemLive(item).catch(() => null)
     if (chain?.priced) {
-      if (cost == null) cost = chain.landed_cost
-      if (sell == null) sell = chain.selling_price
+      if (cost == null) cost = chain.expected_landed ?? chain.estimated_cost
+      if (sell == null) sell = chain.selling ?? chain.selling_price
     }
   }
   return { unit_cost: round(cost || 0), unit_price: round(sell || 0) }

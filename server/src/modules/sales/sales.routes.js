@@ -161,44 +161,9 @@ r.get('/quotations/:id', authRequired, authorize('sales', 'read'), asyncWrap(asy
   res.json(redactFinancials(req.user.role, enriched))
 }))
 
-// ── CREATE — enforces ALL sales rules ──
+// ── CREATE (legacy) — retired in Sprint 1a Block 4; use the quotation builder (/api/quotations) ──
 r.post('/quotations', authRequired, authorize('sales', 'create'), asyncWrap(async (req, res) => {
-  const p = req.body
-  const missing = validateRequiredFields(p)              // #16 mandatory fields
-  if (missing.length) return res.status(422).json({ error: 'Missing required fields', fields: missing })
-
-  const items = await resolveItems(p.items || [])         // cost from Item Master
-  const fin = computeFinancials(items, p.discount_pct || 0, p.discount_fixed || 0)
-  const decision = evaluateApproval(fin, req.user.role)   // #5 / #6 / #11 / SEC-002 per-role
-  if (decision.blocked) return res.status(422).json({ error: decision.reason }) // #6 >25% blocked
-
-  const status = decision.needsApproval ? 'Pending Approval' : 'Open'
-  const approval_status = decision.needsApproval ? 'Pending' : 'Not Required'
-
-  const row = {
-    number: num('QTN'), customer: p.customer, contact_person: p.contact_person,
-    project_name: p.project_name, project_location: p.project_location, customer_email: p.customer_email,
-    validity_days: Number(p.validity_days), valid_till: validTillFrom(p.validity_days), payment_terms: p.payment_terms,
-    delivery_date: p.delivery_date || null, notes: p.notes || null,
-    ...fin, discount_source: discountSource(req.user.role),
-    status, approval_status, revision: 0, owner_id: req.user.id, created_by: req.user.id,
-  }
-  const { data: q, error } = await supabase.from('quotations').insert(row).select().single()
-  if (error) throw error
-
-  if (items.length) {
-    await supabase.from('quotation_items').insert(items.map((it) => ({
-      quotation_id: q.id, item_name: it.item_name, qty: it.qty, rate: it.rate, cost: it.cost,
-      amount: it.qty * it.rate,
-    })))
-  }
-  await supabase.from('quotation_revisions').insert({ quotation_id: q.id, revision: 0, changed_by: req.user.id, changes: { action: 'created', ...fin } })
-  // CRM automation: ensure the customer has an opportunity, then move it to the Quotation stage
-  await ensureLeadAndOpportunity({ name: q.customer, email: q.customer_email })
-  await advanceOpportunity(q.customer, 'Quotation')
-  if (decision.needsApproval) await notifyManagementApproval(q, req.user.name) // high discount → admin notification
-  await logAudit(req.user, 'quotation', q.id, 'created', { number: q.number, status, gp: fin.gp_percent })
-  res.status(201).json({ ...redactFinancials(req.user.role, q), _approval: safeApproval(req.user.role, decision) })
+  res.status(410).json({ error: 'Use the quotation builder' })
 }))
 
 // ── EDIT — recomputes, re-evaluates approval, keeps revision history (#10) ──

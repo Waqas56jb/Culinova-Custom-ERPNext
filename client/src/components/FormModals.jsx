@@ -113,7 +113,7 @@ export default function FormModals() {
     <>
       <LeadModal open={t === 'lead'} d={d} />
       <OpportunityModal open={t === 'opportunity'} d={d} />
-      <QuotationModal open={t === 'quotation'} d={d} />
+      {/* Legacy quotation form retired (Block 4) — use Opportunities → quotation builder */}
       <OrderModal open={t === 'order'} d={d} />
       <CustomerModal open={t === 'customer'} d={d} />
       <InteractionModal open={t === 'interaction'} d={d} />
