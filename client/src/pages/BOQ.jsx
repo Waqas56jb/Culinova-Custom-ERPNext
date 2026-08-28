@@ -20,7 +20,7 @@ const STATUSES = ['Draft', 'Finalized', 'Approved', 'Sent', 'Ordered']
 const pct = (n) => `${Number(n) || 0}%`
 
 export default function BOQ() {
-  const { resList, resGet, resAdd, resUpdate, resDelete, lookupQuotations, items, projects, settings } = useData()
+  const { resAdd, resUpdate, resDelete, lookupQuotations, items, projects, settings } = useData()
   const { user } = useAuth()
   const fin = FIN_ROLES.includes(user?.role)
   const canDelete = user?.access_level === 'Full Admin'
@@ -46,18 +46,20 @@ export default function BOQ() {
 
   const currencies = (settings?.currencies || []).map((c) => c.code).filter(Boolean)
 
+  // Use api() directly — resList/resGet are recreated every DataContext render (12s poll),
+  // which retriggered these effects and flashed "Loading…" forever on the list.
   const loadList = useCallback(async () => {
     setLoadingList(true)
-    try { setBoqs(await resList('boqs') || []) } catch { setBoqs([]) } finally { setLoadingList(false) }
-  }, [resList])
+    try { setBoqs(await api('/boqs') || []) } catch { setBoqs([]) } finally { setLoadingList(false) }
+  }, [])
 
   const loadDetail = useCallback(async (id) => {
     if (!id) { setDetail(null); return }
     setLoadingDetail(true)
-    try { setDetail(await resGet('boqs', id)) } catch (e) { setErr(e.message) } finally { setLoadingDetail(false) }
-  }, [resGet])
+    try { setDetail(await api(`/boqs/${id}`)) } catch (e) { setErr(e.message) } finally { setLoadingDetail(false) }
+  }, [])
 
-  useEffect(() => { loadList() }, [loadList])
+  useEffect(() => { if (!selId) loadList() }, [selId, loadList])
   useEffect(() => { loadDetail(selId) }, [selId, loadDetail])
 
   useEffect(() => {
@@ -118,7 +120,9 @@ export default function BOQ() {
                 {!loadingList && boqs.length === 0 && (
                   <tr><td className="td text-slate-400" colSpan={fin ? 7 : 6}>No BOQs yet. Click “New BOQ” to create one, then add equipment from the Item Master.</td></tr>
                 )}
-                {loadingList && <tr><td className="td text-slate-400" colSpan={fin ? 7 : 6}><Loader2 size={15} className="inline animate-spin" /> Loading…</td></tr>}
+                {loadingList && boqs.length === 0 && (
+                  <tr><td className="td text-slate-400" colSpan={fin ? 7 : 6}><Loader2 size={15} className="inline animate-spin" /> Loading…</td></tr>
+                )}
               </tbody>
             </table>
           </div>
