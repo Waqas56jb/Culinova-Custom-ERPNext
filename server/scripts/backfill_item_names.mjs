@@ -11,25 +11,34 @@ import { fileURLToPath } from 'url'
 import { supabase } from '../src/config/supabase.js'
 import { buildItemName } from '../src/core/itempricing.js'
 import { eosDetail, mapEosToItem } from '../src/core/eos.js'
+import { recordVersion } from '../src/core/eosfields.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 dotenv.config({ path: path.resolve(__dirname, '../.env') })
 
 const APPLY = process.argv.includes('--apply')
 const clean = (s) => (s == null ? null : String(s).trim() || null)
+const norm = (s) => {
+  const c = clean(s)
+  return c ? c.toLowerCase().replace(/\s+/g, ' ').trim() : ''
+}
 
-function legacyNames(detail) {
+function legacyNameCandidates(detail) {
   const e = detail.entry || {}, m = detail.model || {}
   const b = clean(e.brand || m.brand)
   const mod = clean(e.model_number || e.code || m.model_number)
-  return { title: clean(e.title), brandModel: [b, mod].filter(Boolean).join(' ') }
+  const title = clean(e.title)
+  const out = []
+  if (title) out.push(norm(title))
+  if (b && mod) out.push(norm(`${b} ${mod}`))
+  if (mod) out.push(norm(mod))
+  return [...new Set(out.filter(Boolean))]
 }
 
 function isLegacyName(itemName, detail) {
-  const cur = clean(itemName)
+  const cur = norm(itemName)
   if (!cur) return false
-  const { title, brandModel } = legacyNames(detail)
-  return (title && cur === title) || (brandModel && cur === brandModel)
+  return legacyNameCandidates(detail).some((c) => c === cur)
 }
 
 const { data: linked, error } = await supabase
@@ -44,6 +53,8 @@ if (error) {
 
 console.log(`\n######## BACKFILL ITEM NAMES (${APPLY ? 'APPLY' : 'DRY-RUN'}) ########\n`)
 console.log(`EOS-linked items: ${(linked || []).length}\n`)
+console.log('id | current name | proposed name')
+console.log('---|--------------|---------------')
 
 const changes = []
 for (const it of linked || []) {
@@ -55,26 +66,34 @@ for (const it of linked || []) {
     const next = mapped.fields.item_name
     if (!next || next === (it.item_name || it.name)) continue
     changes.push({ id: it.id, before: it.item_name || it.name, after: next })
+    console.log(`${it.id} | ${it.item_name || it.name} | ${next}`)
   } catch (e) {
     console.warn(`  skip ${it.item_name}: ${e.message}`)
   }
 }
 
 if (!changes.length) {
-  console.log('Nothing to change — all names already upgraded or manually set.')
+  console.log('\nNothing to change — all names already upgraded or manually set.')
   process.exit(0)
-}
-
-for (const c of changes) {
-  console.log(`  ${c.id}`)
-  console.log(`    before: ${c.before}`)
-  console.log(`    after:  ${c.after}`)
 }
 
 if (APPLY) {
   for (const c of changes) {
+    const { data: before } = await supabase.from('items').select('*').eq('id', c.id).single()
     const { error: upErr } = await supabase.from('items').update({ item_name: c.after, name: c.after }).eq('id', c.id)
-    if (upErr) console.error(`  ✗ ${c.id}: ${upErr.message}`)
+    if (upErr) {
+      console.error(`  ✗ ${c.id}: ${upErr.message}`)
+      continue
+    }
+    const { data: after } = await supabase.from('items').select('*').eq('id', c.id).single()
+    if (before && after) {
+      await recordVersion(c.id, {
+        source: 'backfill-item-names',
+        changed_by: null,
+        change_note: `Name backfill: ${c.before} → ${c.after}`,
+        snapshot: after,
+      })
+    }
   }
   console.log(`\n✔ Updated ${changes.length} item(s).`)
 } else {

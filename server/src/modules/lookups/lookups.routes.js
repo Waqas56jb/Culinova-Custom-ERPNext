@@ -36,7 +36,7 @@ export function lookupsRouter() {
 
   // items → { id, item_code, item_name, brand } (catalogue is already internal-wide; no cost here)
   r.get('/items', list('items', (req) => {
-    let q = supabase.from('items').select('id, item_code, item_name, brand, uom, stock_uom, eos_entry_id').order('item_name').limit(2000)
+    let q = supabase.from('items').select('id, item_code, item_name, brand, uom, stock_uom, eos_entry_id').eq('disabled', false).order('item_name').limit(2000)
     if (req.query.sales === '1') q = q.eq('is_sales_item', true).eq('has_variants', false)
     return q.then(({ data, error }) => ({ data: (data || []).map((i) => ({ id: i.id, item_code: i.item_code, item_name: i.item_name, brand: i.brand, uom: i.uom || i.stock_uom || 'Nos', eos_linked: !!i.eos_entry_id, label: [i.item_code, i.item_name].filter(Boolean).join(' · ') })), error }))
   }))

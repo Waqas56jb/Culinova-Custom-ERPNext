@@ -92,12 +92,44 @@ async function writeFieldPricingHistory({ itemId, field, oldVal, newVal, source,
 
 // ── LIST (every INTERNAL role can read & select; cost redacted by role; Customers blocked) ──
 r.get('/', authRequired, internalOnly, asyncWrap(async (req, res) => {
-  let q = supabase.from('items').select('*').order('created_at', { ascending: false })
-  if (req.query.active === '1') q = q.eq('disabled', false)          // IM-009 hide disabled
+  const includeDisabled = req.query.include_disabled === '1'
+  const limitRaw = req.query.limit
+  const limit = limitRaw != null ? Math.min(Math.max(Number(limitRaw) || 50, 1), 200) : null
+  const offset = limit != null ? Math.max(Number(req.query.offset) || 0, 0) : 0
+  const search = String(req.query.search || req.query.q || '').trim()
+  const family = String(req.query.family || '').trim()
+  const brand = String(req.query.brand || '').trim()
+  const status = String(req.query.status || '').trim().toLowerCase()
+
+  let q = supabase.from('items').select('*', limit != null ? { count: 'exact' } : undefined)
+
+  // IM-009: disabled items excluded by default; Item Master passes include_disabled=1
+  if (status === 'disabled') {
+    q = q.eq('disabled', true)
+  } else if (status === 'active' || req.query.active === '1' || !includeDisabled) {
+    q = q.eq('disabled', false)
+  }
+
   if (req.query.sales === '1') q = q.eq('is_sales_item', true).eq('has_variants', false)
-  const { data, error } = await q
+  if (family) q = q.eq('product_family', family)
+  if (brand) q = q.ilike('brand', brand)
+
+  if (search) {
+    const esc = search.replace(/[%_\\]/g, '\\$&')
+    q = q.or(`item_name.ilike.%${esc}%,item_code.ilike.%${esc}%,brand.ilike.%${esc}%,model.ilike.%${esc}%`)
+  }
+
+  q = q.order('created_at', { ascending: false })
+  if (limit != null) q = q.range(offset, offset + limit - 1)
+
+  const { data, error, count } = await q
   if (error) throw error
-  res.json((data || []).map((i) => redact(req.user, i)))
+  const rows = (data || []).map((i) => redact(req.user, i))
+
+  if (limit != null) {
+    return res.json({ items: rows, total: count ?? rows.length, limit, offset })
+  }
+  res.json(rows)
 }))
 
 // ── GET ONE (full item + all child tables) ──

@@ -13,6 +13,9 @@ import ItemImportExport from '../components/ItemImportExport.jsx'
 import EosImportModal from '../components/EosImportModal.jsx'
 import ItemView from '../components/ItemView.jsx'
 import ImageLightbox from '../components/ImageLightbox.jsx'
+import { api } from '../api.js'
+
+const PAGE_SIZE = 50
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ITEM MASTER — CEO rule (14 Jul 2026):
@@ -65,6 +68,13 @@ export default function ItemMaster() {
   const items = d.items || []
   const [q, setQ] = useState('')
   const [g, setG] = useState('All')
+  const [page, setPage] = useState(0)
+  const [masterItems, setMasterItems] = useState([])
+  const [masterTotal, setMasterTotal] = useState(0)
+  const [masterLoading, setMasterLoading] = useState(false)
+  const [familyFilter, setFamilyFilter] = useState('')
+  const [brandFilter, setBrandFilter] = useState('')
+  const [statusFilter, setStatusFilter] = useState('all')
   const [form, setForm] = useState({ open: false, id: null })
   const [view, setView] = useState(null)
   const [quick, setQuick] = useState(false)
@@ -95,6 +105,37 @@ export default function ItemMaster() {
   }, [])
 
   useEffect(() => { loadEos() }, [loadEos])
+
+  const loadMaster = useCallback(async () => {
+    setMasterLoading(true)
+    try {
+      const params = new URLSearchParams({
+        include_disabled: '1',
+        limit: String(PAGE_SIZE),
+        offset: String(page * PAGE_SIZE),
+      })
+      if (q.trim()) params.set('search', q.trim())
+      if (familyFilter) params.set('family', familyFilter)
+      if (brandFilter) params.set('brand', brandFilter)
+      if (statusFilter === 'active') params.set('status', 'active')
+      else if (statusFilter === 'disabled') params.set('status', 'disabled')
+      const r = await api(`/items?${params}`)
+      setMasterItems(r.items || [])
+      setMasterTotal(Number(r.total) || 0)
+    } catch {
+      setMasterItems([])
+      setMasterTotal(0)
+    } finally {
+      setMasterLoading(false)
+    }
+  }, [page, q, familyFilter, brandFilter, statusFilter])
+
+  useEffect(() => { setPage(0) }, [q, familyFilter, brandFilter, statusFilter])
+
+  useEffect(() => {
+    const t = setTimeout(loadMaster, q.trim() ? 300 : 0)
+    return () => clearTimeout(t)
+  }, [loadMaster, q])
 
   // Global search / deep links open ?item=<uuid> — open the detail modal even when already on this page.
   useEffect(() => {
@@ -133,7 +174,8 @@ export default function ItemMaster() {
       const r = await dRef.current.resAdd('eos/auto-sync/run', {})
       setSyncReport(r)
       await dRef.current.loadAll()   // newly-imported / updated items land in every panel
-      await loadEos()                // refresh last-sync time + pending count
+      await loadEos()
+      await loadMaster()
     } catch (e) {
       setSyncErr(e?.message || 'Sync failed')
     } finally {
@@ -143,9 +185,20 @@ export default function ItemMaster() {
 
   // Export stays available to everyone — it reads, it never creates. (Cost columns are server-redacted
   // per role, so whatever the user cannot see on screen is not in their file either.)
-  const exportItems = () => {
+  const exportItems = async () => {
     try {
-      const data = items.map((i) => ({
+      let all = []
+      let offset = 0
+      let total = Infinity
+      while (offset < total) {
+        const r = await api(`/items?include_disabled=1&limit=200&offset=${offset}`)
+        const batch = r.items || []
+        total = Number(r.total) || batch.length
+        all = all.concat(batch)
+        if (!batch.length) break
+        offset += batch.length
+      }
+      const data = all.map((i) => ({
         'Item Code': i.item_code, 'Item Name': i.item_name, 'Item Group': i.category || i.item_group, 'Sub Item Group': i.sub_category,
         'Product Family': i.product_family, 'Brand': i.brand, 'Model No.': i.model, 'Default Unit of Measure': i.stock_uom,
         'Dimensions': i.dimensions || '', 'Power Type': i.power_type || '', 'Country of Origin': i.country_of_origin || '',
@@ -161,7 +214,8 @@ export default function ItemMaster() {
     }
   }
 
-  const groups = ['All', ...new Set(items.map((i) => i.category).filter(Boolean))]
+  const familyOptions = useMemo(() => ['', ...new Set((d.productFamilies || []).map((f) => f.name || f).filter(Boolean))], [d.productFamilies])
+  const brandOptions = useMemo(() => ['', ...new Set((d.brands || []).map((b) => b.brand).filter(Boolean))], [d.brands])
   const brandFactorsPending = useMemo(() => {
     const m = new Map()
     for (const b of d.brands || []) {
@@ -169,8 +223,14 @@ export default function ItemMaster() {
     }
     return m
   }, [d.brands])
-  const rows = items.filter((i) => (g === 'All' || i.category === g) && `${i.item_code} ${i.item_name} ${i.brand || ''} ${i.product_family || ''}`.toLowerCase().includes(q.toLowerCase()))
-  const seeCost = items.some((i) => i.cost != null)
+  const groups = ['All', ...new Set(items.map((i) => i.category).filter(Boolean))]
+  const rows = g === 'All'
+    ? masterItems
+    : masterItems.filter((i) => i.category === g)
+  const seeCost = masterItems.some((i) => i.cost != null) || items.some((i) => i.cost != null)
+  const pageCount = Math.max(1, Math.ceil(masterTotal / PAGE_SIZE))
+  const rangeFrom = masterTotal ? page * PAGE_SIZE + 1 : 0
+  const rangeTo = Math.min(masterTotal, (page + 1) * PAGE_SIZE)
 
   const flag = (on, label, tone) => (on ? <span className={`mr-1 inline-block rounded px-1.5 py-0.5 text-[10px] font-bold ${tone}`}>{label}</span> : null)
 
@@ -267,15 +327,42 @@ export default function ItemMaster() {
       </div>
 
       <div className="card overflow-hidden">
-        <div className="flex flex-col gap-3 border-b border-slate-100 p-4 sm:flex-row sm:items-center">
+        <div className="flex flex-col gap-3 border-b border-slate-100 p-4">
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="block min-w-[140px]">
+              <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-muted">Family</span>
+              <select value={familyFilter} onChange={(e) => setFamilyFilter(e.target.value)}
+                className="w-full rounded-lg border border-slate-200 bg-slate-50/70 px-2 py-2 text-sm outline-none focus:border-brand-400 focus:bg-white">
+                <option value="">All families</option>
+                {familyOptions.filter(Boolean).map((f) => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </label>
+            <label className="block min-w-[140px]">
+              <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-muted">Brand</span>
+              <select value={brandFilter} onChange={(e) => setBrandFilter(e.target.value)}
+                className="w-full rounded-lg border border-slate-200 bg-slate-50/70 px-2 py-2 text-sm outline-none focus:border-brand-400 focus:bg-white">
+                <option value="">All brands</option>
+                {brandOptions.filter(Boolean).map((b) => <option key={b} value={b}>{b}</option>)}
+              </select>
+            </label>
+            <label className="block min-w-[120px]">
+              <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-muted">Status</span>
+              <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+                className="w-full rounded-lg border border-slate-200 bg-slate-50/70 px-2 py-2 text-sm outline-none focus:border-brand-400 focus:bg-white">
+                <option value="all">All</option>
+                <option value="active">Active</option>
+                <option value="disabled">Disabled</option>
+              </select>
+            </label>
+            <div className="relative min-w-[200px] flex-1">
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search code / name / brand…" className="w-full rounded-lg border border-slate-200 bg-slate-50/70 py-2 pl-9 pr-3 text-sm outline-none focus:border-brand-400 focus:bg-white" />
+            </div>
+          </div>
           <div className="flex flex-wrap gap-1.5">
             {groups.slice(0, 8).map((x) => (
               <button key={x} onClick={() => setG(x)} className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${g === x ? 'bg-brand-500 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>{x}</button>
             ))}
-          </div>
-          <div className="relative sm:ml-auto sm:w-64">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search code / name / brand…" className="w-full rounded-lg border border-slate-200 bg-slate-50/70 py-2 pl-9 pr-3 text-sm outline-none focus:border-brand-400 focus:bg-white" />
           </div>
         </div>
         <div className="overflow-x-auto">
@@ -318,13 +405,24 @@ export default function ItemMaster() {
               ))}
               {rows.length === 0 && (
                 <tr><td className="td text-slate-400" colSpan={seeCost ? 9 : 8}>
-                  {items.length === 0
-                    ? (eosOnly ? 'No items yet — approve an item in CULINOVA EOS and it will appear here. (It syncs automatically; “Import from EOS” pulls it in immediately.)' : 'No items yet. Click “New Item” to add one.')
-                    : 'No items match this search.'}
+                  {masterLoading ? 'Loading…'
+                    : masterTotal === 0
+                      ? (eosOnly ? 'No items yet — approve an item in CULINOVA EOS and it will appear here.' : 'No items yet.')
+                      : 'No items match these filters.'}
                 </td></tr>
               )}
             </tbody>
           </table>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 px-4 py-3 text-xs text-muted">
+          <span>{masterLoading ? 'Loading…' : masterTotal ? `${rangeFrom}–${rangeTo} of ${masterTotal}` : '0 items'}</span>
+          <div className="flex items-center gap-2">
+            <button type="button" disabled={page <= 0 || masterLoading} onClick={() => setPage((p) => Math.max(0, p - 1))}
+              className="rounded-lg border border-slate-200 px-3 py-1.5 font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40">Prev</button>
+            <span className="font-semibold text-slate-500">Page {page + 1} / {pageCount}</span>
+            <button type="button" disabled={page + 1 >= pageCount || masterLoading} onClick={() => setPage((p) => p + 1)}
+              className="rounded-lg border border-slate-200 px-3 py-1.5 font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40">Next</button>
+          </div>
         </div>
       </div>
 

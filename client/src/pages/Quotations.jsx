@@ -445,6 +445,7 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
     const s = q.trim().toLowerCase()
     if (!s) return []
     return (items || []).filter((it) => {
+      if (it.disabled) return false
       const hay = `${it.item_name || it.name || ''} ${it.brand || ''} ${it.model || ''} ${it.item_group || ''}`.toLowerCase()
       return hay.includes(s)
     }).slice(0, 8)

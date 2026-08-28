@@ -139,6 +139,7 @@ function NewPRModal({ items, projects, deptOptions, showMoney, onClose, onCreate
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase()
     return (items || [])
+      .filter((it) => !it.disabled)
       .filter((it) => !chosenIds.has(it.id))
       .filter((it) => !s || (it.item_name || it.name || '').toLowerCase().includes(s) || (it.item_code || it.code || '').toLowerCase().includes(s))
       .slice(0, 50)

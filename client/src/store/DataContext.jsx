@@ -195,7 +195,7 @@ export function DataProvider({ children }) {
   }, [keep])
 
   const loadItems = useCallback(async () => {
-    await keep(() => api('/items'), (r) => setItems(r || []))
+    await keep(() => api('/items?active=1'), (r) => setItems(Array.isArray(r) ? r : (r?.items || [])))
     await keep(() => api('/masters/item-groups'), (r) => setItemGroups(r || []))
     await keep(() => api('/masters/brands'), (r) => setBrands(r || []))
     await keep(() => api('/masters/item-attributes'), (r) => setItemAttributes(r || []))

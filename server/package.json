@@ -14,7 +14,8 @@
     "verify:block2": "node scripts/verify_block2.mjs",
     "verify:block3": "node scripts/verify_block3.mjs",
     "verify:block4": "node scripts/verify_block4.mjs",
-    "verify:block4:hero": "node scripts/verify_block4_hero.mjs"
+    "verify:block4:hero": "node scripts/verify_block4_hero.mjs",
+    "verify:block5": "node scripts/verify_block5.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",

@@ -10,6 +10,7 @@ import { useData } from '../store/DataContext.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
 import { api, getToken } from '../api.js'
 import { erpApiBase } from '@deploy'
+import { specPreview } from '@shared/specs.js'
 
 // Roles allowed to see cost / margin / supplier price (mirrors server rbac/permissions.financialRoles).
 // The server ALSO redacts, so a non-financial viewer simply gets undefined — we never render it.
@@ -218,7 +219,11 @@ export default function BOQ() {
                             <td className="td text-xs text-slate-500">{l.item_code || '—'}</td>
                             <td className="td">
                               <div className="font-medium text-ink">{l.item_name}</div>
-                              {(l.description || l.specifications) && <div className="text-xs text-muted line-clamp-1">{l.description || l.specifications}</div>}
+                              {(l.description || l.specifications) && (
+                                <div className="text-xs text-muted line-clamp-1">
+                                  {l.description || specPreview(l.specifications, 80)}
+                                </div>
+                              )}
                             </td>
                             <td className="td text-slate-500">{l.uom || 'Nos'}</td>
                             <td className="td">
@@ -325,7 +330,7 @@ function AddItemModal({ onClose, items, fin, onAdd }) {
   const [cost, setCost] = useState('')
   const results = useMemo(() => {
     const t = q.trim().toLowerCase()
-    const base = items || []
+    const base = (items || []).filter((i) => !i.disabled)
     const list = t ? base.filter((i) => `${i.item_name || i.name || ''} ${i.item_code || i.code || ''}`.toLowerCase().includes(t)) : base
     return list.slice(0, 40)
   }, [q, items])

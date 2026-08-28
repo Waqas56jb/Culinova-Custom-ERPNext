@@ -1,3 +1,5 @@
+import { specRows, specLine } from './specs.js'
+
 const fmtDec = (n) => Number(n || 0).toLocaleString('en-SA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 export const DEFAULT_EN = [
@@ -52,40 +54,13 @@ export const T = {
   },
 }
 
-function specValue(v) {
-  if (v == null) return ''
-  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return String(v)
-  if (Array.isArray(v)) return v.map(specValue).filter(Boolean).join(', ')
-  if (typeof v === 'object') {
-    return Object.entries(v)
-      .filter(([k]) => !['source', 'eos_entry_id', 'id'].includes(k))
-      .map(([k, val]) => `${k.replace(/_/g, ' ')}: ${specValue(val)}`)
-      .join(' · ')
-  }
-  return String(v)
-}
-
+/** Print-ready spec lines from EOS attributes (no "[object Object]"). */
 export function parseSpecs(raw) {
-  if (!raw) return []
-  if (typeof raw === 'object' && !Array.isArray(raw)) {
-    return Object.entries(raw)
-      .filter(([k]) => !['source', 'eos_entry_id', 'id'].includes(k))
-      .map(([k, v]) => {
-        const val = specValue(v)
-        return val ? `${k.replace(/_/g, ' ')}: ${val}` : k.replace(/_/g, ' ')
-      })
-      .filter(Boolean)
-      .slice(0, 14)
-  }
-  let t = String(raw)
-  if (t.trim().startsWith('{') || t.trim().startsWith('[')) {
-    try {
-      const parsed = JSON.parse(t)
-      if (Array.isArray(parsed)) return parsed.map(specValue).filter(Boolean).slice(0, 14)
-      return parseSpecs(parsed)
-    } catch { /* fall through */ }
-  }
-  t = t.replace(/<[^>]*>/g, '\n').replace(/\*\*/g, '')
+  const rows = specRows(raw)
+  if (rows.length) return rows.map(specLine).slice(0, 14)
+  if (raw == null) return []
+  if (typeof raw === 'object') return []
+  let t = String(raw).replace(/<[^>]*>/g, '\n').replace(/\*\*/g, '')
   return t.split(/\n|•|·|\.\s+(?=[A-Z*])/).map((s) => s.trim()).filter(Boolean).slice(0, 14)
 }
 

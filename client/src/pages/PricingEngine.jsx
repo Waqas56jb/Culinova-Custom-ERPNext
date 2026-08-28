@@ -1,8 +1,8 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, Fragment } from 'react'
 import { useSearchParams, useLocation, useNavigate } from 'react-router-dom'
 import {
   Percent, Coins, Layers, Calculator, RefreshCw, Search, TrendingUp,
-  AlertTriangle, Loader2, Plus, DollarSign, History, Trash2,
+  AlertTriangle, Loader2, Plus, DollarSign, History, Trash2, ChevronDown, ChevronUp,
 } from 'lucide-react'
 import { PageHeader, KpiCard } from '../components/ui.jsx'
 import { Modal } from '../components/Modal.jsx'
@@ -588,6 +588,7 @@ function BrandMasterTab() {
   const [auditLoading, setAuditLoading] = useState(false)
   const [deleteFor, setDeleteFor] = useState(null)
   const [deletingId, setDeletingId] = useState(null)
+  const [expandedId, setExpandedId] = useState(null)
 
   const brands = useMemo(() => {
     const term = q.trim().toLowerCase()
@@ -626,6 +627,10 @@ function BrandMasterTab() {
     setSavingId(b.id); clearFlash()
     try {
       await d.updateBrand(b.id, {
+        brand: val(b, 'brand', b.brand)?.trim() || b.brand,
+        description: val(b, 'description', b.description ?? '') || null,
+        country_of_origin: val(b, 'country_of_origin', b.country_of_origin ?? '') || null,
+        country_of_purchase: val(b, 'country_of_purchase', b.country_of_purchase ?? '') || null,
         exchange_factor: Number(val(b, 'exchange_factor', 1)) || 1,
         price_factor: Number(val(b, 'price_factor', 1)) || 1,
         add_margin_pct: Number(val(b, 'add_margin_pct', 0)) || 0,
@@ -633,8 +638,15 @@ function BrandMasterTab() {
         currency: val(b, 'currency', 'SAR'),
       })
       setEdits((s) => { const n = { ...s }; delete n[b.id]; return n })
-      showSuccess(`Pricing factors for "${b.brand}" saved successfully.`)
-    } catch (e) { showError(e.message || 'Could not save changes. Please try again.') } finally { setSavingId(null) }
+      showSuccess(`Brand "${b.brand}" saved successfully.`)
+    } catch (e) {
+      const msg = e.message || 'Could not save changes. Please try again.'
+      if (/in use by/i.test(msg)) {
+        showError(`Cannot rename — this brand is linked to existing items. Clear or reassign those items first. (${msg})`)
+      } else {
+        showError(msg)
+      }
+    } finally { setSavingId(null) }
   }
 
   const createBrand = async () => {
@@ -778,10 +790,17 @@ function BrandMasterTab() {
           <tbody>
             {brands.map((b) => {
               const ex = example(b)
+              const open = expandedId === b.id
               return (
-                <tr key={b.id} className={b.factors_pending ? 'bg-amber-50/70 hover:bg-amber-50' : 'group hover:bg-slate-50/40'}>
+                <Fragment key={b.id}>
+                <tr className={b.factors_pending ? 'bg-amber-50/70 hover:bg-amber-50' : 'group hover:bg-slate-50/40'}>
                   <td className="td font-semibold text-ink">
-                    {b.brand}
+                    <button type="button" onClick={() => setExpandedId(open ? null : b.id)}
+                      className="mr-1.5 inline-flex rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-brand-600"
+                      title="Brand details (description, countries, rename)">
+                      {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                    </button>
+                    {val(b, 'brand', b.brand)}
                     {b.factors_pending && (
                       <span className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">Factors pending</span>
                     )}
@@ -815,6 +834,32 @@ function BrandMasterTab() {
                     </div>
                   </td>
                 </tr>
+                {open && (
+                  <tr key={`${b.id}-detail`} className="bg-slate-50/50">
+                    <td colSpan={9} className="px-4 py-3">
+                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                        <label className="block text-[11px] font-semibold text-muted">Brand name (rename)
+                          <input value={val(b, 'brand', b.brand)} onChange={(e) => setVal(b, 'brand', e.target.value)}
+                            className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm outline-none focus:border-brand-400" />
+                        </label>
+                        <label className="block text-[11px] font-semibold text-muted sm:col-span-2 lg:col-span-3">Description
+                          <input value={val(b, 'description', b.description ?? '')} onChange={(e) => setVal(b, 'description', e.target.value)}
+                            className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm outline-none focus:border-brand-400" />
+                        </label>
+                        <label className="block text-[11px] font-semibold text-muted">Country of origin
+                          <input value={val(b, 'country_of_origin', b.country_of_origin ?? '')} onChange={(e) => setVal(b, 'country_of_origin', e.target.value)}
+                            className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm outline-none focus:border-brand-400" />
+                        </label>
+                        <label className="block text-[11px] font-semibold text-muted">Country of purchase
+                          <input value={val(b, 'country_of_purchase', b.country_of_purchase ?? '')} onChange={(e) => setVal(b, 'country_of_purchase', e.target.value)}
+                            className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm outline-none focus:border-brand-400" />
+                        </label>
+                      </div>
+                      <p className="mt-2 text-[10px] text-muted">Rename is blocked while items still reference the old brand name (409). Use History to review description and country changes.</p>
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               )
             })}
             {brands.length === 0 && <tr><td colSpan={9} className="td text-center text-slate-400">No brands found</td></tr>}
