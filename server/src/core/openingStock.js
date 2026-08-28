@@ -155,9 +155,23 @@ export async function commit(lines, { actorId = null } = {}) {
       out.posted++
 
       if (l.rate != null && l.rate > 0) {
+        const { data: before } = await supabase.from('items').select('valuation_rate').eq('id', l.item_id).maybeSingle()
+        const oldVr = before?.valuation_rate
         const { error } = await supabase.from('items').update({ valuation_rate: l.rate }).eq('id', l.item_id)
         if (error) out.errors.push({ row: l.row, error: `valuation rate: ${error.message}` })
-        else out.rate_updated++
+        else {
+          out.rate_updated++
+          if (String(oldVr ?? '') !== String(l.rate)) {
+            await supabase.from('item_pricing_history').insert({
+              item_id: l.item_id,
+              field: 'valuation_rate',
+              old_value: oldVr != null ? String(oldVr) : null,
+              new_value: String(l.rate),
+              source: 'opening-stock',
+              created_by: actorId || null,
+            })
+          }
+        }
       }
     } catch (e) {
       out.errors.push({ row: l.row, item: l.item, error: e.message })

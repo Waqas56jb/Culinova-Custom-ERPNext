@@ -31,6 +31,7 @@ const fmtDec = (n) => Number(n || 0).toLocaleString('en-SA', { minimumFractionDi
 const preview = (s, len = 90) => specPreview(s, len)
 const itemRate = (it) => n0(it.selling_price) || n0(it.selling_rate) || n0(it.standard_rate) || 0
 const itemCost = (it) => (it.landed_cost != null ? n0(it.landed_cost) : it.cost != null ? n0(it.cost) : null)
+const lineNeedsRateWarn = (l) => l.needs_rate || ((l.valuation_rate == null || n0(l.valuation_rate) === 0) && n0(l.rate) === 0)
 const plural = (n) => (n === 1 ? '' : 's')
 
 // CEO rule — STOCK FIRST: "first check the available stock; only after utilising the available stock
@@ -92,6 +93,15 @@ export default function Quotations() {
     if (reason == null) return                       // cancelled
     if (!reason.trim()) { alert('A reason is required to mark a quotation as Lost.'); return }
     run(q.id, () => lostQuotation(q.id, reason.trim()))
+  }
+  const confirmSend = async (q) => {
+    setBusy(q.id)
+    try {
+      const full = await api(`/quotations/${q.id}`)
+      const zeroCount = (full.quotation_items || []).filter((l) => l.needs_rate || n0(l.rate) === 0).length
+      if (zeroCount > 0 && !window.confirm(`${zeroCount} line(s) have no price. Send anyway?`)) return
+      await sendQuotation(q.id)
+    } catch (e) { alert(e.message) } finally { setBusy(null) }
   }
 
   // ── KPIs ──
@@ -182,6 +192,8 @@ export default function Quotations() {
         uom: it.uom || it.stock_uom || 'Nos', description: it.description, specifications: it.specifications,
         image_url: it.image_url, datasheet_url: it.datasheet_url, pos: '',
         qty: 1, rate: itemRate(it), cost: itemCost(it), discount_pct: 0,
+        valuation_rate: it.valuation_rate != null ? n0(it.valuation_rate) : undefined,
+        needs_rate: n0(itemRate(it)) === 0 && !(Number(it.valuation_rate) > 0),
       }],
     }
   })
@@ -319,7 +331,7 @@ export default function Quotations() {
                         <Act onClick={() => setPreview(q)} tone="slate" icon={FileText}>PDF</Act>
                         <Act onClick={() => openRevisions(q)} tone="slate" icon={History} loading={busy === q.id}>Revisions</Act>
                         {canEdit && !locked && <Act onClick={() => openBuilder(q)} icon={Pencil} loading={busy === q.id}>{q.status === 'Draft' ? 'Build' : 'Edit'}</Act>}
-                        {canSend && q.status === 'Draft' && <Act onClick={() => run(q.id, () => sendQuotation(q.id))} tone="emerald" icon={Send}>Send</Act>}
+                        {canSend && q.status === 'Draft' && <Act onClick={() => confirmSend(q)} tone="emerald" icon={Send} loading={busy === q.id}>Send</Act>}
                         {canSend && !locked && q.status !== 'Lost' && <Act onClick={() => markLost(q)} tone="rose" icon={X} loading={busy === q.id}>Lost</Act>}
                         {pending && canApprove && (
                           <>
@@ -359,6 +371,7 @@ export default function Quotations() {
 // ── The quotation BUILDER ────────────────────────────────────────────────────
 function Builder({ builder, setH, items, customers, projects, opportunities, currencies, addLine, setLine, removeLine, totals, showFin, canEditRate, onClose, onSave, onRevise, saving, error }) {
   const d = useData()
+  const nav = useNavigate()
   const [q, setQ] = useState('')
   const [terms, setTerms] = useState([])
   const [paymentTemplates, setPaymentTemplates] = useState([])
@@ -647,6 +660,18 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
                           <p className="text-sm font-semibold text-ink">{l.item_name}</p>
                           <p className="text-[11px] text-slate-500">{[l.brand, l.model].filter(Boolean).join(' · ')}</p>
                           {preview(l.specifications || l.description, 70) && <p className="mt-0.5 text-[11px] text-slate-400">{preview(l.specifications || l.description, 70)}</p>}
+                          {lineNeedsRateWarn(l) && (
+                            <p className="mt-1 flex flex-wrap items-center gap-1 text-[11px] font-medium text-amber-700">
+                              <AlertTriangle size={11} className="shrink-0" />
+                              No rate — set Valuation Rate in Pricing Engine
+                              {showFin && (
+                                <button type="button" onClick={() => nav('/stock/pricing?tab=items')}
+                                  className="font-semibold text-brand-600 underline hover:text-brand-700">
+                                  Open Pricing Engine →
+                                </button>
+                              )}
+                            </p>
+                          )}
                           {l.datasheet_url && <span className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-semibold text-brand-500"><FileText size={11} /> datasheet</span>}
                           <div className="mt-1"><StockBadge s={allocFor(i, l)} err={stockErr} /></div>
                         </div>

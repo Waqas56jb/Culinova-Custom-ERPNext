@@ -114,15 +114,76 @@ function KpiRow({ items }) {
   )
 }
 
+const FINANCIAL_ROLES = ['Management', 'System Admin', 'Accounts User', 'Purchase User', 'Stock User', 'Project Manager']
+const fmtHistDate = (iso) => {
+  if (!iso) return '—'
+  const dt = new Date(iso)
+  return Number.isNaN(dt.getTime()) ? iso : dt.toLocaleString()
+}
+const fmtHistVal = (v) => (v == null || v === '' ? '—' : v)
+
+function ValuationRateCell({ item, showFin, onSaved, onHistory }) {
+  const d = useData()
+  const [val, setVal] = useState(item?.valuation_rate ?? '')
+  const [saving, setSaving] = useState(false)
+  useEffect(() => { setVal(item?.valuation_rate ?? '') }, [item?.id, item?.valuation_rate])
+  if (!showFin) return null
+  const save = async () => {
+    const next = Number(val) || 0
+    if (Number(item?.valuation_rate) === next) return
+    setSaving(true)
+    try {
+      await api(`/items/${item.id}`, { method: 'PATCH', body: { valuation_rate: next } })
+      await d.loadAll?.()
+      onSaved?.()
+    } catch (e) { alert(e.message) } finally { setSaving(false) }
+  }
+  return (
+    <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+      <input
+        type="number" step="any" min="0" title="Valuation Rate (cost basis for quotation pricing)"
+        value={val}
+        onChange={(e) => setVal(e.target.value)}
+        onBlur={save}
+        onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur() }}
+        className="w-24 rounded-lg border border-slate-200 bg-white px-2 py-1 text-right text-sm tabular-nums outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-500/15"
+      />
+      <button type="button" title="Valuation rate history" onClick={() => onHistory(item)}
+        className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-brand-600">
+        {saving ? <Loader2 size={14} className="animate-spin" /> : <History size={14} />}
+      </button>
+    </div>
+  )
+}
+
 // ── TAB 1: Price Items ──────────────────────────────────────────────────────────
 function PriceItemsTab() {
   const d = useData()
+  const { user } = useAuth()
+  const showFin = FINANCIAL_ROLES.includes(user?.role)
   const items = d.items || []
   const [q, setQ] = useState('')
   const [brand, setBrand] = useState('')
   const [family, setFamily] = useState('')
   const [selected, setSelected] = useState(null)
   const [recalc, setRecalc] = useState({ busy: false, msg: '' })
+  const [vrHistFor, setVrHistFor] = useState(null)
+  const [vrHistRows, setVrHistRows] = useState([])
+  const [vrHistLoading, setVrHistLoading] = useState(false)
+
+  const openVrHistory = async (it) => {
+    setVrHistFor(it)
+    setVrHistRows([])
+    setVrHistLoading(true)
+    try {
+      const rows = await api(`/items/${it.id}/pricing-history?field=valuation_rate`)
+      setVrHistRows(Array.isArray(rows) ? rows : [])
+    } catch { setVrHistRows([]) } finally { setVrHistLoading(false) }
+  }
+
+  const vrColSpan = showFin ? 1 : 0
+  const pricedColSpan = 8 + vrColSpan
+  const missingColSpan = 4 + vrColSpan
 
   const brands = useMemo(() => Array.from(new Set(items.map((i) => i.brand).filter(Boolean))).sort(), [items])
   const families = useMemo(() => Array.from(new Set(items.map((i) => i.product_family).filter(Boolean))).sort(), [items])
@@ -189,6 +250,7 @@ function PriceItemsTab() {
           <table className="w-full">
             <thead><tr className="bg-slate-50/60">
               <th className="th">Item</th><th className="th">Brand</th>
+              {showFin && <th className="th text-right">Valuation Rate</th>}
               <th className="th text-right">Supplier</th><th className="th text-right">Landed</th>
               <th className="th text-right">Markup</th><th className="th text-right">Selling</th>
               <th className="th text-right">GP %</th><th className="th text-right">NP %</th>
@@ -198,6 +260,11 @@ function PriceItemsTab() {
                 <tr key={it.id} className="cursor-pointer hover:bg-slate-50/60" onClick={() => setSelected(it)}>
                   <td className="td font-semibold text-ink">{it.item_name}</td>
                   <td className="td text-slate-600">{it.brand || '—'}</td>
+                  {showFin && (
+                    <td className="td text-right">
+                      <ValuationRateCell item={it} showFin={showFin} onHistory={openVrHistory} />
+                    </td>
+                  )}
                   <td className="td text-right tabular-nums">{money(it.supplier_price)}</td>
                   <td className="td text-right tabular-nums">{money(it.landed_cost)}</td>
                   <td className="td text-right tabular-nums">{markupOf(it) == null ? '—' : `×${markupOf(it).toFixed(2)}`}</td>
@@ -206,7 +273,7 @@ function PriceItemsTab() {
                   <td className="td text-right tabular-nums">{pct(it.np_percent)}</td>
                 </tr>
               ))}
-              {priced.length === 0 && <tr><td className="td text-slate-400" colSpan={8}>No priced items match. Open an item below and enter a supplier price, or adjust filters.</td></tr>}
+              {priced.length === 0 && <tr><td className="td text-slate-400" colSpan={pricedColSpan}>No priced items match. Open an item below and enter a supplier price, or adjust filters.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -223,7 +290,10 @@ function PriceItemsTab() {
         </div>
         <div className="overflow-x-auto">
           <table className="w-full">
-            <thead><tr className="bg-slate-50/60"><th className="th">Item</th><th className="th">Brand</th><th className="th">Model</th><th className="th">Family</th></tr></thead>
+            <thead><tr className="bg-slate-50/60">
+              <th className="th">Item</th><th className="th">Brand</th><th className="th">Model</th><th className="th">Family</th>
+              {showFin && <th className="th text-right">Valuation Rate</th>}
+            </tr></thead>
             <tbody>
               {missing.map((it) => (
                 <tr key={it.id} className="cursor-pointer hover:bg-slate-50/60" onClick={() => setSelected(it)}>
@@ -231,9 +301,14 @@ function PriceItemsTab() {
                   <td className="td text-slate-600">{it.brand || '—'}</td>
                   <td className="td text-slate-600">{it.model || '—'}</td>
                   <td className="td text-slate-600">{it.product_family || '—'}</td>
+                  {showFin && (
+                    <td className="td text-right">
+                      <ValuationRateCell item={it} showFin={showFin} onHistory={openVrHistory} />
+                    </td>
+                  )}
                 </tr>
               ))}
-              {missing.length === 0 && <tr><td className="td text-slate-400" colSpan={4}>Every item that matches has a supplier cost.</td></tr>}
+              {missing.length === 0 && <tr><td className="td text-slate-400" colSpan={missingColSpan}>Every item that matches has a supplier cost.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -242,6 +317,39 @@ function PriceItemsTab() {
       <Modal open={!!selected} onClose={() => setSelected(null)} size="xl"
         title={selected?.item_name || 'Item pricing'} subtitle="Landed-cost chain · live preview">
         {selected && <ItemPricingPanel item={selected} onSaved={() => { /* store refreshed by panel */ }} />}
+      </Modal>
+
+      <Modal open={!!vrHistFor} onClose={() => setVrHistFor(null)} size="lg"
+        title={vrHistFor ? `Valuation Rate History — ${vrHistFor.item_name}` : 'History'}
+        subtitle="Date · user · old → new · source"
+        footer={<button type="button" className="btn-ghost" onClick={() => setVrHistFor(null)}>Close</button>}>
+        {vrHistLoading ? (
+          <div className="flex justify-center py-8"><Loader2 size={24} className="animate-spin text-brand-500" /></div>
+        ) : vrHistRows.length === 0 ? (
+          <p className="py-4 text-sm text-muted">No valuation rate changes recorded yet.</p>
+        ) : (
+          <div className="max-h-[420px] overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-50/60">
+                  <th className="th">Date</th><th className="th">User</th>
+                  <th className="th">Previous</th><th className="th">New</th><th className="th">Source</th>
+                </tr>
+              </thead>
+              <tbody>
+                {vrHistRows.map((row) => (
+                  <tr key={row.id}>
+                    <td className="td whitespace-nowrap text-xs text-muted">{fmtHistDate(row.created_at)}</td>
+                    <td className="td text-xs">{row.changed_by || '—'}</td>
+                    <td className="td text-xs tabular-nums">{fmtHistVal(row.old_value)}</td>
+                    <td className="td text-xs tabular-nums">{fmtHistVal(row.new_value)}</td>
+                    <td className="td text-xs text-muted">{row.source || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Modal>
     </div>
   )

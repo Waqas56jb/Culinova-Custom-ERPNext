@@ -114,6 +114,8 @@ async function buildLine(input = {}, idx = 0, { lockRate = false } = {}) {
   const rate = lockRate ? n0(priced.selling) : (rateOverride != null ? rateOverride : n0(priced.selling))
   const cost = itemRow ? n0(priced.landed) : n0(input.cost)
   const disc = Math.max(0, Math.min(100, n0(input.discount_pct)))
+  const vr = num(itemRow?.valuation_rate)
+  const needs_rate = rate === 0 && !(vr != null && vr > 0)
   // provided field wins (keeps a prior snapshot intact on edit); else snapshot from the item
   const pref = (field, fallback) => (input[field] !== undefined && input[field] !== null && input[field] !== '' ? input[field] : fallback)
   return {
@@ -131,7 +133,13 @@ async function buildLine(input = {}, idx = 0, { lockRate = false } = {}) {
     qty, rate, cost, discount_pct: disc,
     amount: round(qty * rate * (1 - disc / 100)),
     sort_order: num(input.sort_order) ?? idx,
+    needs_rate,
   }
+}
+
+const lineForDb = (l) => {
+  const { needs_rate, ...row } = l
+  return row
 }
 
 const lineAmount = (l) => round(n0(l.qty) * n0(l.rate) * (1 - n0(l.discount_pct) / 100))
@@ -301,7 +309,7 @@ export function quotationRouter() {
     if (error) return res.status(422).json({ error: error.message })
 
     if (built.length) {
-      const { error: le } = await supabase.from('quotation_items').insert(built.map((l) => ({ ...l, quotation_id: q.id })))
+      const { error: le } = await supabase.from('quotation_items').insert(built.map((l) => ({ ...lineForDb(l), quotation_id: q.id })))
       if (le) { await supabase.from('quotations').delete().eq('id', q.id); return res.status(422).json({ error: le.message }) }
     }
     const full = await recomputeTotals(q.id)
@@ -439,7 +447,7 @@ export function quotationRouter() {
 
       await supabase.from('quotation_items').delete().eq('quotation_id', existing.id)
       if (built.length) {
-        const { error: le } = await supabase.from('quotation_items').insert(built.map((l) => ({ ...l, quotation_id: existing.id })))
+        const { error: le } = await supabase.from('quotation_items').insert(built.map((l) => ({ ...lineForDb(l), quotation_id: existing.id })))
         if (le) return res.status(422).json({ error: le.message })
       }
       replaced = true
@@ -479,7 +487,7 @@ export function quotationRouter() {
     if (!clean(p.item_id) && !clean(p.item_name)) return res.status(422).json({ error: 'item_id or item_name is required' })
     const idx = (q.quotation_items || []).length
     const line = await buildLine(p, idx)
-    const { error } = await supabase.from('quotation_items').insert({ ...line, quotation_id: q.id })
+    const { error } = await supabase.from('quotation_items').insert({ ...lineForDb(line), quotation_id: q.id })
     if (error) return res.status(422).json({ error: error.message })
     const full = await recomputeTotals(q.id)
     await logAudit(req.user, 'quotation', q.id, 'line-added', { item: line.item_name })

@@ -8,12 +8,15 @@ export async function enrichQuotationLines(lines = []) {
   if (ids.length) {
     const { data } = await supabase
       .from('items')
-      .select('id, item_code, code, model, brand, description, specifications')
+      .select('id, item_code, code, model, brand, description, specifications, valuation_rate')
       .in('id', ids)
     byId = Object.fromEntries((data || []).map((i) => [i.id, i]))
   }
   return lines.map((line) => {
     const item = line.item_id ? byId[line.item_id] : null
+    const rate = Number(line.rate) || 0
+    const vr = Number(item?.valuation_rate) || 0
+    const needs_rate = rate === 0 && vr <= 0
     return {
       ...line,
       item_code: line.item_code || item?.item_code || item?.code || line.model || null,
@@ -22,6 +25,7 @@ export async function enrichQuotationLines(lines = []) {
       brand: line.brand || item?.brand || null,
       model: line.model || item?.model || null,
       pos: line.pos || line.area || null,
+      needs_rate,
     }
   })
 }

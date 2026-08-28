@@ -3,7 +3,7 @@ import { supabase } from '../../config/supabase.js'
 import { authRequired } from '../../middleware/auth.js'
 import { authorize, internalOnly } from '../../middleware/rbac.js'
 import { asyncWrap } from '../../middleware/error.js'
-import { canAccessPanel, isManagement } from '../../rbac/permissions.js'
+import { canAccessPanel, canSeeFinancials, isManagement } from '../../rbac/permissions.js'
 import { logAudit } from '../../core/audit.js'
 import { resolveItemAuto, getBrand, supplierPriceFor } from '../../core/itempricing.js'
 import { priceItem, persistable } from '../../core/pricing.js'
@@ -75,6 +75,20 @@ async function hasStock(itemId) {
 const num = () => `ITM-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`
 // form fields arrive as '' for blanks — Postgres rejects '' for numeric/date columns, so null them out
 const nullEmpty = (o) => { for (const k of Object.keys(o)) if (o[k] === '') o[k] = null; return o }
+const FIELD_HISTORY = ['valuation_rate', 'exchange_factor', 'price_factor']
+const strVal = (v) => (v == null ? null : String(v))
+
+async function writeFieldPricingHistory({ itemId, field, oldVal, newVal, source, createdBy }) {
+  if (strVal(oldVal) === strVal(newVal)) return
+  await supabase.from('item_pricing_history').insert({
+    item_id: itemId,
+    field,
+    old_value: strVal(oldVal),
+    new_value: strVal(newVal),
+    source,
+    created_by: createdBy || null,
+  })
+}
 
 // ── LIST (every INTERNAL role can read & select; cost redacted by role; Customers blocked) ──
 r.get('/', authRequired, internalOnly, asyncWrap(async (req, res) => {
@@ -111,8 +125,20 @@ r.get('/:id/alternatives', authRequired, asyncWrap(async (req, res) => {
 // (7) pricing history (financial — restricted)
 r.get('/:id/pricing-history', authRequired, asyncWrap(async (req, res) => {
   if (!canSeeCost(req.user)) return res.status(403).json({ error: 'Not allowed' })
-  const { data } = await supabase.from('item_pricing_history').select('*').eq('item_id', req.params.id).order('created_at', { ascending: false })
-  res.json(data || [])
+  let q = supabase.from('item_pricing_history').select('*').eq('item_id', req.params.id).order('created_at', { ascending: false })
+  if (req.query.field) q = q.eq('field', String(req.query.field))
+  const { data } = await q
+  const rows = data || []
+  const userIds = [...new Set(rows.map((row) => row.created_by).filter(Boolean))]
+  let users = {}
+  if (userIds.length) {
+    const { data: us } = await supabase.from('users').select('id, name, email').in('id', userIds)
+    users = Object.fromEntries((us || []).map((u) => [u.id, u.name || u.email]))
+  }
+  res.json(rows.map((row) => ({
+    ...row,
+    changed_by: users[row.created_by] || row.created_by || '—',
+  })))
 }))
 
 // ── CREATE (Item Manager / Warehouse) — naming, default UOM, auto Item Price ──
@@ -188,6 +214,10 @@ r.patch('/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async 
   if (blocked.length) return res.status(409).json({ error: `These fields come from EOS and are read-only in the ERP: ${blocked.join(', ')}. Edit them in EOS, then Sync.`, blocked })
   req.body = allowed // downstream reads from p, so also narrow the local reference
   Object.keys(p).forEach((k) => { if (!(k in allowed)) delete p[k] })
+  if (p.valuation_rate !== undefined && !canSeeFinancials(req.user.role)) {
+    return res.status(403).json({ error: 'Not allowed to change valuation rate' })
+  }
+
   const locked = await hasStock(cur.id)
   if (locked) {
     const guard = ['is_stock_item', 'has_serial_no', 'has_batch_no', 'stock_uom']
@@ -211,6 +241,17 @@ r.patch('/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async 
   // (7) keep pricing history when a recompute changed cost/selling
   if (cols.cost != null && (cols.cost !== cur.cost || cols.standard_rate !== cur.standard_rate)) {
     await supabase.from('item_pricing_history').insert({ item_id: item.id, brand: item.brand || null, model: item.model || null, cost: cols.cost ?? null, selling_price: cols.standard_rate ?? null, source: 'edit', created_by: req.user.id })
+  }
+  for (const field of FIELD_HISTORY) {
+    if (p[field] === undefined) continue
+    await writeFieldPricingHistory({
+      itemId: item.id,
+      field,
+      oldVal: cur[field],
+      newVal: item[field],
+      source: 'manual',
+      createdBy: req.user.id,
+    })
   }
   // propagate name/brand to Item Price (ERPNext on_update)
   await supabase.from('item_prices').update({ item_code: item.item_code }).eq('item_id', item.id)

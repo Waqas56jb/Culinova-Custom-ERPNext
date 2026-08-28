@@ -150,6 +150,9 @@ export default function ItemView({ open, itemId, onClose, onEdit, canEditData = 
             </div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               <Box label="Selling Price" v={sar(it.standard_rate || 0)} tone="text-brand-600" />
+              {'valuation_rate' in it && (
+                <Box label="Valuation Rate" v={sar(it.valuation_rate || 0)} tone="text-violet-600" />
+              )}
               {it.cost != null && <Box label="Landed Cost" v={sar(it.cost)} tone="text-gold-600" />}
               {it.gp_percent != null && <Box label="GP %" v={`${it.gp_percent}%`} tone="text-emerald-600" />}
               {it.supplier_price != null && <Box label="Supplier Price" v={sar(it.supplier_price)} tone="text-slate-600" />}
