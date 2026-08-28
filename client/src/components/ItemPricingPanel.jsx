@@ -48,7 +48,7 @@ export default function ItemPricingPanel({ item, onSaved }) {
   const runPreview = useCallback(async (f) => {
     setPreviewing(true); setErr('')
     try {
-      const body = { item: { ...item, ...f } }
+      const body = { item: { ...item, valuation_rate: item?.valuation_rate, ...f } }
       const res = await api('/pricing/preview', { method: 'POST', body })
       setChain(res)
     } catch (e) { setErr(e.message); setChain(null) } finally { setPreviewing(false) }
@@ -149,7 +149,7 @@ export default function ItemPricingPanel({ item, onSaved }) {
 
           {!priced ? (
             <div className="rounded-lg bg-amber-50 px-3 py-6 text-center text-xs font-medium text-amber-700">
-              {chain?.reason || 'Enter a supplier price or factory cost to price this item.'}
+              {chain?.reason || 'Set a valuation rate on the item to price it (Brand Master factors apply automatically).'}
             </div>
           ) : (
             <>

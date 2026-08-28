@@ -16,7 +16,7 @@ import { api } from '../api.js'
 
 const money = (v) => (v == null || v === '' || Number.isNaN(Number(v)) ? '—' : sar(v))
 const pct = (v) => (v == null || v === '' || Number.isNaN(Number(v)) ? '—' : `${Number(v).toFixed(1)}%`)
-const hasCost = (it) => Number(it?.supplier_price) > 0 || Number(it?.factory_cost) > 0
+const hasCost = (it) => Number(it?.valuation_rate) > 0 || Number(it?.selling_price) > 0 || Number(it?.supplier_price) > 0 || Number(it?.factory_cost) > 0
 const markupOf = (it) => {
   const m = Number(it?.markup_factor)
   if (m > 0) return m
@@ -284,8 +284,8 @@ function PriceItemsTab() {
         <div className="flex items-center gap-2 border-b border-slate-100 bg-amber-50/40 p-4">
           <AlertTriangle size={16} className="text-amber-500" />
           <div>
-            <h3 className="text-[15px] font-bold text-ink">Cannot be priced — no supplier cost <span className="text-xs font-medium text-muted">({missing.length})</span></h3>
-            <p className="text-xs text-muted">Click an item to enter its supplier price (or factory cost) and price it.</p>
+            <h3 className="text-[15px] font-bold text-ink">Cannot be priced — no valuation rate <span className="text-xs font-medium text-muted">({missing.length})</span></h3>
+            <p className="text-xs text-muted">Set a valuation rate on the item, then open it to apply the VR pricing chain.</p>
           </div>
         </div>
         <div className="overflow-x-auto">
