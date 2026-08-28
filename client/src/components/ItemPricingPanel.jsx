@@ -4,17 +4,17 @@ import { api } from '../api.js'
 import { useData } from '../store/DataContext.jsx'
 import { sar } from '../data/mockData.js'
 
-// Reusable per-item landed-cost editor. Shows every step of the pricing chain as an editable row and
-// a LIVE preview (debounced POST /pricing/preview) as the user types. Save → POST /pricing/apply/:id.
-// Props: { item, onSaved }. All maths runs server-side in core/pricing.js — this only collects inputs.
+// Item pricing drill-down — selling/GP from core/priceEngine.js (VR × brand factors).
+// Supplier landed-template fields are kept for future Actual Landed Cost (Ali §8) only.
 const money = (v) => (v == null || Number.isNaN(Number(v)) ? '—' : sar(v))
 const pct = (v) => (v == null || Number.isNaN(Number(v)) ? '—' : `${Number(v).toFixed(2)}%`)
 const money2 = (v) => (v == null || Number.isNaN(Number(v)) ? '—' : 'SAR ' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
+const n0 = (v) => Number(v) || 0
 
-// which item fields the panel edits (each is a real column on items / accepted by /pricing/apply)
 const EDIT_FIELDS = [
   'supplier_price', 'currency', 'factory_cost', 'freight_cost', 'insurance_cost', 'customs_duty',
   'local_transport', 'other_landed_cost', 'landed_template_id', 'markup_factor', 'add_margin_pct', 'special_offer_pct',
+  'exchange_factor', 'price_factor',
 ]
 const initForm = (item) => {
   const f = {}
@@ -24,6 +24,7 @@ const initForm = (item) => {
 
 export default function ItemPricingPanel({ item, onSaved }) {
   const d = useData()
+  const [baseItem, setBaseItem] = useState(item)
   const [form, setForm] = useState(() => initForm(item))
   const [chain, setChain] = useState(null)
   const [previewing, setPreviewing] = useState(false)
@@ -33,26 +34,56 @@ export default function ItemPricingPanel({ item, onSaved }) {
   const [templates, setTemplates] = useState([])
   const timer = useRef(null)
 
-  useEffect(() => { setForm(initForm(item)); setChain(null); setErr(''); setOk('') }, [item])
+  // Always preview from the saved DB row (list cache may omit valuation_rate).
+  useEffect(() => {
+    if (!item?.id) { setBaseItem(item); return }
+    let cancelled = false
+    api(`/items/${item.id}`)
+      .then((full) => { if (!cancelled) setBaseItem({ ...item, ...full }) })
+      .catch(() => { if (!cancelled) setBaseItem(item) })
+    return () => { cancelled = true }
+  }, [item?.id])
+
+  useEffect(() => {
+    setForm(initForm(baseItem))
+    setChain(null)
+    setErr('')
+    setOk('')
+  }, [baseItem?.id, baseItem?.valuation_rate, baseItem?.selling_price])
 
   useEffect(() => {
     api('/pricing/templates').then((t) => setTemplates(Array.isArray(t) ? t : [])).catch(() => setTemplates([]))
   }, [])
 
   const currencyCodes = (d.settings?.currencies || []).map((c) => c.code)
-  const currencyOpts = Array.from(new Set([item?.currency, ...currencyCodes].filter(Boolean)))
+  const currencyOpts = Array.from(new Set([baseItem?.currency, ...currencyCodes].filter(Boolean)))
 
   const set = (k, v) => setForm((p) => ({ ...p, [k]: v }))
 
-  // debounced live preview
   const runPreview = useCallback(async (f) => {
-    setPreviewing(true); setErr('')
+    if (!baseItem?.id) return
+    setPreviewing(true)
+    setErr('')
     try {
-      const body = { item: { ...item, valuation_rate: item?.valuation_rate, ...f } }
-      const res = await api('/pricing/preview', { method: 'POST', body })
+      const res = await api('/pricing/preview', {
+        method: 'POST',
+        body: {
+          item_id: baseItem.id,
+          item: {
+            valuation_rate: baseItem.valuation_rate,
+            brand: baseItem.brand,
+            ...f,
+          },
+        },
+      })
       setChain(res)
-    } catch (e) { setErr(e.message); setChain(null) } finally { setPreviewing(false) }
-  }, [item])
+    } catch (e) {
+      setErr(e.message)
+      setChain(null)
+    } finally {
+      setPreviewing(false)
+    }
+  }, [baseItem])
 
   useEffect(() => {
     if (timer.current) clearTimeout(timer.current)
@@ -61,14 +92,20 @@ export default function ItemPricingPanel({ item, onSaved }) {
   }, [form, runPreview])
 
   const save = async () => {
-    setSaving(true); setErr(''); setOk('')
+    setSaving(true)
+    setErr('')
+    setOk('')
     try {
-      const res = await api(`/pricing/apply/${item.id}`, { method: 'POST', body: form })
+      const res = await api(`/pricing/apply/${baseItem.id}`, { method: 'POST', body: form })
       setChain(res)
       setOk('Pricing saved to the item.')
       await d.loadAll?.()
       onSaved?.(res)
-    } catch (e) { setErr(e.message) } finally { setSaving(false) }
+    } catch (e) {
+      setErr(e.message)
+    } finally {
+      setSaving(false)
+    }
   }
 
   const numRow = (key, label, hint) => (
@@ -82,118 +119,118 @@ export default function ItemPricingPanel({ item, onSaved }) {
 
   const priced = chain?.priced
   const tplName = templates.find((t) => t.id === form.landed_template_id)?.name
+  const f = chain?.factors || {}
+  const vrBasis = n0(chain?.basis_value ?? baseItem?.valuation_rate)
+  const exch = f.exchange_factor ?? '—'
+  const pf = f.price_factor ?? '—'
+  const margin = f.add_margin_pct ?? 0
+  const offer = f.special_offer_pct ?? 0
 
   return (
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-      {/* ── inputs ── */}
       <div className="space-y-4">
-        <div>
-          <h4 className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-500"><Calculator size={14} /> Cost inputs</h4>
-          <div className="grid grid-cols-2 gap-3">
-            {numRow('supplier_price', 'Supplier price')}
-            <label className="block">
-              <span className="mb-1 block text-[11px] font-semibold text-slate-500">Currency</span>
-              <select value={form.currency ?? ''} onChange={(e) => set('currency', e.target.value)}
-                className="w-full rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2 text-sm outline-none transition focus:border-brand-400 focus:bg-white focus:ring-2 focus:ring-brand-500/15">
-                <option value="">Base (SAR)</option>
-                {currencyOpts.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </label>
-            {numRow('factory_cost', 'Factory cost')}
-            <label className="block">
-              <span className="mb-1 block text-[11px] font-semibold text-slate-500">Landed-cost template</span>
-              <select value={form.landed_template_id ?? ''} onChange={(e) => set('landed_template_id', e.target.value)}
-                className="w-full rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2 text-sm outline-none transition focus:border-brand-400 focus:bg-white focus:ring-2 focus:ring-brand-500/15">
-                <option value="">— None (use explicit amounts)</option>
-                {templates.filter((t) => t.is_active).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
-            </label>
-          </div>
+        <div className="rounded-xl border border-brand-100 bg-brand-50/40 p-3 text-xs text-slate-600">
+          <p className="font-semibold text-ink">Valuation rate (set in Price Items table)</p>
+          <p className="mt-1 tabular-nums">Current VR: <b>{money2(baseItem?.valuation_rate)}</b> · Brand: <b>{baseItem?.brand || '—'}</b></p>
+          <p className="mt-1 text-[11px] text-muted">Selling uses Brand Master factors unless item override below.</p>
         </div>
 
         <div>
-          <h4 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Landed components (leave blank to use template %)</h4>
+          <h4 className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-500"><Calculator size={14} /> Item overrides (optional)</h4>
           <div className="grid grid-cols-2 gap-3">
-            {numRow('freight_cost', 'Freight')}
-            {numRow('insurance_cost', 'Insurance')}
-            {numRow('customs_duty', 'Customs & duties')}
-            {numRow('local_transport', 'Local transport')}
-            {numRow('other_landed_cost', 'Other')}
+            {numRow('exchange_factor', 'Exchange factor override')}
+            {numRow('price_factor', 'Price factor override')}
           </div>
         </div>
 
-        <div>
-          <h4 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Markup & margin</h4>
-          <div className="grid grid-cols-3 gap-3">
-            {numRow('markup_factor', 'Markup factor', tplName ? 'template' : '1')}
-            {numRow('add_margin_pct', 'Add margin %')}
-            {numRow('special_offer_pct', 'Special offer %')}
+        <details className="rounded-xl border border-slate-200 bg-slate-50/40 p-3">
+          <summary className="cursor-pointer text-xs font-bold uppercase tracking-wide text-slate-500">Supplier landed cost (future — not used for selling)</summary>
+          <div className="mt-3 space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              {numRow('supplier_price', 'Supplier price')}
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-semibold text-slate-500">Currency</span>
+                <select value={form.currency ?? ''} onChange={(e) => set('currency', e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2 text-sm outline-none focus:border-brand-400 focus:bg-white">
+                  <option value="">Base (SAR)</option>
+                  {currencyOpts.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </label>
+              {numRow('factory_cost', 'Factory cost')}
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-semibold text-slate-500">Landed-cost template</span>
+                <select value={form.landed_template_id ?? ''} onChange={(e) => set('landed_template_id', e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2 text-sm outline-none focus:border-brand-400 focus:bg-white">
+                  <option value="">— None —</option>
+                  {templates.filter((t) => t.is_active).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              </label>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {numRow('freight_cost', 'Freight')}
+              {numRow('insurance_cost', 'Insurance')}
+              {numRow('customs_duty', 'Customs')}
+              {numRow('local_transport', 'Transport')}
+              {numRow('other_landed_cost', 'Other')}
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              {numRow('markup_factor', 'Markup factor', tplName ? 'template' : '1')}
+              {numRow('add_margin_pct', 'Add margin %')}
+              {numRow('special_offer_pct', 'Special offer %')}
+            </div>
           </div>
-        </div>
+        </details>
 
         {err && <div className="flex items-start gap-2 rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600"><AlertCircle size={14} className="mt-0.5 shrink-0" />{err}</div>}
         {ok && <div className="rounded-lg bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-600">{ok}</div>}
 
-        <button className="btn-primary w-full" disabled={saving || !item?.id} onClick={save}>
+        <button className="btn-primary w-full" disabled={saving || !baseItem?.id || !priced} onClick={save}>
           {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} Save pricing to item
         </button>
       </div>
 
-      {/* ── live preview ── */}
       <div className="space-y-4">
         <div className="rounded-xl border border-slate-200 bg-slate-50/40 p-4">
           <div className="mb-3 flex items-center justify-between">
-            <h4 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-500"><TrendingUp size={14} /> Live preview</h4>
+            <h4 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-500"><TrendingUp size={14} /> Live preview (VR chain)</h4>
             {previewing && <Loader2 size={14} className="animate-spin text-brand-500" />}
           </div>
 
           {!priced ? (
             <div className="rounded-lg bg-amber-50 px-3 py-6 text-center text-xs font-medium text-amber-700">
-              {chain?.reason || 'Set a valuation rate on the item to price it (Brand Master factors apply automatically).'}
+              {chain?.reason || 'Set a valuation rate on the item (Price Items table), then reopen this panel.'}
             </div>
           ) : (
             <>
               <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-lg bg-white p-3 shadow-sm ring-1 ring-slate-100">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Landed cost</p>
-                  <p className="mt-0.5 text-lg font-extrabold text-ink">{money2(chain.landed_cost)}</p>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Expected landed</p>
+                  <p className="mt-0.5 text-lg font-extrabold text-ink">{money2(chain.expected_landed ?? chain.landed_cost)}</p>
                 </div>
                 <div className="rounded-lg bg-white p-3 shadow-sm ring-1 ring-slate-100">
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Selling price</p>
-                  <p className="mt-0.5 text-lg font-extrabold text-brand-600">{money2(chain.selling_price)}</p>
+                  <p className="mt-0.5 text-lg font-extrabold text-brand-600">{money2(chain.selling_price ?? chain.selling)}</p>
                 </div>
-                <div className="rounded-lg bg-white p-3 shadow-sm ring-1 ring-slate-100">
+                <div className="rounded-lg bg-white p-3 shadow-sm ring-1 ring-slate-100 col-span-2">
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Gross profit</p>
-                  <p className="mt-0.5 text-sm font-bold text-emerald-600">{money2(chain.gross_profit)} <span className="text-xs font-semibold text-slate-400">({pct(chain.gp_percent)})</span></p>
-                </div>
-                <div className="rounded-lg bg-white p-3 shadow-sm ring-1 ring-slate-100">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Net profit</p>
-                  <p className="mt-0.5 text-sm font-bold text-emerald-600">{money2(chain.net_profit)} <span className="text-xs font-semibold text-slate-400">({pct(chain.np_percent)})</span></p>
+                  <p className="mt-0.5 text-sm font-bold text-emerald-600">{money2(chain.gross_profit ?? (n0(chain.selling_price) - n0(chain.expected_landed)))} <span className="text-xs font-semibold text-slate-400">({pct(chain.gp_percent ?? chain.gp_pct)})</span></p>
                 </div>
               </div>
 
               <table className="mt-4 w-full text-xs">
                 <tbody className="divide-y divide-slate-100">
-                  <Line label={`Supplier price${chain.currency ? ` (${chain.currency})` : ''}`} value={money2(chain.supplier_price)} />
-                  <Line label={`× FX rate to SAR`} value={`× ${chain.fx_rate}`} />
-                  <Line label="Supplier cost (SAR)" value={money2(chain.supplier_cost)} strong />
-                  <Line label="+ Factory cost" value={money2(chain.factory_cost)} />
-                  <Line label="+ Freight" value={money2(chain.freight_cost)} />
-                  <Line label="+ Insurance" value={money2(chain.insurance_cost)} />
-                  <Line label="+ Customs & duties" value={money2(chain.customs_duty)} />
-                  <Line label="+ Local transport" value={money2(chain.local_transport)} />
-                  <Line label="+ Other" value={money2(chain.other_landed_cost)} />
-                  <Line label="= Landed cost" value={money2(chain.landed_cost)} strong />
-                  <Line label={`× Markup factor`} value={`× ${chain.markup_factor}`} />
-                  <Line label="= Calculated sale price" value={money2(chain.calculated_sale_price)} />
-                  <Line label={`+ Add margin`} value={pct(chain.add_margin_pct)} />
-                  <Line label={`− Special offer`} value={pct(chain.special_offer_pct)} />
-                  <Line label={`− Discount${chain.discount_rule ? ` (${chain.discount_rule})` : ''}`} value={pct(chain.discount_pct)} />
-                  <Line label="= Selling price" value={money2(chain.selling_price)} strong accent />
-                  <Line label={`OPEX (${pct(chain.opex_pct)} of selling)`} value={money2((chain.selling_price * (chain.opex_pct || 0)) / 100)} />
+                  <Line label="Basis" value={chain.basis === 'valuation_rate' ? 'Valuation rate' : (chain.basis || '—')} />
+                  <Line label="Valuation rate" value={money2(vrBasis)} strong />
+                  <Line label={`× Exchange factor (${baseItem?.brand || 'brand'})`} value={`× ${exch}`} />
+                  <Line label="= Expected landed cost" value={money2(chain.expected_landed ?? chain.landed_cost)} strong />
+                  <Line label="× Price factor" value={`× ${pf}`} />
+                  <Line label="= Base selling" value={money2(chain.base_selling ?? chain.calculated_sale_price)} />
+                  <Line label={`+ Add margin (${margin}%)`} value={margin ? `+ ${margin}%` : '—'} />
+                  <Line label={`− Special offer (${offer}%)`} value={offer ? `− ${offer}%` : '—'} />
+                  <Line label="= Selling price" value={money2(chain.selling_price ?? chain.selling)} strong accent />
                 </tbody>
               </table>
-              {chain.template && <p className="mt-2 text-[11px] text-muted">Template: {chain.template}</p>}
+              {chain.currency && <p className="mt-2 text-[11px] text-muted">Display currency: {chain.currency}</p>}
             </>
           )}
         </div>

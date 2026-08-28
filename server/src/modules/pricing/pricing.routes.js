@@ -55,10 +55,24 @@ async function clearDefaultExcept(id) {
 export function pricingRouter() {
   const r = Router()
 
-  // ── POST /pricing/preview { item } — live "what-if", never saved ──────────────
+  // ── POST /pricing/preview { item_id?, item? } — live what-if (DB row + optional overrides) ──
   r.post('/preview', authRequired, authorize('warehouse', 'read'), asyncWrap(async (req, res) => {
-    const item = req.body?.item
-    if (!item || typeof item !== 'object') return res.status(422).json({ error: 'An item object is required' })
+    const body = req.body || {}
+    let item = body.item
+    const id = body.item_id || item?.id
+    if (id) {
+      const { data: saved } = await supabase.from('items').select('*').eq('id', id).maybeSingle()
+      if (!saved) return res.status(404).json({ error: 'Item not found' })
+      item = { ...saved, ...(item && typeof item === 'object' ? item : {}) }
+      // Panel sends '' for blank numerics — never wipe DB valuation_rate / factors
+      for (const k of [...APPLY_INPUT_COLS, 'valuation_rate']) {
+        if (!body.item || !(k in body.item)) continue
+        const v = body.item[k]
+        if (v === '' || v === null || v === undefined) continue
+        item[k] = (k === 'currency' || k === 'landed_template_id') ? v : nOrNull(v)
+      }
+    }
+    if (!item || typeof item !== 'object') return res.status(422).json({ error: 'An item object or item_id is required' })
     const chain = await pricedChain(item)
     res.json(redactFinancials(req.user.role, chain))
   }))

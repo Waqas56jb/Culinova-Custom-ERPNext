@@ -308,14 +308,14 @@ function PriceItemsTab() {
                   )}
                 </tr>
               ))}
-              {missing.length === 0 && <tr><td className="td text-slate-400" colSpan={missingColSpan}>Every item that matches has a supplier cost.</td></tr>}
+              {missing.length === 0 && <tr><td className="td text-slate-400" colSpan={missingColSpan}>Every matching item has a valuation rate.</td></tr>}
             </tbody>
           </table>
         </div>
       </div>
 
       <Modal open={!!selected} onClose={() => setSelected(null)} size="xl"
-        title={selected?.item_name || 'Item pricing'} subtitle="Landed-cost chain · live preview">
+        title={selected?.item_name || 'Item pricing'} subtitle="Valuation rate chain · live preview">
         {selected && <ItemPricingPanel item={selected} onSaved={() => { /* store refreshed by panel */ }} />}
       </Modal>
 
