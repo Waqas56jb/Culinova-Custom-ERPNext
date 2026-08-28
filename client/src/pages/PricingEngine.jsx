@@ -42,6 +42,7 @@ export default function PricingEngine() {
 
   useEffect(() => {
     if (tabParam && TABS.some((t) => t.key === tabParam)) setTab(tabParam)
+    else if (!tabParam) setTab('items')
   }, [tabParam])
 
   const selectTab = (key) => {

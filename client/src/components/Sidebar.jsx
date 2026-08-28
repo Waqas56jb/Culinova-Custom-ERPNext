@@ -77,6 +77,24 @@ const sections = [
   ] },
 ]
 
+/** NavLink isActive — Pricing Engine vs Brand Master share /stock/pricing; only one may highlight. */
+function isNavActive(to, location) {
+  const [path, qs] = to.split('?')
+  if (location.pathname !== path) return false
+  if (path === '/stock/pricing') {
+    const tab = new URLSearchParams(location.search).get('tab')
+    if (qs) return tab === 'brands'
+    return tab !== 'brands'
+  }
+  if (!qs) return true
+  const want = new URLSearchParams(qs)
+  const have = new URLSearchParams(location.search)
+  for (const [k, v] of want.entries()) {
+    if (have.get(k) !== v) return false
+  }
+  return true
+}
+
 export default function Sidebar({ open, onClose }) {
   const { chatMessages } = useData()
   const { canSee } = useAuth()
@@ -117,6 +135,7 @@ export default function Sidebar({ open, onClose }) {
               <p className="section-title mb-2 mt-6 first:mt-0">{sec.title}</p>
               {sec.items.map(({ to, label, icon: Icon }) => (
                 <NavLink key={to} to={to} onClick={onClose}
+                  isActive={({ location }) => isNavActive(to, location)}
                   className={({ isActive }) => `nav-link group ${isActive ? 'nav-link-active' : 'hover:bg-white/5 hover:text-white'}`}>
                   {({ isActive }) => (
                     <>
