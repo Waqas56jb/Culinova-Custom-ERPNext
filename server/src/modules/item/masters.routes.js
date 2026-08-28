@@ -3,12 +3,50 @@ import { supabase } from '../../config/supabase.js'
 import { authRequired } from '../../middleware/auth.js'
 import { authorize, redactFinancials, internalOnly } from '../../middleware/rbac.js'
 import { asyncWrap } from '../../middleware/error.js'
-import { eosOnlyItemCreation, eosOnlyItemDeletion, itemsComeFromEosOnly, EOS_ONLY_EDIT_MESSAGE } from '../../core/policy.js'
+import { eosOnlyItemCreation, eosOnlyItemDeletion } from '../../core/policy.js'
+import { logAudit } from '../../core/audit.js'
+import { canSeeFinancials } from '../../rbac/permissions.js'
 
 const r = Router()
-// Item Master reference data (groups, brands, UOMs, families, attributes) is shared across internal
-// roles but must not be enumerable by a portal Customer.
 r.use(authRequired, internalOnly)
+
+const BRAND_EDITABLE = [
+  'currency', 'exchange_factor', 'price_factor', 'add_margin_pct', 'special_offer_pct',
+  'brand', 'description', 'country_of_origin', 'country_of_purchase',
+]
+const FIN_AUDIT_FIELDS = new Set(['exchange_factor', 'price_factor', 'currency', 'add_margin_pct', 'special_offer_pct'])
+const str = (v) => (v == null ? '' : String(v))
+
+async function countItemsForBrand(brandName) {
+  if (!brandName) return 0
+  const { count, error } = await supabase
+    .from('items')
+    .select('id', { count: 'exact', head: true })
+    .ilike('brand', brandName)
+  if (error) throw error
+  return count || 0
+}
+
+async function writeBrandAudit({ brand_id, brand_name, field, old_value, new_value, user }) {
+  await supabase.from('brand_audit_log').insert({
+    brand_id: brand_id || null,
+    brand_name: brand_name || null,
+    field,
+    old_value: old_value == null ? null : String(old_value),
+    new_value: new_value == null ? null : String(new_value),
+    changed_by: user?.name || 'system',
+    changed_by_id: user?.id || null,
+  })
+}
+
+function redactAuditRows(role, rows) {
+  if (canSeeFinancials(role)) return rows
+  return (rows || []).map((row) => (
+    FIN_AUDIT_FIELDS.has(row.field)
+      ? { ...row, old_value: null, new_value: null }
+      : row
+  ))
+}
 
 // ── ITEM GROUPS (hierarchical tree) ──
 r.get('/item-groups', authRequired, asyncWrap(async (req, res) => {
@@ -16,12 +54,12 @@ r.get('/item-groups', authRequired, asyncWrap(async (req, res) => {
   if (error) throw error
   res.json(data || [])
 }))
-r.post('/item-groups', authRequired, authorize('warehouse', 'create'), eosOnlyItemCreation, asyncWrap(async (req, res) => {
+r.post('/item-groups', authRequired, authorize('warehouse', 'create'), asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('item_groups').insert({ item_group_name: req.body.item_group_name, parent_item_group: req.body.parent_item_group || null, is_group: !!req.body.is_group }).select().single()
   if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: error.message })
   res.status(201).json(data)
 }))
-r.patch('/item-groups/:id', authRequired, authorize('warehouse', 'update'), eosOnlyItemCreation, asyncWrap(async (req, res) => {
+r.patch('/item-groups/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('item_groups').update(req.body).eq('id', req.params.id).select().single()
   if (error) throw error; res.json(data)
 }))
@@ -29,48 +67,116 @@ r.delete('/item-groups/:id', authRequired, authorize('warehouse', 'delete'), eos
   await supabase.from('item_groups').delete().eq('id', req.params.id); res.json({ ok: true })
 }))
 
-// ── BRANDS ──
-// Brand NAMES are needed by everyone (Item Master dropdowns), but exchange_factor / price_factor are
-// financial (restrictedFields) — redact them for Sales/Engineering so pricing factors never leak.
+// ── BRANDS (commercial master — ERP-owned; items link by brand name text) ──
 r.get('/brands', authRequired, asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('brands').select('*').order('brand')
   if (error) throw error
   res.json(redactFinancials(req.user.role, data || []))
 }))
-r.post('/brands', authRequired, authorize('warehouse', 'create'), eosOnlyItemCreation, asyncWrap(async (req, res) => {
+
+r.get('/brands/:id/audit', authRequired, authorize('warehouse', 'read'), asyncWrap(async (req, res) => {
+  const { data, error } = await supabase.from('brand_audit_log')
+    .select('*')
+    .eq('brand_id', req.params.id)
+    .order('created_at', { ascending: false })
+    .limit(200)
+  if (error) throw error
+  res.json(redactAuditRows(req.user.role, data || []))
+}))
+
+r.post('/brands', authRequired, authorize('warehouse', 'create'), asyncWrap(async (req, res) => {
   const b = req.body
-  const { data, error } = await supabase.from('brands').insert({ brand: b.brand, description: b.description || null, currency: b.currency || 'SAR', exchange_factor: Number(b.exchange_factor) || 1, price_factor: Number(b.price_factor) || 1, country_of_origin: b.country_of_origin || null, country_of_purchase: b.country_of_purchase || null }).select().single()
+  if (!b?.brand?.trim()) return res.status(422).json({ error: 'brand name required' })
+  const exch = Number(b.exchange_factor) || 1
+  const pf = Number(b.price_factor) || 1
+  const factors_pending = exch === 1 && pf === 1
+  const row = {
+    brand: b.brand.trim(),
+    description: b.description || null,
+    currency: b.currency || 'SAR',
+    exchange_factor: exch,
+    price_factor: pf,
+    add_margin_pct: Number(b.add_margin_pct) || 0,
+    special_offer_pct: Number(b.special_offer_pct) || 0,
+    country_of_origin: b.country_of_origin || null,
+    country_of_purchase: b.country_of_purchase || null,
+    factors_pending,
+  }
+  const { data, error } = await supabase.from('brands').insert(row).select().single()
   if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: error.message })
+  await writeBrandAudit({
+    brand_id: data.id, brand_name: data.brand, field: '__created',
+    old_value: null, new_value: data.brand, user: req.user,
+  })
+  await logAudit(req.user, 'brand', data.id, 'created', { brand: data.brand, factors_pending })
   res.status(201).json(data)
 }))
-// A brand's IDENTITY belongs to EOS (the EOS import creates it). Only its PRICING factors are the
-// ERP's — EOS carries no prices — so under the EOS policy this route accepts nothing else.
-r.patch('/brands/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async (req, res) => {
-  // The full Brand Master pricing chain: valuation × exchange → × price factor → ×(1+margin) ×(1−offer).
-  const PRICING = ['currency', 'exchange_factor', 'price_factor', 'add_margin_pct', 'special_offer_pct']
-  const IDENTITY = ['description', 'country_of_origin', 'country_of_purchase']
-  const eosOwns = await itemsComeFromEosOnly()
-  const editable = eosOwns ? PRICING : [...PRICING, ...IDENTITY]
 
-  const rejected = Object.keys(req.body || {}).filter((f) => !editable.includes(f) && [...PRICING, ...IDENTITY, 'brand'].includes(f))
-  if (rejected.length) return res.status(403).json({ error: `${EOS_ONLY_EDIT_MESSAGE} Rejected: ${rejected.join(', ')}.`, blocked: rejected, source: 'EOS' })
+r.patch('/brands/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async (req, res) => {
+  const { data: before, error: fetchErr } = await supabase.from('brands').select('*').eq('id', req.params.id).maybeSingle()
+  if (fetchErr) throw fetchErr
+  if (!before) return res.status(404).json({ error: 'Brand not found' })
 
   const patch = {}
-  for (const f of editable) if (req.body[f] != null) patch[f] = req.body[f]
-  if (!Object.keys(patch).length) return res.status(422).json({ error: 'Nothing to update. Only pricing factors (currency, exchange factor, price factor) are set in the ERP.' })
+  for (const f of BRAND_EDITABLE) {
+    if (req.body[f] != null) patch[f] = req.body[f]
+  }
+  if (!Object.keys(patch).length) {
+    return res.status(422).json({ error: 'Nothing to update.' })
+  }
 
-  const { data: before } = await supabase.from('brands').select('currency, exchange_factor, price_factor, factors_pending').eq('id', req.params.id).maybeSingle()
-  const exch = patch.exchange_factor != null ? Number(patch.exchange_factor) : Number(before?.exchange_factor)
-  const pf = patch.price_factor != null ? Number(patch.price_factor) : Number(before?.price_factor)
-  const cur = patch.currency != null ? patch.currency : before?.currency
-  const factorsSet = (exch !== 1 || pf !== 1 || (patch.currency != null && cur !== (before?.currency || 'SAR')))
+  if (patch.brand != null) {
+    const nextName = String(patch.brand).trim()
+    if (!nextName) return res.status(422).json({ error: 'brand name cannot be empty' })
+    patch.brand = nextName
+    if (nextName.toLowerCase() !== String(before.brand || '').toLowerCase()) {
+      const inUse = await countItemsForBrand(before.brand)
+      if (inUse > 0) {
+        return res.status(409).json({ error: `Brand is in use by ${inUse} items`, item_count: inUse })
+      }
+    }
+  }
+
+  const exch = patch.exchange_factor != null ? Number(patch.exchange_factor) : Number(before.exchange_factor)
+  const pf = patch.price_factor != null ? Number(patch.price_factor) : Number(before.price_factor)
+  const cur = patch.currency != null ? patch.currency : before.currency
+  const factorsSet = (exch !== 1 || pf !== 1 || (patch.currency != null && cur !== (before.currency || 'SAR')))
   if (factorsSet) patch.factors_pending = false
 
   const { data, error } = await supabase.from('brands').update(patch).eq('id', req.params.id).select().single()
-  if (error) throw error; res.json(data)
+  if (error) throw error
+
+  for (const f of BRAND_EDITABLE) {
+    if (!(f in patch)) continue
+    const oldV = before[f]
+    const newV = data[f]
+    if (str(oldV) === str(newV)) continue
+    await writeBrandAudit({
+      brand_id: data.id, brand_name: data.brand, field: f,
+      old_value: oldV, new_value: newV, user: req.user,
+    })
+  }
+  await logAudit(req.user, 'brand', data.id, 'updated', { fields: Object.keys(patch) })
+  res.json(data)
 }))
-r.delete('/brands/:id', authRequired, authorize('warehouse', 'delete'), eosOnlyItemDeletion, asyncWrap(async (req, res) => {
-  await supabase.from('brands').delete().eq('id', req.params.id); res.json({ ok: true })
+
+r.delete('/brands/:id', authRequired, authorize('warehouse', 'delete'), asyncWrap(async (req, res) => {
+  const { data: brand, error: fetchErr } = await supabase.from('brands').select('*').eq('id', req.params.id).maybeSingle()
+  if (fetchErr) throw fetchErr
+  if (!brand) return res.status(404).json({ error: 'Brand not found' })
+
+  const inUse = await countItemsForBrand(brand.brand)
+  if (inUse > 0) {
+    return res.status(409).json({ error: `Brand is in use by ${inUse} items`, item_count: inUse })
+  }
+
+  await writeBrandAudit({
+    brand_id: brand.id, brand_name: brand.brand, field: '__deleted',
+    old_value: brand.brand, new_value: null, user: req.user,
+  })
+  await logAudit(req.user, 'brand', brand.id, 'deleted', { brand: brand.brand })
+  await supabase.from('brands').delete().eq('id', req.params.id)
+  res.json({ ok: true })
 }))
 
 // ── UNITS OF MEASURE (master) ──
@@ -78,12 +184,12 @@ r.get('/uoms', authRequired, asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('uoms').select('*').order('name')
   if (error) throw error; res.json(data || [])
 }))
-r.post('/uoms', authRequired, authorize('warehouse', 'create'), eosOnlyItemCreation, asyncWrap(async (req, res) => {
+r.post('/uoms', authRequired, authorize('warehouse', 'create'), asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('uoms').insert({ name: req.body.name, symbol: req.body.symbol || null, is_active: req.body.is_active ?? true }).select().single()
   if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: error.message })
   res.status(201).json(data)
 }))
-r.patch('/uoms/:id', authRequired, authorize('warehouse', 'update'), eosOnlyItemCreation, asyncWrap(async (req, res) => {
+r.patch('/uoms/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('uoms').update(req.body).eq('id', req.params.id).select().single()
   if (error) throw error; res.json(data)
 }))
@@ -91,18 +197,18 @@ r.delete('/uoms/:id', authRequired, authorize('warehouse', 'delete'), eosOnlyIte
   await supabase.from('uoms').delete().eq('id', req.params.id); res.json({ ok: true })
 }))
 
-// ── (2) PRODUCT FAMILIES ──
+// ── PRODUCT FAMILIES ──
 r.get('/product-families', authRequired, asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('product_families').select('*').order('name')
   if (error) throw error; res.json(data || [])
 }))
-r.post('/product-families', authRequired, authorize('warehouse', 'create'), eosOnlyItemCreation, asyncWrap(async (req, res) => {
+r.post('/product-families', authRequired, authorize('warehouse', 'create'), asyncWrap(async (req, res) => {
   const b = req.body
   const { data, error } = await supabase.from('product_families').insert({ name: b.name, category: b.category || null, sub_category: b.sub_category || null, datasheet_url: b.datasheet_url || null, image_url: b.image_url || null, specs: b.specs || null }).select().single()
   if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: error.message })
   res.status(201).json(data)
 }))
-r.patch('/product-families/:id', authRequired, authorize('warehouse', 'update'), eosOnlyItemCreation, asyncWrap(async (req, res) => {
+r.patch('/product-families/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('product_families').update(req.body).eq('id', req.params.id).select().single()
   if (error) throw error; res.json(data)
 }))
@@ -110,7 +216,7 @@ r.delete('/product-families/:id', authRequired, authorize('warehouse', 'delete')
   await supabase.from('product_families').delete().eq('id', req.params.id); res.json({ ok: true })
 }))
 
-// ── (5) SUPPLIER PRICE LISTS (separate from Item Master, Excel import) ──
+// ── SUPPLIER PRICE LISTS ──
 r.get('/price-lists', authRequired, authorize('warehouse', 'read'), asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('supplier_price_lists').select('*').order('created_at', { ascending: false })
   if (error) throw error
@@ -122,7 +228,6 @@ r.post('/price-lists', authRequired, authorize('warehouse', 'create'), asyncWrap
   const b = req.body
   const { data: list, error } = await supabase.from('supplier_price_lists').insert({ name: b.name, brand: b.brand || null, currency: b.currency || null, year: b.year || null }).select().single()
   if (error) throw error
-  // bulk import rows: [{ model, supplier_price }]  (brand defaults to the list brand)
   const rows = (b.items || []).filter((r) => r.model).map((r) => ({ list_id: list.id, brand: r.brand || b.brand || null, model: r.model, supplier_price: Number(r.supplier_price) || 0 }))
   if (rows.length) await supabase.from('price_list_items').insert(rows)
   res.status(201).json({ ...list, imported: rows.length })

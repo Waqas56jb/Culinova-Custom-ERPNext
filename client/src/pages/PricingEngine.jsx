@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   Percent, Coins, Layers, Calculator, RefreshCw, Search, TrendingUp,
-  AlertTriangle, Loader2, Plus, DollarSign,
+  AlertTriangle, Loader2, Plus, DollarSign, History,
 } from 'lucide-react'
 import { PageHeader, KpiCard } from '../components/ui.jsx'
 import { Modal } from '../components/Modal.jsx'
@@ -35,7 +36,18 @@ export default function PricingEngine() {
   const d = useData()
   const { canSee } = useAuth()
   const canEdit = canSee('warehouse') || canSee('admin')
-  const [tab, setTab] = useState('items')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const tabParam = searchParams.get('tab')
+  const [tab, setTab] = useState(() => (TABS.some((t) => t.key === tabParam) ? tabParam : 'items'))
+
+  useEffect(() => {
+    if (tabParam && TABS.some((t) => t.key === tabParam)) setTab(tabParam)
+  }, [tabParam])
+
+  const selectTab = (key) => {
+    setTab(key)
+    setSearchParams(key === 'items' ? {} : { tab: key }, { replace: true })
+  }
 
   if (!canEdit) {
     return (
@@ -52,7 +64,7 @@ export default function PricingEngine() {
       <KpiRow items={d.items || []} />
       <div className="mb-4 flex flex-wrap gap-1.5">
         {TABS.map(({ key, label, icon: Icon }) => (
-          <button key={key} onClick={() => setTab(key)}
+          <button key={key} onClick={() => selectTab(key)}
             className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${tab === key ? 'bg-brand-500 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
             <Icon size={14} /> {label}
           </button>
@@ -438,6 +450,15 @@ function BrandMasterTab() {
   const [edits, setEdits] = useState({})   // id → { field: value }
   const [savingId, setSavingId] = useState(null)
   const [msg, setMsg] = useState('')
+  const [showAdd, setShowAdd] = useState(false)
+  const [adding, setAdding] = useState(false)
+  const [newBrand, setNewBrand] = useState({
+    brand: '', currency: 'SAR', exchange_factor: 1, price_factor: 1,
+    country_of_origin: '', country_of_purchase: '',
+  })
+  const [auditFor, setAuditFor] = useState(null)
+  const [auditRows, setAuditRows] = useState([])
+  const [auditLoading, setAuditLoading] = useState(false)
 
   const brands = useMemo(() => {
     const term = q.trim().toLowerCase()
@@ -457,7 +478,6 @@ function BrandMasterTab() {
   const setVal = (b, f, v) => setEdits((s) => ({ ...s, [b.id]: { ...(s[b.id] || {}), [f]: v } }))
   const dirty = (b) => !!edits[b.id]
 
-  // SAR 1,000 valuation worked through the current (possibly unsaved) factors.
   const example = (b) => {
     const exch = Number(val(b, 'exchange_factor', 1)) || 1
     const pf = Number(val(b, 'price_factor', 1)) || 1
@@ -471,7 +491,6 @@ function BrandMasterTab() {
   const save = async (b) => {
     setSavingId(b.id); setMsg('')
     try {
-      const e = edits[b.id] || {}
       await d.updateBrand(b.id, {
         exchange_factor: Number(val(b, 'exchange_factor', 1)) || 1,
         price_factor: Number(val(b, 'price_factor', 1)) || 1,
@@ -484,6 +503,37 @@ function BrandMasterTab() {
     } catch (e) { setMsg(e.message || 'Save failed') } finally { setSavingId(null) }
   }
 
+  const createBrand = async () => {
+    if (!newBrand.brand.trim()) return
+    setAdding(true); setMsg('')
+    try {
+      await d.addBrand({
+        brand: newBrand.brand.trim(),
+        currency: newBrand.currency || 'SAR',
+        exchange_factor: Number(newBrand.exchange_factor) || 1,
+        price_factor: Number(newBrand.price_factor) || 1,
+        country_of_origin: newBrand.country_of_origin || null,
+        country_of_purchase: newBrand.country_of_purchase || null,
+      })
+      setNewBrand({ brand: '', currency: 'SAR', exchange_factor: 1, price_factor: 1, country_of_origin: '', country_of_purchase: '' })
+      setShowAdd(false)
+      setMsg(`Added ${newBrand.brand.trim()}`)
+    } catch (e) { setMsg(e.message || 'Create failed') } finally { setAdding(false) }
+  }
+
+  const openAudit = async (b) => {
+    setAuditFor(b)
+    setAuditLoading(true)
+    setAuditRows([])
+    try {
+      const rows = await api(`/masters/brands/${b.id}/audit`)
+      setAuditRows(Array.isArray(rows) ? rows : [])
+    } catch (e) {
+      setAuditRows([])
+      setMsg(e.message || 'Could not load history')
+    } finally { setAuditLoading(false) }
+  }
+
   const numCell = (b, f, step = '0.01') => (
     <input
       type="number" step={step}
@@ -493,22 +543,74 @@ function BrandMasterTab() {
     />
   )
 
+  const fmtAuditVal = (v) => (v == null || v === '' ? '—' : v)
+  const fmtAuditDate = (iso) => {
+    if (!iso) return '—'
+    const dt = new Date(iso)
+    return Number.isNaN(dt.getTime()) ? iso : dt.toLocaleString()
+  }
+
   return (
+    <>
     <div className="card overflow-hidden">
       <div className="flex flex-col gap-2 border-b border-slate-100 p-4 sm:flex-row sm:items-center">
         <div>
           <p className="text-sm font-bold text-ink">Brand Master — Pricing Factors</p>
           <p className="text-[11px] text-muted">selling = valuation × exchange × price factor × (1 + margin%) × (1 − offer%)</p>
         </div>
-        <div className="relative sm:ml-auto sm:w-64">
-          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search brand…"
-            className="w-full rounded-lg border border-slate-200 bg-slate-50/60 py-2 pl-9 pr-3 text-sm outline-none focus:border-brand-400 focus:bg-white" />
+        <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+          <button type="button" onClick={() => setShowAdd((s) => !s)}
+            className="flex items-center gap-1 rounded-lg bg-brand-500 px-3 py-2 text-xs font-semibold text-white hover:bg-brand-600">
+            <Plus size={14} /> Add Brand
+          </button>
+          <div className="relative w-full sm:w-64">
+            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search brand…"
+              className="w-full rounded-lg border border-slate-200 bg-slate-50/60 py-2 pl-9 pr-3 text-sm outline-none focus:border-brand-400 focus:bg-white" />
+          </div>
         </div>
       </div>
+      {showAdd && (
+        <div className="border-b border-slate-100 bg-slate-50/40 p-4">
+          <p className="mb-2 text-xs font-bold text-ink">New brand</p>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            <label className="block text-[11px] font-semibold text-muted">Brand name *
+              <input value={newBrand.brand} onChange={(e) => setNewBrand((s) => ({ ...s, brand: e.target.value }))}
+                className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm outline-none focus:border-brand-400" />
+            </label>
+            <label className="block text-[11px] font-semibold text-muted">Currency
+              <input value={newBrand.currency} onChange={(e) => setNewBrand((s) => ({ ...s, currency: e.target.value }))}
+                className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm uppercase outline-none focus:border-brand-400" />
+            </label>
+            <label className="block text-[11px] font-semibold text-muted">Exchange factor
+              <input type="number" step="0.01" value={newBrand.exchange_factor} onChange={(e) => setNewBrand((s) => ({ ...s, exchange_factor: e.target.value }))}
+                className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm outline-none focus:border-brand-400" />
+            </label>
+            <label className="block text-[11px] font-semibold text-muted">Price factor
+              <input type="number" step="0.01" value={newBrand.price_factor} onChange={(e) => setNewBrand((s) => ({ ...s, price_factor: e.target.value }))}
+                className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm outline-none focus:border-brand-400" />
+            </label>
+            <label className="block text-[11px] font-semibold text-muted">Country of origin
+              <input value={newBrand.country_of_origin} onChange={(e) => setNewBrand((s) => ({ ...s, country_of_origin: e.target.value }))}
+                className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm outline-none focus:border-brand-400" />
+            </label>
+            <label className="block text-[11px] font-semibold text-muted">Country of purchase
+              <input value={newBrand.country_of_purchase} onChange={(e) => setNewBrand((s) => ({ ...s, country_of_purchase: e.target.value }))}
+                className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm outline-none focus:border-brand-400" />
+            </label>
+          </div>
+          <div className="mt-3 flex gap-2">
+            <button type="button" disabled={adding || !newBrand.brand.trim()} onClick={createBrand}
+              className="rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-600 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400">
+              {adding ? <Loader2 size={13} className="animate-spin" /> : 'Create brand'}
+            </button>
+            <button type="button" className="btn-ghost !py-1.5 !text-xs" onClick={() => setShowAdd(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
       {msg && <div className="border-b border-slate-100 bg-emerald-50/60 px-4 py-2 text-xs font-semibold text-emerald-700">{msg}</div>}
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[880px]">
+        <table className="w-full min-w-[960px]">
           <thead>
             <tr className="bg-slate-50/60">
               <th className="th">Brand</th><th className="th">Currency</th>
@@ -539,10 +641,16 @@ function BrandMasterTab() {
                   <td className="td text-right font-semibold tabular-nums text-brand-600">{money(ex.selling)}</td>
                   <td className="td text-right tabular-nums text-slate-500">{ex.gp.toFixed(1)}%</td>
                   <td className="td text-right">
-                    <button onClick={() => save(b)} disabled={!dirty(b) || savingId === b.id}
-                      className="rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400">
-                      {savingId === b.id ? <Loader2 size={13} className="animate-spin" /> : 'Save'}
-                    </button>
+                    <div className="flex justify-end gap-1.5">
+                      <button type="button" onClick={() => openAudit(b)} title="Change history"
+                        className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
+                        <History size={13} className="inline" />
+                      </button>
+                      <button onClick={() => save(b)} disabled={!dirty(b) || savingId === b.id}
+                        className="rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400">
+                        {savingId === b.id ? <Loader2 size={13} className="animate-spin" /> : 'Save'}
+                      </button>
+                    </div>
                   </td>
                 </tr>
               )
@@ -552,5 +660,38 @@ function BrandMasterTab() {
         </table>
       </div>
     </div>
+
+    <Modal open={!!auditFor} onClose={() => setAuditFor(null)} size="lg" title={auditFor ? `History — ${auditFor.brand}` : 'History'}
+      subtitle="Field-level changes · user · date/time"
+      footer={<button type="button" className="btn-ghost" onClick={() => setAuditFor(null)}>Close</button>}>
+      {auditLoading ? (
+        <div className="flex justify-center py-8"><Loader2 size={24} className="animate-spin text-brand-500" /></div>
+      ) : auditRows.length === 0 ? (
+        <p className="py-4 text-sm text-muted">No history recorded yet.</p>
+      ) : (
+        <div className="max-h-[420px] overflow-y-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-slate-50/60">
+                <th className="th">Date</th><th className="th">User</th><th className="th">Field</th>
+                <th className="th">Previous</th><th className="th">New</th>
+              </tr>
+            </thead>
+            <tbody>
+              {auditRows.map((row) => (
+                <tr key={row.id}>
+                  <td className="td whitespace-nowrap text-xs text-muted">{fmtAuditDate(row.created_at)}</td>
+                  <td className="td text-xs">{row.changed_by || '—'}</td>
+                  <td className="td font-mono text-xs">{row.field}</td>
+                  <td className="td text-xs tabular-nums">{fmtAuditVal(row.old_value)}</td>
+                  <td className="td text-xs tabular-nums">{fmtAuditVal(row.new_value)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Modal>
+    </>
   )
 }

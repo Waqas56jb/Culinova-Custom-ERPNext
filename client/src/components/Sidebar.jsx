@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Users2, Target, FileText, ClipboardList, Building2,
   FolderKanban, ShoppingCart, Boxes, Wallet, HardHat, Wrench,
-  X, Sparkles, MessageSquare, Truck, Receipt, BarChart3, Coins, Ticket, CalendarClock, UserCheck, Lock, Package, Settings, ShieldCheck, Contact, Tags, ArrowLeftRight, Calculator, FileSpreadsheet, Send,
+  X, Sparkles, MessageSquare, Truck, Receipt, BarChart3, Coins, Ticket, CalendarClock, UserCheck, Lock, Package, Settings, ShieldCheck, Contact, Tags, TrendingUp, ArrowLeftRight, Calculator, FileSpreadsheet, Send,
 } from 'lucide-react'
 import { useData } from '../store/DataContext.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
@@ -44,6 +44,7 @@ const sections = [
     { to: '/stock/warehouses', label: 'Warehouses', icon: Building2 },
     { to: '/stock/operations', label: 'Operations', icon: ArrowLeftRight },
     { to: '/stock/pricing', label: 'Pricing Engine', icon: Tags },
+    { to: '/stock/pricing?tab=brands', label: 'Brand Master', icon: TrendingUp },
   ] },
   { title: 'Finance & Accounting', panel: 'finance', items: [
     { to: '/finance/dashboard', label: 'Dashboard', icon: LayoutDashboard },

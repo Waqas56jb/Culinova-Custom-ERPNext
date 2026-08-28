@@ -447,24 +447,21 @@ function MastersModal({ open, onClose, eosOwned = true }) {
 
       {tab === 'Brands' && (
         <div className="space-y-3">
-          {eosOwned ? (
+          {eosOwned && (
             <p className="flex items-start gap-1.5 rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-muted">
               <Lock size={12} className="mt-0.5 shrink-0 text-slate-400" />
-              <span>Brand names come from EOS. Only the <b className="text-slate-600">pricing factors</b> below are set in the ERP — EOS carries no prices.</span>
+              <span>Most brand names arrive from EOS. You can also <b className="text-slate-600">add brands here</b> and set pricing factors in the ERP.</span>
             </p>
-          ) : (
-            <>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <Field label="Brand Name" value={br.brand} onChange={(e) => setBr((s) => ({ ...s, brand: e.target.value }))} />
-                <Field label="Currency" value={br.currency} onChange={(e) => setBr((s) => ({ ...s, currency: e.target.value }))} placeholder="EUR" />
-                <Field label="Exchange Factor" type="number" value={br.exchange_factor} onChange={(e) => setBr((s) => ({ ...s, exchange_factor: e.target.value }))} hint="supplier price × this = landed cost" />
-                <Field label="Price Factor" type="number" value={br.price_factor} onChange={(e) => setBr((s) => ({ ...s, price_factor: e.target.value }))} hint="landed × this = selling price" />
-                <Field label="Country of Origin" value={br.country_of_origin} onChange={(e) => setBr((s) => ({ ...s, country_of_origin: e.target.value }))} placeholder="Italy" />
-                <Field label="Country of Purchase" value={br.country_of_purchase} onChange={(e) => setBr((s) => ({ ...s, country_of_purchase: e.target.value }))} placeholder="KSA" />
-              </div>
-              <button className="btn-primary !py-2" onClick={addBrand}>Add Brand</button>
-            </>
           )}
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Field label="Brand Name" value={br.brand} onChange={(e) => setBr((s) => ({ ...s, brand: e.target.value }))} />
+            <Field label="Currency" value={br.currency} onChange={(e) => setBr((s) => ({ ...s, currency: e.target.value }))} placeholder="SAR" />
+            <Field label="Exchange Factor" type="number" value={br.exchange_factor} onChange={(e) => setBr((s) => ({ ...s, exchange_factor: e.target.value }))} hint="supplier price × this = landed cost" />
+            <Field label="Price Factor" type="number" value={br.price_factor} onChange={(e) => setBr((s) => ({ ...s, price_factor: e.target.value }))} hint="landed × this = selling price" />
+            <Field label="Country of Origin" value={br.country_of_origin} onChange={(e) => setBr((s) => ({ ...s, country_of_origin: e.target.value }))} placeholder="Italy" />
+            <Field label="Country of Purchase" value={br.country_of_purchase} onChange={(e) => setBr((s) => ({ ...s, country_of_purchase: e.target.value }))} placeholder="KSA" />
+          </div>
+          <button className="btn-primary !py-2" onClick={addBrand}>Add Brand</button>
 
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
