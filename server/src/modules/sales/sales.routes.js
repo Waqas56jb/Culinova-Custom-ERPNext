@@ -219,9 +219,19 @@ r.patch('/quotations/:id', authRequired, authorize('sales', 'update'), asyncWrap
 
 // ── APPROVE (Approval/Full Admin only) — #11 ──
 r.post('/quotations/:id/approve', authRequired, authorize('sales', 'approve'), asyncWrap(async (req, res) => {
-  const { data, error } = await supabase.from('quotations').update({ approval_status: 'Approved', status: 'Open', approved_by: req.user.id }).eq('id', req.params.id).select().single()
+  const { data: q } = await supabase.from('quotations').select('*, quotation_items(*)').eq('id', req.params.id).single()
+  if (!q) return res.status(404).json({ error: 'Not found' })
+  const fin = computeFinancials(q.quotation_items || [], q.discount_pct, q.discount_fixed)
+  const overrideReason = (req.body?.override_reason || '').trim()
+  if (Number(fin.gp_percent) < RULES.MIN_GP && !overrideReason) {
+    return res.status(422).json({ error: `GP ${fin.gp_percent}% is below ${RULES.MIN_GP}% — override reason required to approve`, requiresOverrideReason: true })
+  }
+  const { data, error } = await supabase.from('quotations').update({
+    approval_status: 'Approved', status: 'Open', approved_by: req.user.id,
+    override_reason: overrideReason || q.override_reason || null,
+  }).eq('id', req.params.id).select().single()
   if (error) throw error
-  await logAudit(req.user, 'quotation', req.params.id, 'approved', { by: req.user.name })
+  await logAudit(req.user, 'quotation', req.params.id, 'approved', { by: req.user.name, override_reason: overrideReason || null })
   res.json(redactFinancials(req.user.role, data))
 }))
 

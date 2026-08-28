@@ -95,6 +95,7 @@ export default function Quotations() {
   const navigate = useNavigate()
   const { quotations, items, customers, settings, opportunities, loadAll, approveQuotation, rejectQuotation, sendQuotation, lostQuotation } = d
   const { user } = useAuth()
+  const isMgmt = ['Management', 'System Admin'].includes(user?.role)
   const showFin = FINANCIAL_ROLES.includes(user?.role)
   const canEdit = EDITORS.includes(user?.role)
   const canEditRow = (q) => canEditQuote(q, user)
@@ -150,7 +151,7 @@ export default function Quotations() {
   const emptyHeader = {
     opportunity_id: '', customer: '', contact_person: '', project_name: '', project_id: '', project_location: '',
     customer_email: '', validity_days: 30, payment_terms: '100% Advanced Payment', currency: 'SAR',
-    terms_text: '', notes: '', discount_pct: 0, discount_fixed: 0,
+    terms_text: '', notes: '', discount_pct: 0, discount_fixed: 0, override_reason: '',
     delivery_time: '5-7 Days After Approval',
     warranty_terms: 'Two-years warranty: 1st year covers labor & parts, 2nd year covers labor only (excludes parts). Misuse not covered',
     sales_consultant: '', sales_consultant_phone: '', sales_consultant_email: '', area: '', language: 'en',
@@ -203,6 +204,7 @@ export default function Quotations() {
         description: l.description, specifications: l.specifications, image_url: l.image_url, datasheet_url: l.datasheet_url,
         pos: l.pos || l.area || '',
         qty: n0(l.qty), rate: n0(l.rate), cost: l.cost, discount_pct: n0(l.discount_pct),
+        add_margin_pct: n0(l.add_margin_pct), base_rate: n0(l.rate),
       }))
       setBuilder({
         editingId: full.id, opportunity_id: full.opportunity_id || '',
@@ -211,6 +213,7 @@ export default function Quotations() {
         customer_email: full.customer_email || '',
         validity_days: full.validity_days || 30, payment_terms: full.payment_terms || '', currency: full.currency || 'SAR',
         terms_text: full.terms_text || '', notes: full.notes || '', discount_pct: n0(full.discount_pct), discount_fixed: n0(full.discount_fixed),
+        override_reason: full.override_reason || '',
         delivery_time: full.delivery_time || emptyHeader.delivery_time,
         warranty_terms: full.warranty_terms || emptyHeader.warranty_terms,
         sales_consultant: full.sales_consultant || '', sales_consultant_phone: full.sales_consultant_phone || '',
@@ -231,7 +234,7 @@ export default function Quotations() {
           item_id: it.id, item_code: it.item_code || it.code, item_name: it.item_name || it.name, brand: it.brand, model: it.model,
           uom: it.uom || it.stock_uom || 'Nos', description: it.description, specifications: it.specifications,
           image_url: it.image_url, datasheet_url: it.datasheet_url, pos: '',
-          qty: 1, rate: price.rate, cost: price.cost, discount_pct: 0,
+          qty: 1, rate: price.rate, base_rate: price.rate, cost: price.cost, discount_pct: 0, add_margin_pct: 0,
           valuation_rate: it.valuation_rate != null ? n0(it.valuation_rate) : undefined,
           needs_rate: price.needs_rate, stale_price: price.stale, pricing_basis: price.pricing_basis,
         }],
@@ -271,6 +274,7 @@ export default function Quotations() {
       validity_days: Number(builder.validity_days) || 30, payment_terms: builder.payment_terms || null,
       currency: builder.currency || 'SAR', terms_text: builder.terms_text || null, notes: builder.notes || null,
       discount_pct: n0(builder.discount_pct), discount_fixed: n0(builder.discount_fixed),
+      override_reason: builder.override_reason?.trim() || null,
       delivery_time: builder.delivery_time || null, warranty_terms: builder.warranty_terms || null,
       sales_consultant: builder.sales_consultant || null, sales_consultant_phone: builder.sales_consultant_phone || null,
       sales_consultant_email: builder.sales_consultant_email || null, area: builder.area || null, language: builder.language || 'en',
@@ -279,6 +283,7 @@ export default function Quotations() {
         description: l.description, specifications: l.specifications, image_url: l.image_url, datasheet_url: l.datasheet_url,
         pos: l.pos || null,
         qty: n0(l.qty), rate: n0(l.rate), discount_pct: n0(l.discount_pct), sort_order: i,
+        ...(l.add_margin_pct != null && n0(l.add_margin_pct) > 0 ? { add_margin_pct: n0(l.add_margin_pct) } : {}),
       })),
     }
     try {
@@ -398,7 +403,7 @@ export default function Quotations() {
           builder={builder} setH={setH} items={items} customers={customers} projects={projectOpts} opportunities={opportunities}
           currencies={settings?.currencies || []} addLine={addLine} setLine={setLine} removeLine={removeLine}
           totals={{ net: bNet, discAmt: bDiscAmt, vat: bVat, total: bTotal, gp: bGp, cost: bCost, vatRate }}
-          showFin={showFin} canEditRate={showFin} onClose={() => setBuilder(null)} onSave={saveBuilder} onRevise={revise}
+          showFin={showFin} canEditRate={showFin} canLineMargin={isMgmt} onClose={() => setBuilder(null)} onSave={saveBuilder} onRevise={revise}
           saving={saving} error={error} canRefreshPrices={showFin || SENDERS.includes(user?.role)}
         />
       )}
@@ -410,7 +415,7 @@ export default function Quotations() {
 }
 
 // ── The quotation BUILDER ────────────────────────────────────────────────────
-function Builder({ builder, setH, items, customers, projects, opportunities, currencies, addLine, setLine, removeLine, totals, showFin, canEditRate, onClose, onSave, onRevise, saving, error, canRefreshPrices }) {
+function Builder({ builder, setH, items, customers, projects, opportunities, currencies, addLine, setLine, removeLine, totals, showFin, canEditRate, canLineMargin, onClose, onSave, onRevise, saving, error, canRefreshPrices }) {
   const d = useData()
   const nav = useNavigate()
   const [q, setQ] = useState('')
@@ -732,6 +737,7 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
                 <th className="px-2 py-1.5 text-left">Equipment</th>
                 <th className="px-2 py-1.5 text-right">Qty</th>
                 <th className="px-2 py-1.5 text-right">Rate</th>
+                {canLineMargin && <th className="px-2 py-1.5 text-right">+Margin %</th>}
                 <th className="px-2 py-1.5 text-right">Disc %</th>
                 <th className="px-2 py-1.5 text-right">Amount</th>
                 <th className="px-2 py-1.5"></th>
@@ -777,13 +783,24 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
                         <span className="text-sm font-semibold text-slate-600" title="Fixed from pricing chain">{fmtDec(l.rate)}</span>
                       )}
                     </td>
+                    {canLineMargin && (
+                      <td className="px-2 py-2 text-right">
+                        <input type="number" min="0" step="0.1" value={l.add_margin_pct ?? 0}
+                          onChange={(e) => {
+                            const pct = n0(e.target.value)
+                            const base = n0(l.base_rate ?? l.rate)
+                            setLine(i, { add_margin_pct: e.target.value, rate: Math.round(base * (1 + pct / 100) * 100) / 100 })
+                          }}
+                          className="w-16 rounded-lg border border-slate-200 px-2 py-1 text-right text-sm" title="Management-only additional margin (folded into rate)" />
+                      </td>
+                    )}
                     <td className="px-2 py-2 text-right"><input type="number" min="0" max="100" value={l.discount_pct} onChange={(e) => setLine(i, { discount_pct: e.target.value })} className="w-16 rounded-lg border border-slate-200 px-2 py-1 text-right text-sm" /></td>
                     <td className="px-2 py-2 text-right font-semibold text-ink">{sar(amt)}</td>
                     <td className="px-2 py-2 text-right"><button onClick={() => removeLine(i)} className="rounded-lg p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={15} /></button></td>
                   </tr>
                 )
               })}
-              {builder.lines.length === 0 && <tr><td colSpan={6} className="px-2 py-6 text-center text-xs text-slate-400">Search above and click an item to add it as a quotation line.</td></tr>}
+              {builder.lines.length === 0 && <tr><td colSpan={canLineMargin ? 7 : 6} className="px-2 py-6 text-center text-xs text-slate-400">Search above and click an item to add it as a quotation line.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -824,6 +841,10 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
                 <input type="number" min="0" value={builder.discount_fixed} onChange={(e) => setH({ discount_fixed: e.target.value })} className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm" />
               </label>
             </Row>
+            {canLineMargin && (
+              <TextArea label="Strategic override reason" rows={2} value={builder.override_reason || ''} onChange={(e) => setH({ override_reason: e.target.value })}
+                placeholder="Required when discount > 25% or GP below 35%" />
+            )}
             {totals.discAmt > 0 && <div className="flex justify-between text-rose-600"><span>Discount</span><span>− {sar(totals.discAmt)}</span></div>}
             <div className="flex justify-between text-slate-600"><span>VAT ({(totals.vatRate * 100).toFixed(0)}%)</span><span>{sar(totals.vat)}</span></div>
             <div className="flex justify-between rounded-lg bg-brand-50 px-3 py-2 text-base font-extrabold text-brand-700"><span>Total</span><span>{sar(totals.total)}</span></div>
@@ -834,7 +855,7 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
               </div>
             )}
           </div>
-          <p className="mt-3 text-[11px] text-slate-400">A discount above the item’s cap will be rejected on save. Final figures are recomputed on the server.</p>
+          <p className="mt-3 text-[11px] text-slate-400">Role limits: Sales User 15% · Sales Manager 20% · above your limit needs approval · max 25% (Management may override with reason).</p>
         </div>
         </div>
       </div>

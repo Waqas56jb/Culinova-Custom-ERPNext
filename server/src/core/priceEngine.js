@@ -3,7 +3,8 @@
  *
  *   Expected Landed Cost = valuation_rate × exchange_factor
  *   Base Selling         = Expected Landed Cost × price_factor
- *   Selling              = Base × (1 + add_margin_pct/100) × (1 − special_offer_pct/100)
+ *   Selling              = Base × (1 + brand_margin/100) × (1 + lineMarginPct/100) × (1 − offer/100)
+ *   lineMarginPct (quotation line only) defaults to 0 — core chain unchanged when 0.
  *   GP%                  = (Selling − Expected Landed Cost) / Selling
  *
  * Factor resolution: item override (non-blank) → brand → 1.
@@ -37,7 +38,8 @@ export function resolveFactors(item = {}, brand = null) {
  * Price one item from valuation rate + brand factors.
  * @returns pricing result with VR-chain field names + legacy aliases (estimated_cost, selling_price, gp_percent)
  */
-export function priceItem(item, brand = null) {
+export function priceItem(item, brand = null, opts = {}) {
+  const lineMarginPct = num(opts.lineMarginPct, 0) ?? 0
   const f = resolveFactors(item, brand)
 
   let basisValue = num(item?.valuation_rate, 0) ?? 0
@@ -67,7 +69,7 @@ export function priceItem(item, brand = null) {
 
   const expected_landed = basisValue * f.exchange_factor
   const base_selling = expected_landed * f.price_factor
-  const selling = base_selling * (1 + f.add_margin_pct / 100) * (1 - f.special_offer_pct / 100)
+  const selling = base_selling * (1 + f.add_margin_pct / 100) * (1 + lineMarginPct / 100) * (1 - f.special_offer_pct / 100)
   const gp_pct = selling > 0 ? ((selling - expected_landed) / selling) * 100 : 0
 
   return {

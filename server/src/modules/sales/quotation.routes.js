@@ -51,15 +51,25 @@ async function allocateBuilt(built = []) {
 //   1. the ITEM cap  (discount_rules + the item's own max_discount column)
 //   2. the ROLE gate (per-role direct limit → approval; above RULES.MAX_DISCOUNT → blocked outright)
 // Returns { blocked, reason, needsApproval, status, approval_status }.
-function approvalFor({ net, discount_pct, discount_fixed, role }) {
+function approvalFor({ net, discount_pct, discount_fixed, cost, role, overrideReason }) {
   const discount_amount = (n0(net) * n0(discount_pct)) / 100 + n0(discount_fixed)
-  const decision = evaluateApproval({ net_amount: n0(net), discount_amount }, role)
+  const netAfter = n0(net) - discount_amount
+  const gp = netAfter > 0 ? round(((netAfter - n0(cost)) / netAfter) * 100) : 0
+  const decision = evaluateApproval({ net_amount: n0(net), discount_amount, gp_percent: gp }, role, { overrideReason })
   if (decision.blocked) return decision
   return {
     ...decision,
     status: decision.needsApproval ? 'Pending Approval' : 'Draft',
     approval_status: decision.needsApproval ? 'Pending' : 'Not Required',
   }
+}
+
+async function logDiscountAudit(user, quotationId, detail) {
+  await logAudit(user, 'quotation', quotationId, 'discount-changed', {
+    actor: user.name,
+    role: user.role,
+    ...detail,
+  }).catch(() => {})
 }
 
 // ── coercion helpers (blank string must NEVER reach a numeric/uuid/date column → 22P02) ──
@@ -80,9 +90,9 @@ async function vatRatePct() {
 }
 
 // Live VR + brand-factor pricing for quotation lines (never stale stored selling_price).
-async function priceOf(item) {
+async function priceOf(item, lineMarginPct = 0) {
   const brand = item?.brand ? await getBrand(item.brand) : null
-  const p = enginePrice(item, brand)
+  const p = enginePrice(item, brand, { lineMarginPct: n0(lineMarginPct) })
   if (!p.priced) {
     return { selling: 0, landed: 0, basis: p.basis || 'none', basis_value: p.basis_value ?? 0, priced: false }
   }
@@ -104,10 +114,11 @@ async function buildLine(input = {}, idx = 0, { lockRate = false } = {}) {
     const { data } = await supabase.from('items').select('*').eq('id', itemId).maybeSingle()
     itemRow = data || null
   }
-  const priced = itemRow ? await priceOf(itemRow) : { selling: 0, landed: 0, basis: 'none', priced: false }
+  const priced = itemRow ? await priceOf(itemRow, n0(input.add_margin_pct)) : { selling: 0, landed: 0, basis: 'none', priced: false }
   const qtyRaw = num(input.qty)
   const qty = qtyRaw == null ? 1 : qtyRaw
   const rateOverride = num(input.rate)
+  const lineMargin = Math.max(0, n0(input.add_margin_pct))
   const rate = lockRate ? n0(priced.selling) : (rateOverride != null ? rateOverride : n0(priced.selling))
   const cost = itemRow ? n0(priced.landed) : n0(input.cost)
   const disc = Math.max(0, Math.min(100, n0(input.discount_pct)))
@@ -128,6 +139,7 @@ async function buildLine(input = {}, idx = 0, { lockRate = false } = {}) {
     datasheet_url: pref('datasheet_url', itemRow?.datasheet_url ?? null),
     pos: clean(input.pos) || clean(input.area) || null,
     qty, rate, cost, discount_pct: disc,
+    add_margin_pct: lineMargin,
     estimated_cost: itemRow && priced.priced ? n0(priced.landed) : null,
     pricing_basis: itemRow ? (priced.basis || null) : null,
     amount: round(qty * rate * (1 - disc / 100)),
@@ -258,17 +270,17 @@ export function quotationRouter() {
     // GATE 1 — the item cap: the header discount must not exceed the items' max_discount cap
     const cap = await discountCapFor(built.map((l) => l.item_id))
     const net = round(built.reduce((s, l) => s + lineAmount(l), 0))
+    const lineCost = round(built.reduce((s, l) => s + n0(l.qty) * n0(l.cost), 0))
     const eff = effectivePct(net, p.discount_pct, p.discount_fixed)
     if (cap != null && eff > cap + 0.001) {
       return res.status(422).json({ error: `Discount ${eff}% exceeds the maximum ${cap}% allowed for the items on this quotation` })
     }
-    // GATE 2 — the role gate: over the role's own limit → Management approval; over the absolute
-    // ceiling → refused. Without this the builder would let a salesperson issue any discount they liked.
-    if (n0(p.discount_pct) > RULES.MAX_DISCOUNT) {
-      return res.status(422).json({ error: `Discount ${p.discount_pct}% exceeds max ${RULES.MAX_DISCOUNT}%` })
-    }
-    const decision = approvalFor({ net, discount_pct: p.discount_pct, discount_fixed: p.discount_fixed, role: req.user.role })
-    if (decision.blocked) return res.status(422).json({ error: decision.reason })
+    const overrideReason = clean(p.override_reason)
+    const decision = approvalFor({
+      net, discount_pct: p.discount_pct, discount_fixed: p.discount_fixed,
+      cost: lineCost, role: req.user.role, overrideReason,
+    })
+    if (decision.blocked) return res.status(422).json({ error: decision.reason, requiresOverrideReason: !!decision.requiresOverrideReason })
 
     const validity = num(p.validity_days) ?? 30
     const { data: consultant } = await supabase.from('users').select('name, email, phone').eq('id', req.user.id).maybeSingle()
@@ -296,6 +308,7 @@ export function quotationRouter() {
       discount_pct: Math.max(0, n0(p.discount_pct)),
       discount_fixed: Math.max(0, n0(p.discount_fixed)),
       discount_source: discountSource(req.user.role),
+      override_reason: overrideReason || null,
       notes: clean(p.notes),
       status: decision.status,                 // 'Pending Approval' when over the role's limit
       approval_status: decision.approval_status,
@@ -380,7 +393,7 @@ export function quotationRouter() {
       if (!line.item_id) continue
       const { data: itemRow } = await supabase.from('items').select('*').eq('id', line.item_id).maybeSingle()
       if (!itemRow) continue
-      const priced = await priceOf(itemRow)
+      const priced = await priceOf(itemRow, n0(line.add_margin_pct))
       const newRate = priced.priced ? n0(priced.selling) : 0
       const newCost = priced.priced ? n0(priced.landed) : null
       const entry = {
@@ -469,6 +482,7 @@ export function quotationRouter() {
     if (p.valid_till !== undefined) patch.valid_till = clean(p.valid_till)
     if (p.discount_pct !== undefined) patch.discount_pct = Math.max(0, n0(p.discount_pct))
     if (p.discount_fixed !== undefined) patch.discount_fixed = Math.max(0, n0(p.discount_fixed))
+    if (p.override_reason !== undefined) patch.override_reason = clean(p.override_reason)
 
     // optional full replacement of the lines (re-snapshotting; keeps any snapshot the client sends)
     let replaced = false
@@ -486,13 +500,16 @@ export function quotationRouter() {
       // cap check against the resulting lines + resulting discount
       const cap = await discountCapFor(built.map((l) => l.item_id))
       const net = round(built.reduce((s, l) => s + lineAmount(l), 0))
+      const lineCost = round(built.reduce((s, l) => s + n0(l.qty) * n0(l.cost), 0))
       const dPct = patch.discount_pct != null ? patch.discount_pct : existing.discount_pct
       const dFixed = patch.discount_fixed != null ? patch.discount_fixed : existing.discount_fixed
       const eff = effectivePct(net, dPct, dFixed)
       if (cap != null && eff > cap + 0.001) return res.status(422).json({ error: `Discount ${eff}% exceeds the maximum ${cap}% allowed for the items on this quotation` })
-      // role gate on the resulting discount
-      const d = approvalFor({ net, discount_pct: dPct, discount_fixed: dFixed, role: req.user.role })
-      if (d.blocked) return res.status(422).json({ error: d.reason })
+      const d = approvalFor({
+        net, discount_pct: dPct, discount_fixed: dFixed, cost: lineCost,
+        role: req.user.role, overrideReason: patch.override_reason ?? existing.override_reason,
+      })
+      if (d.blocked) return res.status(422).json({ error: d.reason, requiresOverrideReason: !!d.requiresOverrideReason })
       patch.status = d.status; patch.approval_status = d.approval_status; needsApproval = d.needsApproval
 
       await supabase.from('quotation_items').delete().eq('quotation_id', existing.id)
@@ -508,13 +525,27 @@ export function quotationRouter() {
       const ids = (existing.quotation_items || []).map((l) => l.item_id)
       const cap = await discountCapFor(ids)
       const net = round((existing.quotation_items || []).reduce((s, l) => s + lineAmount(l), 0))
+      const lineCost = round((existing.quotation_items || []).reduce((s, l) => s + n0(l.qty) * n0(l.cost), 0))
       const dPct = patch.discount_pct != null ? patch.discount_pct : existing.discount_pct
       const dFixed = patch.discount_fixed != null ? patch.discount_fixed : existing.discount_fixed
       const eff = effectivePct(net, dPct, dFixed)
       if (cap != null && eff > cap + 0.001) return res.status(422).json({ error: `Discount ${eff}% exceeds the maximum ${cap}% allowed for the items on this quotation` })
-      const d = approvalFor({ net, discount_pct: dPct, discount_fixed: dFixed, role: req.user.role })
-      if (d.blocked) return res.status(422).json({ error: d.reason })
+      const d = approvalFor({
+        net, discount_pct: dPct, discount_fixed: dFixed, cost: lineCost,
+        role: req.user.role, overrideReason: patch.override_reason ?? existing.override_reason,
+      })
+      if (d.blocked) return res.status(422).json({ error: d.reason, requiresOverrideReason: !!d.requiresOverrideReason })
       patch.status = d.status; patch.approval_status = d.approval_status; needsApproval = d.needsApproval
+      if (p.discount_pct !== undefined || p.discount_fixed !== undefined) {
+        await logDiscountAudit(req.user, existing.id, {
+          scope: 'header',
+          old_pct: existing.discount_pct,
+          new_pct: dPct,
+          old_fixed: existing.discount_fixed,
+          new_fixed: dFixed,
+          effective_pct: eff,
+        })
+      }
     }
 
     if (Object.keys(patch).length) {
@@ -560,7 +591,34 @@ export function quotationRouter() {
     const patch = {}
     if (p.qty !== undefined) { const v = num(p.qty); patch.qty = v == null ? line.qty : v }
     if (p.rate !== undefined && isManagement(req.user.role)) { const v = num(p.rate); patch.rate = v == null ? line.rate : v }
-    if (p.discount_pct !== undefined) patch.discount_pct = Math.max(0, Math.min(100, n0(p.discount_pct)))
+    if (p.discount_pct !== undefined) {
+      patch.discount_pct = Math.max(0, Math.min(100, n0(p.discount_pct)))
+      if (n0(line.discount_pct) !== patch.discount_pct) {
+        await logDiscountAudit(req.user, q.id, {
+          scope: 'line', line_id: line.id, item_name: line.item_name,
+          old: line.discount_pct, new: patch.discount_pct,
+        })
+      }
+    }
+    if (p.add_margin_pct !== undefined) {
+      if (!isManagement(req.user.role)) {
+        return res.status(403).json({ error: 'Only Management may set line-level additional margin' })
+      }
+      const marginPct = Math.max(0, n0(p.add_margin_pct))
+      patch.add_margin_pct = marginPct
+      if (line.item_id) {
+        const { data: itemRow } = await supabase.from('items').select('*').eq('id', line.item_id).maybeSingle()
+        if (itemRow) {
+          const priced = await priceOf(itemRow, marginPct)
+          if (priced.priced) {
+            patch.rate = n0(priced.selling)
+            patch.cost = n0(priced.landed)
+            patch.estimated_cost = n0(priced.landed)
+            patch.pricing_basis = priced.basis || null
+          }
+        }
+      }
+    }
     for (const f of ['item_name', 'item_code', 'pos', 'brand', 'model', 'uom', 'description', 'specifications', 'image_url', 'datasheet_url']) {
       if (p[f] !== undefined) patch[f] = clean(p[f])
     }
@@ -612,16 +670,26 @@ export function quotationRouter() {
     }
     // the role gate applies here too — a salesperson must not be able to raise the discount past their
     // own limit by applying it after the quotation was created
-    const decision = approvalFor({ net, discount_pct: dPct, discount_fixed: dFixed, role: req.user.role })
-    if (decision.blocked) return res.status(422).json({ error: decision.reason })
+    const decision = approvalFor({
+      net, discount_pct: dPct, discount_fixed: dFixed,
+      cost: round((q.quotation_items || []).reduce((s, l) => s + n0(l.qty) * n0(l.cost), 0)),
+      role: req.user.role,
+      overrideReason: clean(p.override_reason) ?? q.override_reason,
+    })
+    if (decision.blocked) return res.status(422).json({ error: decision.reason, requiresOverrideReason: !!decision.requiresOverrideReason })
 
     const { error } = await supabase.from('quotations').update({
       discount_pct: dPct, discount_fixed: dFixed, discount_source: discountSource(req.user.role),
+      override_reason: clean(p.override_reason) ?? q.override_reason ?? null,
       status: decision.status, approval_status: decision.approval_status,
     }).eq('id', q.id)
     if (error) return res.status(422).json({ error: error.message })
     const full = await recomputeTotals(q.id)
     if (decision.needsApproval) { try { await notifyManagementApproval(full, req.user.name) } catch { /* best-effort */ } }
+    await logDiscountAudit(req.user, q.id, {
+      scope: 'header', old_pct: q.discount_pct, new_pct: dPct,
+      old_fixed: q.discount_fixed, new_fixed: dFixed, effective_pct: eff,
+    })
     await logAudit(req.user, 'quotation', q.id, 'discount-applied', { effective_pct: eff, cap, needs_approval: !!decision.needsApproval })
     res.json({ ...redactFinancials(req.user.role, full), _approval: { needsApproval: !!decision.needsApproval } })
   }))
