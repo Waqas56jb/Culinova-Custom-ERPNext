@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, useLocation, useNavigate } from 'react-router-dom'
 import {
   Percent, Coins, Layers, Calculator, RefreshCw, Search, TrendingUp,
   AlertTriangle, Loader2, Plus, DollarSign, History,
@@ -36,18 +36,33 @@ export default function PricingEngine() {
   const d = useData()
   const { canSee } = useAuth()
   const canEdit = canSee('warehouse') || canSee('admin')
-  const [searchParams, setSearchParams] = useSearchParams()
+  const location = useLocation()
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const tabParam = searchParams.get('tab')
-  const [tab, setTab] = useState(() => (TABS.some((t) => t.key === tabParam) ? tabParam : 'items'))
+  const onBrandRoute = location.pathname === '/stock/brand-master'
+
+  const tabFromRoute = () => {
+    if (onBrandRoute) return 'brands'
+    if (tabParam && TABS.some((t) => t.key === tabParam)) return tabParam
+    return 'items'
+  }
+
+  const [tab, setTab] = useState(tabFromRoute)
 
   useEffect(() => {
-    if (tabParam && TABS.some((t) => t.key === tabParam)) setTab(tabParam)
-    else if (!tabParam) setTab('items')
-  }, [tabParam])
+    if (location.pathname === '/stock/pricing' && tabParam === 'brands') {
+      navigate('/stock/brand-master', { replace: true })
+      return
+    }
+    setTab(tabFromRoute())
+  }, [location.pathname, tabParam, onBrandRoute, navigate])
 
   const selectTab = (key) => {
     setTab(key)
-    setSearchParams(key === 'items' ? {} : { tab: key }, { replace: true })
+    if (key === 'brands') navigate('/stock/brand-master', { replace: true })
+    else if (key === 'items') navigate('/stock/pricing', { replace: true })
+    else navigate(`/stock/pricing?tab=${key}`, { replace: true })
   }
 
   if (!canEdit) {

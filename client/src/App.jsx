@@ -113,6 +113,7 @@ export default function App() {
           <Route path="/stock/warehouses" element={<Warehouses />} />
           <Route path="/stock/operations" element={<WarehouseOps />} />
           <Route path="/stock/pricing" element={<PricingEngine />} />
+          <Route path="/stock/brand-master" element={<PricingEngine />} />
 
           {/* Finance & Accounting */}
           <Route path="/finance/dashboard" element={<FinanceDashboard />} />

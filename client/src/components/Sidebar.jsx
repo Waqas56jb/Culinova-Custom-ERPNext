@@ -44,7 +44,7 @@ const sections = [
     { to: '/stock/warehouses', label: 'Warehouses', icon: Building2 },
     { to: '/stock/operations', label: 'Operations', icon: ArrowLeftRight },
     { to: '/stock/pricing', label: 'Pricing Engine', icon: Tags },
-    { to: '/stock/pricing?tab=brands', label: 'Brand Master', icon: TrendingUp },
+    { to: '/stock/brand-master', label: 'Brand Master', icon: TrendingUp },
   ] },
   { title: 'Finance & Accounting', panel: 'finance', items: [
     { to: '/finance/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -77,22 +77,9 @@ const sections = [
   ] },
 ]
 
-/** NavLink isActive — Pricing Engine vs Brand Master share /stock/pricing; only one may highlight. */
+/** Sidebar active state — one pathname, one highlight. */
 function isNavActive(to, location) {
-  const [path, qs] = to.split('?')
-  if (location.pathname !== path) return false
-  if (path === '/stock/pricing') {
-    const tab = new URLSearchParams(location.search).get('tab')
-    if (qs) return tab === 'brands'
-    return tab !== 'brands'
-  }
-  if (!qs) return true
-  const want = new URLSearchParams(qs)
-  const have = new URLSearchParams(location.search)
-  for (const [k, v] of want.entries()) {
-    if (have.get(k) !== v) return false
-  }
-  return true
+  return location.pathname === to.split('?')[0]
 }
 
 export default function Sidebar({ open, onClose }) {
