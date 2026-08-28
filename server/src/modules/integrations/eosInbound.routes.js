@@ -2,10 +2,35 @@ import { Router } from 'express'
 import { supabase } from '../../config/supabase.js'
 import { env } from '../../config/env.js'
 import { asyncWrap } from '../../middleware/error.js'
+import { authRequired } from '../../middleware/auth.js'
+import { isManagement, canAccessPanel } from '../../rbac/permissions.js'
 import { STATUSES } from '../../core/engineeringSync.js'
 import { logAudit } from '../../core/audit.js'
 
 const r = Router()
+
+function adminOrManagement(req, res, next) {
+  if (isManagement(req.user.role) || canAccessPanel(req.user.role, 'admin')) return next()
+  return res.status(403).json({ error: 'Management or admin access required' })
+}
+
+/** Diagnostic — never exposes the key value. */
+r.get('/status', authRequired, adminOrManagement, asyncWrap(async (_req, res) => {
+  const eosUrl = env.eosApiUrl
+  let can_reach_eos = false
+  try {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 3000)
+    const health = await fetch(`${eosUrl}/api/health`, { signal: ctrl.signal })
+    clearTimeout(timer)
+    can_reach_eos = health.ok
+  } catch { /* unreachable */ }
+  res.json({
+    eos_api_url: eosUrl || 'default',
+    integration_key_set: Boolean(env.erpEosIntegrationKey),
+    can_reach_eos,
+  })
+}))
 
 function requireIntegrationKey(req, res, next) {
   const key = req.headers['x-erp-integration-key'] || req.headers['x-eos-integration-key']
