@@ -450,7 +450,7 @@ function BrandMasterTab() {
   const [q, setQ] = useState('')
   const [edits, setEdits] = useState({})   // id → { field: value }
   const [savingId, setSavingId] = useState(null)
-  const [msg, setMsg] = useState('')
+  const [flash, setFlash] = useState(null) // { type: 'success' | 'error', text: string }
   const [showAdd, setShowAdd] = useState(false)
   const [adding, setAdding] = useState(false)
   const [newBrand, setNewBrand] = useState({
@@ -489,8 +489,12 @@ function BrandMasterTab() {
     return { cost, selling, gp: selling > 0 ? ((selling - cost) / selling) * 100 : 0 }
   }
 
+  const showSuccess = (text) => setFlash({ type: 'success', text })
+  const showError = (text) => setFlash({ type: 'error', text })
+  const clearFlash = () => setFlash(null)
+
   const save = async (b) => {
-    setSavingId(b.id); setMsg('')
+    setSavingId(b.id); clearFlash()
     try {
       await d.updateBrand(b.id, {
         exchange_factor: Number(val(b, 'exchange_factor', 1)) || 1,
@@ -500,16 +504,17 @@ function BrandMasterTab() {
         currency: val(b, 'currency', 'SAR'),
       })
       setEdits((s) => { const n = { ...s }; delete n[b.id]; return n })
-      setMsg(`Saved ${b.brand}`)
-    } catch (e) { setMsg(e.message || 'Save failed') } finally { setSavingId(null) }
+      showSuccess(`Pricing factors for "${b.brand}" saved successfully.`)
+    } catch (e) { showError(e.message || 'Could not save changes. Please try again.') } finally { setSavingId(null) }
   }
 
   const createBrand = async () => {
     if (!newBrand.brand.trim()) return
-    setAdding(true); setMsg('')
+    const name = newBrand.brand.trim()
+    setAdding(true); clearFlash()
     try {
       await d.addBrand({
-        brand: newBrand.brand.trim(),
+        brand: name,
         currency: newBrand.currency || 'SAR',
         exchange_factor: Number(newBrand.exchange_factor) || 1,
         price_factor: Number(newBrand.price_factor) || 1,
@@ -518,8 +523,8 @@ function BrandMasterTab() {
       })
       setNewBrand({ brand: '', currency: 'SAR', exchange_factor: 1, price_factor: 1, country_of_origin: '', country_of_purchase: '' })
       setShowAdd(false)
-      setMsg(`Added ${newBrand.brand.trim()}`)
-    } catch (e) { setMsg(e.message || 'Create failed') } finally { setAdding(false) }
+      showSuccess(`Brand "${name}" created successfully.`)
+    } catch (e) { showError(e.message || 'Could not create brand. Please try again.') } finally { setAdding(false) }
   }
 
   const openAudit = async (b) => {
@@ -531,7 +536,7 @@ function BrandMasterTab() {
       setAuditRows(Array.isArray(rows) ? rows : [])
     } catch (e) {
       setAuditRows([])
-      setMsg(e.message || 'Could not load history')
+      showError(e.message || 'Could not load change history.')
     } finally { setAuditLoading(false) }
   }
 
@@ -609,7 +614,15 @@ function BrandMasterTab() {
           </div>
         </div>
       )}
-      {msg && <div className="border-b border-slate-100 bg-emerald-50/60 px-4 py-2 text-xs font-semibold text-emerald-700">{msg}</div>}
+      {flash && (
+        <div className={`border-b px-4 py-2 text-xs font-semibold ${
+          flash.type === 'success'
+            ? 'border-emerald-100 bg-emerald-50/60 text-emerald-700'
+            : 'border-rose-100 bg-rose-50/60 text-rose-700'
+        }`}>
+          {flash.text}
+        </div>
+      )}
       <div className="overflow-x-auto">
         <table className="w-full min-w-[960px]">
           <thead>

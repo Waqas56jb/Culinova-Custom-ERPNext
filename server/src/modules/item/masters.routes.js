@@ -17,6 +17,22 @@ const BRAND_EDITABLE = [
 const FIN_AUDIT_FIELDS = new Set(['exchange_factor', 'price_factor', 'currency', 'add_margin_pct', 'special_offer_pct'])
 const str = (v) => (v == null ? '' : String(v))
 
+function masterDbError(error, label = 'Record') {
+  if (error?.code === '23505') {
+    if (label === 'Brand') return 'A brand with this name already exists.'
+    if (label === 'UOM') return 'A unit with this name already exists.'
+    if (label === 'Product family') return 'A product family with this name already exists.'
+    if (label === 'Item group') return 'An item group with this name already exists.'
+    return `${label} already exists.`
+  }
+  const m = String(error?.message || '')
+  if (/duplicate key/i.test(m)) {
+    if (/brands_brand/i.test(m)) return 'A brand with this name already exists.'
+    return `${label} already exists.`
+  }
+  return m || 'Something went wrong. Please try again.'
+}
+
 async function countItemsForBrand(brandName) {
   if (!brandName) return 0
   const { count, error } = await supabase
@@ -56,7 +72,7 @@ r.get('/item-groups', authRequired, asyncWrap(async (req, res) => {
 }))
 r.post('/item-groups', authRequired, authorize('warehouse', 'create'), asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('item_groups').insert({ item_group_name: req.body.item_group_name, parent_item_group: req.body.parent_item_group || null, is_group: !!req.body.is_group }).select().single()
-  if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: error.message })
+  if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: masterDbError(error, 'Item group') })
   res.status(201).json(data)
 }))
 r.patch('/item-groups/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async (req, res) => {
@@ -103,7 +119,7 @@ r.post('/brands', authRequired, authorize('warehouse', 'create'), asyncWrap(asyn
     factors_pending,
   }
   const { data, error } = await supabase.from('brands').insert(row).select().single()
-  if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: error.message })
+  if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: masterDbError(error, 'Brand') })
   await writeBrandAudit({
     brand_id: data.id, brand_name: data.brand, field: '__created',
     old_value: null, new_value: data.brand, user: req.user,
@@ -144,7 +160,7 @@ r.patch('/brands/:id', authRequired, authorize('warehouse', 'update'), asyncWrap
   if (factorsSet) patch.factors_pending = false
 
   const { data, error } = await supabase.from('brands').update(patch).eq('id', req.params.id).select().single()
-  if (error) throw error
+  if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: masterDbError(error, 'Brand') })
 
   for (const f of BRAND_EDITABLE) {
     if (!(f in patch)) continue
@@ -186,7 +202,7 @@ r.get('/uoms', authRequired, asyncWrap(async (req, res) => {
 }))
 r.post('/uoms', authRequired, authorize('warehouse', 'create'), asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('uoms').insert({ name: req.body.name, symbol: req.body.symbol || null, is_active: req.body.is_active ?? true }).select().single()
-  if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: error.message })
+  if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: masterDbError(error, 'UOM') })
   res.status(201).json(data)
 }))
 r.patch('/uoms/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async (req, res) => {
@@ -205,7 +221,7 @@ r.get('/product-families', authRequired, asyncWrap(async (req, res) => {
 r.post('/product-families', authRequired, authorize('warehouse', 'create'), asyncWrap(async (req, res) => {
   const b = req.body
   const { data, error } = await supabase.from('product_families').insert({ name: b.name, category: b.category || null, sub_category: b.sub_category || null, datasheet_url: b.datasheet_url || null, image_url: b.image_url || null, specs: b.specs || null }).select().single()
-  if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: error.message })
+  if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: masterDbError(error, 'Product family') })
   res.status(201).json(data)
 }))
 r.patch('/product-families/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async (req, res) => {
@@ -249,7 +265,7 @@ r.get('/item-attributes', authRequired, asyncWrap(async (req, res) => {
 }))
 r.post('/item-attributes', authRequired, authorize('warehouse', 'create'), eosOnlyItemCreation, asyncWrap(async (req, res) => {
   const { data: a, error } = await supabase.from('item_attributes').insert({ attribute_name: req.body.attribute_name, numeric_values: !!req.body.numeric_values, from_range: req.body.from_range, increment: req.body.increment, to_range: req.body.to_range }).select().single()
-  if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: error.message })
+  if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: masterDbError(error, 'Attribute') })
   const vals = (req.body.values || []).filter((v) => v && (v.attribute_value || v))
   if (vals.length) await supabase.from('item_attribute_values').insert(vals.map((v) => ({ attribute_id: a.id, attribute_value: v.attribute_value || v, abbr: v.abbr || null })))
   res.status(201).json(a)

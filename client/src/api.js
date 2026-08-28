@@ -2,6 +2,15 @@ import { erpApiBase } from '@deploy'
 
 const BASE = erpApiBase()
 
+function friendlyError(msg) {
+  if (!msg || typeof msg !== 'string') return 'Something went wrong. Please try again.'
+  if (/duplicate key value violates unique constraint/i.test(msg)) {
+    if (/brands_brand/i.test(msg)) return 'A brand with this name already exists.'
+    return 'This name already exists.'
+  }
+  return msg
+}
+
 export const getToken = () => localStorage.getItem('culinova_token')
 
 export async function api(path, { method = 'GET', body, auth = true } = {}) {
@@ -13,6 +22,6 @@ export async function api(path, { method = 'GET', body, auth = true } = {}) {
     window.location.reload()
   }
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`)
+  if (!res.ok) throw new Error(friendlyError(data.error) || `Request failed (${res.status})`)
   return data
 }
