@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import * as XLSX from 'xlsx'
 import { Search, Plus, Package, Layers, Tag, Sparkles, Settings2, Database, SlidersHorizontal, Trash2, RefreshCw, Loader2, Download, CheckCircle2, AlertTriangle, Link2, Inbox, Lock } from 'lucide-react'
 import { PageHeader, Badge, Menu, MenuItem } from '../components/ui.jsx'
@@ -57,6 +58,7 @@ function syncLine(r) {
 export default function ItemMaster() {
   const d = useData()
   const dRef = useRef(d); dRef.current = d   // stable handle — the store object changes every 12s
+  const [searchParams, setSearchParams] = useSearchParams()
   const { user } = useAuth()
   // Role gate: who may run the ERP-owned actions at all (sync, EOS import, pricing masters).
   const canEdit = ['Management', 'Stock Manager', 'Stock User'].includes(user?.role) || user?.access_level === 'Full Admin'
@@ -93,6 +95,21 @@ export default function ItemMaster() {
   }, [])
 
   useEffect(() => { loadEos() }, [loadEos])
+
+  // Global search / deep links open ?item=<uuid> — open the detail modal even when already on this page.
+  useEffect(() => {
+    const id = searchParams.get('item')
+    if (id) setView(id)
+  }, [searchParams])
+
+  const closeView = () => {
+    setView(null)
+    if (searchParams.get('item')) {
+      const next = new URLSearchParams(searchParams)
+      next.delete('item')
+      setSearchParams(next, { replace: true })
+    }
+  }
 
   // The SERVER policy decides, not this file. Unknown policy → assume the CEO's rule (the server enforces
   // it anyway, so showing a create/edit button would only produce a 403).
@@ -319,8 +336,8 @@ export default function ItemMaster() {
         canEditData={erpOwnsItems}
         canPrice={canEdit}
         eosOwned={eosOnly}
-        onClose={() => setView(null)}
-        onEdit={erpOwnsItems ? () => { setForm({ open: true, id: view }); setView(null) } : undefined}
+        onClose={closeView}
+        onEdit={erpOwnsItems ? () => { setForm({ open: true, id: view }); closeView() } : undefined}
       />
 
       {/* ItemForm / QuickItemForm are NOT deleted — they simply have no route into them while EOS owns

@@ -22,16 +22,18 @@ export default function Topbar({ onMenu }) {
   const [loading, setLoading] = useState(false)
   const [open, setOpen] = useState(false)
   const boxRef = useRef(null)
+  const dRef = useRef(d)
+  dRef.current = d
 
   // debounced global search
   useEffect(() => {
-    if (q.trim().length < 2) { setResults(null); return }
+    if (q.trim().length < 2) { setResults(null); setLoading(false); return }
     setLoading(true)
     const t = setTimeout(async () => {
-      try { const r = await d.globalSearch(q); setResults(r.results || []) } catch { setResults([]) } finally { setLoading(false) }
+      try { const r = await dRef.current.globalSearch(q); setResults(r.results || []) } catch { setResults([]) } finally { setLoading(false) }
     }, 250)
     return () => clearTimeout(t)
-  }, [q, d])
+  }, [q])
 
   // close on outside click
   useEffect(() => {
@@ -40,26 +42,50 @@ export default function Topbar({ onMenu }) {
     return () => document.removeEventListener('mousedown', onClick)
   }, [])
 
-  const go = (res) => { setOpen(false); setQ(''); setResults(null); navigate(res.route) }
+  const routeFor = (res) => {
+    if (!res?.route) return '/'
+    const id = res.id
+    if (!id) return res.route
+    switch (res.type) {
+      case 'Item': return `/stock/item-master?item=${encodeURIComponent(id)}`
+      case 'Quotation': return `/sales/quotations?open=${encodeURIComponent(id)}`
+      case 'Sales Order': return `/sales/orders?open=${encodeURIComponent(id)}`
+      case 'Lead': return `/sales/leads?open=${encodeURIComponent(id)}`
+      case 'Project': return `/projects/${id}`
+      default: return res.route
+    }
+  }
+
+  const go = (res) => {
+    setOpen(false)
+    setQ('')
+    setResults(null)
+    navigate(routeFor(res))
+  }
 
   return (
     <header className="sticky top-0 z-20 flex h-[68px] items-center gap-3 border-b border-slate-200/70 bg-white/80 px-4 backdrop-blur-md lg:px-7">
       <button onClick={onMenu} className="text-slate-500 lg:hidden"><Menu size={22} /></button>
 
-      <div ref={boxRef} className="relative hidden flex-1 max-w-md sm:block">
+      <div ref={boxRef} className="relative min-w-0 flex-1 max-w-md">
         {loading ? <Loader2 size={16} className="absolute left-3 top-1/2 -translate-y-1/2 animate-spin text-brand-400" />
           : <Search size={17} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />}
         <input value={q} onChange={(e) => { setQ(e.target.value); setOpen(true) }} onFocus={() => setOpen(true)}
-          placeholder="Search items, customers, quotations, projects…"
-          className="w-full rounded-xl border border-slate-200 bg-slate-50/70 py-2.5 pl-10 pr-4 text-sm outline-none transition focus:border-brand-400 focus:bg-white focus:ring-2 focus:ring-brand-500/15" />
+          onKeyDown={(e) => { if (e.key === 'Escape') { setOpen(false); e.currentTarget.blur() } }}
+          placeholder="Search items, customers, quotations…"
+          className="w-full rounded-xl border border-slate-200 bg-slate-50/70 py-2 pl-9 pr-3 text-sm outline-none transition focus:border-brand-400 focus:bg-white focus:ring-2 focus:ring-brand-500/15 sm:py-2.5 sm:pl-10 sm:pr-4" />
 
         {open && q.trim().length >= 2 && (
-          <div className="absolute left-0 right-0 top-full mt-2 max-h-[70vh] overflow-y-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg">
-            {loading && !results && <div className="px-3 py-4 text-center text-sm text-muted">Searching…</div>}
-            {results && results.length === 0 && <div className="px-3 py-4 text-center text-sm text-muted">No matches for “{q}”.</div>}
-            {results && results.map((res) => (
-              <button key={res.type + res.id} onMouseDown={() => go(res)}
-                className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition hover:bg-slate-100">
+          <div className="absolute left-0 right-0 top-full z-50 mt-2 max-h-[70vh] overflow-y-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg">
+            {loading && (
+              <div className="flex items-center justify-center gap-2 px-3 py-3 text-sm text-muted">
+                <Loader2 size={16} className="animate-spin text-brand-500" /> Searching…
+              </div>
+            )}
+            {!loading && results && results.length === 0 && <div className="px-3 py-4 text-center text-sm text-muted">No matches for “{q}”.</div>}
+            {!loading && results && results.map((res) => (
+              <button key={res.type + res.id} type="button" onClick={() => go(res)}
+                className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition hover:bg-slate-100 active:bg-slate-200">
                 <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold ${TYPE_TONE[res.type] || 'bg-slate-100 text-slate-600'}`}>{res.type}</span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-semibold text-ink">{res.label}</span>

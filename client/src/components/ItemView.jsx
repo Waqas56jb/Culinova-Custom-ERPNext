@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FileText, Package, Pencil, Database, Lock, SlidersHorizontal } from 'lucide-react'
+import { FileText, Package, Pencil, Database, Lock, SlidersHorizontal, Loader2 } from 'lucide-react'
 import { Modal } from './Modal.jsx'
 import { useData } from '../store/DataContext.jsx'
 import { sar } from '../data/mockData.js'
@@ -33,12 +33,13 @@ export default function ItemView({ open, itemId, onClose, onEdit, canEditData = 
   const [alts, setAlts] = useState([])
   const [big, setBig] = useState(null)
   const [err, setErr] = useState('')
+  const [loading, setLoading] = useState(false)
 
   // Every async call is awaited in try/catch and the failure is SURFACED — never a silent catch.
   useEffect(() => {
     if (!open || !itemId) return
     let live = true
-    setIt(null); setAvail(null); setAlts([]); setErr('')
+    setIt(null); setAvail(null); setAlts([]); setErr(''); setLoading(true)
     ;(async () => {
       try {
         const x = await d.getItem(itemId)
@@ -56,6 +57,8 @@ export default function ItemView({ open, itemId, onClose, onEdit, canEditData = 
         if (live) setAlts(Array.isArray(a) ? a : [])
       } catch (e) {
         if (live) setErr((p) => p || `Could not load alternatives — ${e?.message || 'unknown error'}`)
+      } finally {
+        if (live) setLoading(false)
       }
     })()
     return () => { live = false }
@@ -102,7 +105,12 @@ export default function ItemView({ open, itemId, onClose, onEdit, canEditData = 
         </div>
       )}
 
-      {!it && !err ? <p className="py-8 text-center text-sm text-slate-400">Loading…</p> : null}
+      {loading && !it && !err ? (
+        <div className="flex flex-col items-center justify-center gap-2 py-12 text-sm text-slate-400">
+          <Loader2 size={28} className="animate-spin text-brand-500" />
+          <span>Loading item…</span>
+        </div>
+      ) : null}
 
       {it && (
         <div className="space-y-4">
