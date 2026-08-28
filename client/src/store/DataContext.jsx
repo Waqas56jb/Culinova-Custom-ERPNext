@@ -281,6 +281,11 @@ export function DataProvider({ children }) {
     loadBrands().catch(() => {})
     return r
   }
+  const deleteBrand = async (id) => {
+    await api(`/masters/brands/${id}`, { method: 'DELETE' })
+    setBrands((prev) => (prev || []).filter((b) => b.id !== id))
+    loadBrands().catch(() => {})
+  }
   const addItemAttribute = async (body) => { const r = await api('/masters/item-attributes', { method: 'POST', body }); await loadItems(); return r }
   const addProductFamily = async (body) => { const r = await api('/masters/product-families', { method: 'POST', body }); await loadItems(); return r }
   const addPriceList = async (body) => { const r = await api('/masters/price-lists', { method: 'POST', body }); await loadItems(); return r }
@@ -598,7 +603,7 @@ export function DataProvider({ children }) {
     snags, commissioning, tickets, visits, contracts, employees, leaves, interactions, chatMessages, customerDir, team, payrollStatus,
     offline, retry: loadAll,
     items, itemGroups, brands, itemAttributes, productFamilies, priceLists,
-    getItem, createItem, updateItem, deleteItem, generateVariants, importItems, addItemPrice, deleteItemPrice, addItemGroup, addBrand, updateBrand, addItemAttribute, addProductFamily, addPriceList, getAlternatives,
+    getItem, createItem, updateItem, deleteItem, generateVariants, importItems, addItemPrice, deleteItemPrice, addItemGroup, addBrand, updateBrand, deleteBrand, addItemAttribute, addProductFamily, addPriceList, getAlternatives,
     eosCatalog, eosDetail, eosImport, eosSync,
     settings, loadSettings, settingsAdd, settingsUpdate, settingsDelete,
     globalSearch,

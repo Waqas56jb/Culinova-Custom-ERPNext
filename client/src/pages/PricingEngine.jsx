@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useSearchParams, useLocation, useNavigate } from 'react-router-dom'
 import {
   Percent, Coins, Layers, Calculator, RefreshCw, Search, TrendingUp,
-  AlertTriangle, Loader2, Plus, DollarSign, History,
+  AlertTriangle, Loader2, Plus, DollarSign, History, Trash2,
 } from 'lucide-react'
 import { PageHeader, KpiCard } from '../components/ui.jsx'
 import { Modal } from '../components/Modal.jsx'
@@ -462,6 +462,9 @@ function FxTab() {
  */
 function BrandMasterTab() {
   const d = useData()
+  const { user } = useAuth()
+  // Brand delete follows same gate as edit — Edit / Approval / Full Admin (not Create-only).
+  const canDelete = ['Edit', 'Approval', 'Full Admin'].includes(user?.access_level)
   const [q, setQ] = useState('')
   const [edits, setEdits] = useState({})   // id → { field: value }
   const [savingId, setSavingId] = useState(null)
@@ -475,6 +478,8 @@ function BrandMasterTab() {
   const [auditFor, setAuditFor] = useState(null)
   const [auditRows, setAuditRows] = useState([])
   const [auditLoading, setAuditLoading] = useState(false)
+  const [deleteFor, setDeleteFor] = useState(null)
+  const [deletingId, setDeletingId] = useState(null)
 
   const brands = useMemo(() => {
     const term = q.trim().toLowerCase()
@@ -553,6 +558,19 @@ function BrandMasterTab() {
       setAuditRows([])
       showError(e.message || 'Could not load change history.')
     } finally { setAuditLoading(false) }
+  }
+
+  const confirmDelete = async () => {
+    if (!deleteFor) return
+    setDeletingId(deleteFor.id)
+    clearFlash()
+    try {
+      await d.deleteBrand(deleteFor.id)
+      setDeleteFor(null)
+      showSuccess(`Brand "${deleteFor.brand}" deleted.`)
+    } catch (e) {
+      showError(e.message || 'Could not delete brand.')
+    } finally { setDeletingId(null) }
   }
 
   const numCell = (b, f, step = '0.01') => (
@@ -639,7 +657,7 @@ function BrandMasterTab() {
         </div>
       )}
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[960px]">
+        <table className="w-full min-w-[1000px]">
           <thead>
             <tr className="bg-slate-50/60">
               <th className="th">Brand</th><th className="th">Currency</th>
@@ -675,6 +693,12 @@ function BrandMasterTab() {
                         className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
                         <History size={13} className="inline" />
                       </button>
+                      {canDelete && (
+                        <button type="button" onClick={() => setDeleteFor(b)} title="Delete brand"
+                          className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50">
+                          <Trash2 size={13} className="inline" />
+                        </button>
+                      )}
                       <button onClick={() => save(b)} disabled={!dirty(b) || savingId === b.id}
                         className="rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400">
                         {savingId === b.id ? <Loader2 size={13} className="animate-spin" /> : 'Save'}
@@ -720,6 +744,24 @@ function BrandMasterTab() {
           </table>
         </div>
       )}
+    </Modal>
+
+    <Modal open={!!deleteFor} onClose={() => !deletingId && setDeleteFor(null)} size="sm"
+      title="Delete brand?"
+      subtitle={deleteFor ? `"${deleteFor.brand}" will be removed from Brand Master.` : ''}
+      footer={(
+        <>
+          <button type="button" className="btn-ghost" disabled={!!deletingId} onClick={() => setDeleteFor(null)}>Cancel</button>
+          <button type="button" disabled={!!deletingId} onClick={confirmDelete}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-2 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50">
+            {deletingId ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+            Delete
+          </button>
+        </>
+      )}>
+      <p className="text-sm text-muted">
+        Unused brands can be deleted. If any items still use this brand name, delete will be blocked with an error message.
+      </p>
     </Modal>
     </>
   )

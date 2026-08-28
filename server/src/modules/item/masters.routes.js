@@ -176,7 +176,7 @@ r.patch('/brands/:id', authRequired, authorize('warehouse', 'update'), asyncWrap
   res.json(data)
 }))
 
-r.delete('/brands/:id', authRequired, authorize('warehouse', 'delete'), asyncWrap(async (req, res) => {
+r.delete('/brands/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async (req, res) => {
   const { data: brand, error: fetchErr } = await supabase.from('brands').select('*').eq('id', req.params.id).maybeSingle()
   if (fetchErr) throw fetchErr
   if (!brand) return res.status(404).json({ error: 'Brand not found' })
