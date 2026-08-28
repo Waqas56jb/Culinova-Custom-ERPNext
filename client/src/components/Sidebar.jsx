@@ -1,4 +1,4 @@
-import { NavLink } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, Users2, Target, FileText, ClipboardList, Building2,
   FolderKanban, ShoppingCart, Boxes, Wallet, HardHat, Wrench,
@@ -96,6 +96,7 @@ function isNavActive(to, location) {
 }
 
 export default function Sidebar({ open, onClose }) {
+  const location = useLocation()
   const { chatMessages } = useData()
   const { canSee } = useAuth()
   const unread = chatMessages.filter((m) => m.sender === 'customer' && !m.read).length
@@ -122,32 +123,30 @@ export default function Sidebar({ open, onClose }) {
           {showCatalog && (
             <div>
               <p className="section-title mb-2">Catalog</p>
-              <NavLink to="/my-dashboard" onClick={onClose} className={({ isActive }) => `nav-link group ${isActive ? 'nav-link-active' : 'hover:bg-white/5 hover:text-white'}`}>
-                {({ isActive }) => (<><LayoutDashboard size={18} className={isActive ? 'text-brand-300' : 'text-slate-400 group-hover:text-brand-300'} /><span className="flex-1">My Dashboard</span></>)}
-              </NavLink>
-              <NavLink to="/stock/item-master" onClick={onClose} className={({ isActive }) => `nav-link group ${isActive ? 'nav-link-active' : 'hover:bg-white/5 hover:text-white'}`}>
-                {({ isActive }) => (<><Package size={18} className={isActive ? 'text-brand-300' : 'text-slate-400 group-hover:text-brand-300'} /><span className="flex-1">Item Master</span></>)}
-              </NavLink>
+              <Link to="/my-dashboard" onClick={onClose} className={`nav-link group ${isNavActive('/my-dashboard', location) ? 'nav-link-active' : 'hover:bg-white/5 hover:text-white'}`}>
+                <LayoutDashboard size={18} className={isNavActive('/my-dashboard', location) ? 'text-brand-300' : 'text-slate-400 group-hover:text-brand-300'} /><span className="flex-1">My Dashboard</span>
+              </Link>
+              <Link to="/stock/item-master" onClick={onClose} className={`nav-link group ${isNavActive('/stock/item-master', location) ? 'nav-link-active' : 'hover:bg-white/5 hover:text-white'}`}>
+                <Package size={18} className={isNavActive('/stock/item-master', location) ? 'text-brand-300' : 'text-slate-400 group-hover:text-brand-300'} /><span className="flex-1">Item Master</span>
+              </Link>
             </div>
           )}
           {visible.map((sec) => (
             <div key={sec.title}>
               <p className="section-title mb-2 mt-6 first:mt-0">{sec.title}</p>
-              {sec.items.map(({ to, label, icon: Icon }) => (
-                <NavLink key={to} to={to} onClick={onClose}
-                  isActive={({ location }) => isNavActive(to, location)}
-                  className={({ isActive }) => `nav-link group ${isActive ? 'nav-link-active' : 'hover:bg-white/5 hover:text-white'}`}>
-                  {({ isActive }) => (
-                    <>
-                      <Icon size={18} className={isActive ? 'text-brand-300' : 'text-slate-400 group-hover:text-brand-300'} />
+              {sec.items.map(({ to, label, icon: Icon }) => {
+                const active = isNavActive(to, location)
+                return (
+                <Link key={to} to={to} onClick={onClose}
+                  className={`nav-link group ${active ? 'nav-link-active' : 'hover:bg-white/5 hover:text-white'}`}>
+                      <Icon size={18} className={active ? 'text-brand-300' : 'text-slate-400 group-hover:text-brand-300'} />
                       <span className="flex-1">{label}</span>
                       {to === '/sales/chat' && unread > 0 && (
                         <span className="rounded-full bg-brand-500/20 px-2 py-0.5 text-[11px] font-bold text-brand-300">{unread}</span>
                       )}
-                    </>
-                  )}
-                </NavLink>
-              ))}
+                </Link>
+                )
+              })}
             </div>
           ))}
           {visible.length === 0 && <p className="px-3 text-xs text-slate-500">No panels assigned to this role.</p>}

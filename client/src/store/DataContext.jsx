@@ -190,6 +190,10 @@ export function DataProvider({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [panels, keep])
 
+  const loadBrands = useCallback(async () => {
+    await keep(() => api('/masters/brands'), (r) => setBrands(r || []))
+  }, [keep])
+
   const loadItems = useCallback(async () => {
     await keep(() => api('/items'), (r) => setItems(r || []))
     await keep(() => api('/masters/item-groups'), (r) => setItemGroups(r || []))
@@ -265,8 +269,18 @@ export function DataProvider({ children }) {
   const addItemPrice = async (id, body) => { const r = await api(`/items/${id}/prices`, { method: 'POST', body }); return r }
   const deleteItemPrice = async (priceId) => api(`/items/prices/${priceId}`, { method: 'DELETE' })
   const addItemGroup = async (body) => { const r = await api('/masters/item-groups', { method: 'POST', body }); await loadItems(); return r }
-  const addBrand = async (body) => { const r = await api('/masters/brands', { method: 'POST', body }); await loadItems(); return r }
-  const updateBrand = async (id, body) => { const r = await api(`/masters/brands/${id}`, { method: 'PATCH', body }); await loadItems(); return r }
+  const addBrand = async (body) => {
+    const r = await api('/masters/brands', { method: 'POST', body })
+    setBrands((prev) => [...(prev || []).filter((b) => b.id !== r.id), r])
+    loadBrands().catch(() => {})
+    return r
+  }
+  const updateBrand = async (id, body) => {
+    const r = await api(`/masters/brands/${id}`, { method: 'PATCH', body })
+    setBrands((prev) => (prev || []).map((b) => (b.id === id ? { ...b, ...r } : b)))
+    loadBrands().catch(() => {})
+    return r
+  }
   const addItemAttribute = async (body) => { const r = await api('/masters/item-attributes', { method: 'POST', body }); await loadItems(); return r }
   const addProductFamily = async (body) => { const r = await api('/masters/product-families', { method: 'POST', body }); await loadItems(); return r }
   const addPriceList = async (body) => { const r = await api('/masters/price-lists', { method: 'POST', body }); await loadItems(); return r }

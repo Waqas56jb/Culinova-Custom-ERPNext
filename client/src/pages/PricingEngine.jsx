@@ -607,8 +607,8 @@ function BrandMasterTab() {
           </div>
           <div className="mt-3 flex gap-2">
             <button type="button" disabled={adding || !newBrand.brand.trim()} onClick={createBrand}
-              className="rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-600 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400">
-              {adding ? <Loader2 size={13} className="animate-spin" /> : 'Create brand'}
+              className="inline-flex min-w-[7.5rem] items-center justify-center gap-1.5 rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-600 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400">
+              {adding ? <><Loader2 size={13} className="animate-spin" /> Saving…</> : 'Create brand'}
             </button>
             <button type="button" className="btn-ghost !py-1.5 !text-xs" onClick={() => setShowAdd(false)}>Cancel</button>
           </div>
