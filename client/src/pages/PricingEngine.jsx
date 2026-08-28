@@ -442,7 +442,12 @@ function BrandMasterTab() {
   const brands = useMemo(() => {
     const term = q.trim().toLowerCase()
     const list = (d.brands || []).filter((b) => !term || String(b.brand || '').toLowerCase().includes(term))
-    return [...list].sort((a, b) => String(a.brand).localeCompare(String(b.brand)))
+    return [...list].sort((a, b) => {
+      const pa = a.factors_pending ? 0 : 1
+      const pb = b.factors_pending ? 0 : 1
+      if (pa !== pb) return pa - pb
+      return String(a.brand).localeCompare(String(b.brand))
+    })
   }, [d.brands, q])
 
   const val = (b, f, dflt) => {
@@ -516,8 +521,13 @@ function BrandMasterTab() {
             {brands.map((b) => {
               const ex = example(b)
               return (
-                <tr key={b.id} className="group hover:bg-slate-50/40">
-                  <td className="td font-semibold text-ink">{b.brand}</td>
+                <tr key={b.id} className={b.factors_pending ? 'bg-amber-50/70 hover:bg-amber-50' : 'group hover:bg-slate-50/40'}>
+                  <td className="td font-semibold text-ink">
+                    {b.brand}
+                    {b.factors_pending && (
+                      <span className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">Factors pending</span>
+                    )}
+                  </td>
                   <td className="td">
                     <input value={val(b, 'currency', 'SAR')} onChange={(e) => setVal(b, 'currency', e.target.value)}
                       className="w-16 rounded-lg border border-slate-200 bg-slate-50/60 px-2 py-1.5 text-sm uppercase outline-none focus:border-brand-400 focus:bg-white" />

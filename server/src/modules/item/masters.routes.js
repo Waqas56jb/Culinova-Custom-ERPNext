@@ -58,6 +58,14 @@ r.patch('/brands/:id', authRequired, authorize('warehouse', 'update'), asyncWrap
   const patch = {}
   for (const f of editable) if (req.body[f] != null) patch[f] = req.body[f]
   if (!Object.keys(patch).length) return res.status(422).json({ error: 'Nothing to update. Only pricing factors (currency, exchange factor, price factor) are set in the ERP.' })
+
+  const { data: before } = await supabase.from('brands').select('currency, exchange_factor, price_factor, factors_pending').eq('id', req.params.id).maybeSingle()
+  const exch = patch.exchange_factor != null ? Number(patch.exchange_factor) : Number(before?.exchange_factor)
+  const pf = patch.price_factor != null ? Number(patch.price_factor) : Number(before?.price_factor)
+  const cur = patch.currency != null ? patch.currency : before?.currency
+  const factorsSet = (exch !== 1 || pf !== 1 || (patch.currency != null && cur !== (before?.currency || 'SAR')))
+  if (factorsSet) patch.factors_pending = false
+
   const { data, error } = await supabase.from('brands').update(patch).eq('id', req.params.id).select().single()
   if (error) throw error; res.json(data)
 }))

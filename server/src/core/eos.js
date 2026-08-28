@@ -7,7 +7,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { env } from '../config/env.js'
 import { supabase } from '../config/supabase.js'
-import { getBrand } from './itempricing.js'
+import { buildItemName, getBrand } from './itempricing.js'
 import { eosHash, recordVersion } from './eosfields.js'
 
 const EOS = env.eosApiUrl
@@ -59,7 +59,7 @@ export function mapEosToItem(detail) {
   const model = clean(e.model_number || e.code || m.model_number)
   const family = clean(e.equipment_type || m.equipment_type)
   const category = clean(e.category || m.category)
-  const name = clean(e.title) || [brand, model].filter(Boolean).join(' ')
+  const name = buildItemName(brand, model, family) || clean(e.title)
   // keep the engineering attributes with the item so the ERP has the full spec sheet
   const specs = {
     source: 'CULINOVA EOS', eos_entry_id: e.id, approved_at: e.approved_at,
@@ -86,10 +86,29 @@ export function mapEosToItem(detail) {
 }
 
 // Ensure the referenced Brand + Product Family master records exist (dropdowns + comparison).
+/** Legacy auto-names from EOS import — used to upgrade names on re-sync without clobbering manual edits. */
+function legacyAutoNames(detail) {
+  const e = detail.entry || {}, m = detail.model || {}
+  const b = clean(e.brand || m.brand)
+  const mod = clean(e.model_number || e.code || m.model_number)
+  return { title: clean(e.title), brandModel: [b, mod].filter(Boolean).join(' ') }
+}
+
+function nameShouldUpgrade(existingName, detail) {
+  const cur = clean(existingName)
+  if (!cur) return true
+  const { title, brandModel } = legacyAutoNames(detail)
+  return (title && cur === title) || (brandModel && cur === brandModel)
+}
+
 async function ensureMasters({ brand, family, category }) {
   if (brand) {
     const existing = await getBrand(brand)
-    if (!existing) await supabase.from('brands').insert({ brand, currency: 'SAR', exchange_factor: 1, price_factor: 1 }).select().maybeSingle()
+    if (!existing) {
+      await supabase.from('brands').insert({
+        brand, currency: 'SAR', exchange_factor: 1, price_factor: 1, factors_pending: true,
+      }).select().maybeSingle()
+    }
   }
   if (family) {
     const { data: fam } = await supabase.from('product_families').select('id').ilike('name', family).limit(1).maybeSingle()
@@ -131,6 +150,10 @@ export async function importEosEntry(id, user) {
     //  - item_code and all pricing fields are untouched (EOS carries no price)
     const patch = { ...f }
     delete patch.name; delete patch.item_name
+    if (nameShouldUpgrade(existing.item_name || existing.name, detail)) {
+      patch.item_name = f.item_name
+      patch.name = f.item_name
+    }
     patch.eos_version = (Number(existing.eos_version) || 0) + 1
     patch.eos_last_hash = hash
     const { data, error } = await supabase.from('items').update(patch).eq('id', existing.id).select().single()

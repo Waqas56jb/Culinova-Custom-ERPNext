@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import * as XLSX from 'xlsx'
 import { Search, Plus, Package, Layers, Tag, Sparkles, Settings2, Database, SlidersHorizontal, Trash2, RefreshCw, Loader2, Download, CheckCircle2, AlertTriangle, Link2, Inbox, Lock } from 'lucide-react'
 import { PageHeader, Badge, Menu, MenuItem } from '../components/ui.jsx'
@@ -145,6 +145,13 @@ export default function ItemMaster() {
   }
 
   const groups = ['All', ...new Set(items.map((i) => i.category).filter(Boolean))]
+  const brandFactorsPending = useMemo(() => {
+    const m = new Map()
+    for (const b of d.brands || []) {
+      if (b.factors_pending) m.set(String(b.brand || '').toLowerCase(), true)
+    }
+    return m
+  }, [d.brands])
   const rows = items.filter((i) => (g === 'All' || i.category === g) && `${i.item_code} ${i.item_name} ${i.brand || ''} ${i.product_family || ''}`.toLowerCase().includes(q.toLowerCase()))
   const seeCost = items.some((i) => i.cost != null)
 
@@ -275,7 +282,12 @@ export default function ItemMaster() {
                   </td>
                   <td className="td text-slate-500">{i.product_family || '—'}</td>
                   <td className="td text-slate-500">{i.category || '—'}</td>
-                  <td className="td text-slate-500">{i.brand || '—'}</td>
+                  <td className="td text-slate-500">
+                    {i.brand || '—'}
+                    {i.brand && brandFactorsPending.get(String(i.brand).toLowerCase()) && (
+                      <span className="ml-1 inline-flex items-center rounded bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold text-amber-700" title="Set exchange and price factors in Pricing Engine → Brand Master">Brand factors not set</span>
+                    )}
+                  </td>
                   <td className="td">
                     {flag(i.is_stock_item, 'STK', 'bg-emerald-50 text-emerald-600')}
                     {flag(i.is_sales_item, 'SAL', 'bg-blue-50 text-blue-600')}

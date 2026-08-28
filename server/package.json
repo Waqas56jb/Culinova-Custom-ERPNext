@@ -9,7 +9,8 @@
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
     "migrate": "node db/migrate.js",
-    "verify:sprint0": "node scripts/verify_sprint0.mjs"
+    "verify:sprint0": "node scripts/verify_sprint0.mjs",
+    "verify:block1": "node scripts/verify_block1.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",

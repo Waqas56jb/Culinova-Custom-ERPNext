@@ -1,8 +1,15 @@
 import { supabase } from '../config/supabase.js'
 import { priceItem } from './pricing.js'
+import { importEosEntry } from './eos.js'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const n0 = (v) => Number(v) || 0
+
+async function findByEosEntry(eosId) {
+  if (!eosId) return null
+  const { data } = await supabase.from('items').select('*').eq('eos_entry_id', eosId).maybeSingle()
+  return data
+}
 
 async function findById(id) {
   if (!id || !UUID.test(String(id))) return null
@@ -14,12 +21,6 @@ async function findByCode(code) {
   const c = (code || '').trim()
   if (!c) return null
   const { data } = await supabase.from('items').select('*').eq('item_code', c).maybeSingle()
-  return data
-}
-
-async function findByEosEntry(eosId) {
-  if (!eosId) return null
-  const { data } = await supabase.from('items').select('*').eq('eos_entry_id', eosId).maybeSingle()
   return data
 }
 
@@ -40,21 +41,48 @@ async function findByName(name) {
   return data
 }
 
-/** Resolve one BOQ line to an Item Master row — tries id, code, eos link, brand+model, name. */
-export async function resolveApprovedItem(raw = {}) {
-  const item = (
-    await findById(raw.item_id)
-    || await findByCode(raw.item_code)
-    || await findByEosEntry(raw.eos_entry_id)
-    || await findByBrandModel(raw.brand, raw.model)
-    || await findByName(raw.item_name || raw.name || raw.title)
-  )
-  if (!item) return null
+/** Resolve one BOQ line to an Item Master row — eos_entry_id first, then ERP keys. */
+export async function resolveApprovedItem(raw = {}, { user = null, tryImport = true } = {}) {
+  const eosId = raw.eos_entry_id || null
+  let item = null
   let match = 'name'
-  if (raw.item_id && item.id === raw.item_id) match = 'item_id'
-  else if (raw.item_code && item.item_code === raw.item_code) match = 'item_code'
-  else if (raw.eos_entry_id && item.eos_entry_id === raw.eos_entry_id) match = 'eos_entry_id'
-  else if (raw.brand && raw.model) match = 'brand_model'
+
+  if (eosId) {
+    item = await findByEosEntry(eosId)
+    if (item) match = 'eos_entry_id'
+  }
+
+  if (!item && raw.item_id && raw.item_id !== eosId) {
+    item = await findById(raw.item_id)
+    if (item) match = 'item_id'
+  }
+
+  if (!item) {
+    item = await findByCode(raw.item_code)
+    if (item) match = 'item_code'
+  }
+
+  if (!item) {
+    item = await findByBrandModel(raw.brand, raw.model)
+    if (item) match = 'brand_model'
+  }
+
+  if (!item) {
+    item = await findByName(raw.item_name || raw.name || raw.title)
+    if (item) match = 'name'
+  }
+
+  if (!item && eosId && tryImport) {
+    try {
+      const r = await importEosEntry(eosId, user)
+      if (r?.item) {
+        item = r.item
+        match = r.mode === 'created' ? 'eos_entry_id_import' : 'eos_entry_id'
+      }
+    } catch { /* keep unresolved */ }
+  }
+
+  if (!item) return null
   return { item, match }
 }
 
@@ -77,7 +105,7 @@ async function rateForItem(item) {
  * Turn EOS/ERP approved_items JSON into quotation-builder lines.
  * Returns { lines, unresolved } — unresolved entries have no Item Master match.
  */
-export async function resolveApprovedItems(approvedItems = []) {
+export async function resolveApprovedItems(approvedItems = [], opts = {}) {
   const lines = []
   const unresolved = []
   const list = Array.isArray(approvedItems) ? approvedItems : []
@@ -85,7 +113,7 @@ export async function resolveApprovedItems(approvedItems = []) {
   for (let i = 0; i < list.length; i++) {
     const raw = list[i] || {}
     const qty = Math.max(0.001, n0(raw.qty) || n0(raw.quantity) || 1)
-    const resolved = await resolveApprovedItem(raw)
+    const resolved = await resolveApprovedItem(raw, opts)
     if (!resolved) {
       unresolved.push({ index: i, input: raw, reason: 'No matching Item Master row' })
       continue

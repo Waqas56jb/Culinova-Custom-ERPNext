@@ -157,7 +157,7 @@ r.get('/requests/:id/quotation-prefill', authRequired, authorize('sales', 'read'
     return res.status(422).json({ error: `Engineering request must be "Ready for Quotation" (current: ${er.status})` })
   }
   const { data: opp } = await supabase.from('opportunities').select('*').eq('id', er.opportunity_id).maybeSingle()
-  const { lines, unresolved } = await resolveApprovedItems(er.approved_items || [])
+  const { lines, unresolved } = await resolveApprovedItems(er.approved_items || [], { user: req.user })
   // resolveApprovedItems puts landed `cost` on every line. Every other quotation endpoint redacts its
   // output; this one must too, or a Sales user sees each item's cost in the prefill payload (Sales must
   // never see cost/margin). redactFinancials recurses into `lines` and strips cost for non-financial
