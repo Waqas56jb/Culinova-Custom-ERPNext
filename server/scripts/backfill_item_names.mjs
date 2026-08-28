@@ -41,6 +41,21 @@ function isLegacyName(itemName, detail) {
   return legacyNameCandidates(detail).some((c) => c === cur)
 }
 
+/** When EOS detail is unavailable, match using stored brand/model (multi-word brand safe). */
+function localLegacyProposed(it) {
+  const cur = norm(it.item_name || it.name)
+  if (!cur) return null
+  const b = clean(it.brand)
+  const mod = clean(it.model)
+  const fam = clean(it.product_family)
+  const candidates = []
+  if (b && mod) candidates.push(norm(`${b} ${mod}`))
+  if (mod) candidates.push(norm(mod))
+  if (!candidates.some((c) => c === cur)) return null
+  const next = buildItemName(b, mod, fam)
+  return next && norm(next) !== cur ? next : null
+}
+
 const { data: linked, error } = await supabase
   .from('items')
   .select('id, item_name, name, brand, model, product_family, eos_entry_id')
@@ -58,18 +73,20 @@ console.log('---|--------------|---------------')
 
 const changes = []
 for (const it of linked || []) {
+  let next = null
   try {
     const detail = await eosDetail(it.eos_entry_id)
-    if (!detail?.entry) continue
-    if (!isLegacyName(it.item_name || it.name, detail)) continue
-    const mapped = mapEosToItem(detail)
-    const next = mapped.fields.item_name
-    if (!next || next === (it.item_name || it.name)) continue
-    changes.push({ id: it.id, before: it.item_name || it.name, after: next })
-    console.log(`${it.id} | ${it.item_name || it.name} | ${next}`)
+    if (detail?.entry && isLegacyName(it.item_name || it.name, detail)) {
+      const mapped = mapEosToItem(detail)
+      next = mapped.fields.item_name
+    }
   } catch (e) {
-    console.warn(`  skip ${it.item_name}: ${e.message}`)
+    console.warn(`  skip EOS ${it.item_name}: ${e.message}`)
   }
+  if (!next) next = localLegacyProposed(it)
+  if (!next || next === (it.item_name || it.name)) continue
+  changes.push({ id: it.id, before: it.item_name || it.name, after: next })
+  console.log(`${it.id} | ${it.item_name || it.name} | ${next}`)
 }
 
 if (!changes.length) {
