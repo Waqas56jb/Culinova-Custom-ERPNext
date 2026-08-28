@@ -1,5 +1,30 @@
 import { canAccessPanel, canDoAction, canSeeFinancials, restrictedFields, isInternal } from '../rbac/permissions.js'
 
+/** Sales User (Create) may edit their own Draft quotations; Edit+ roles may edit any editable quote. */
+export function canEditQuotation(user, quotation) {
+  if (!user || !quotation) return false
+  if (!canAccessPanel(user.role, 'sales')) return false
+  if (canDoAction(user.access_level, 'update')) return true
+  return canDoAction(user.access_level, 'create')
+    && quotation.status === 'Draft'
+    && quotation.owner_id === user.id
+}
+
+// Passes update-level editors, or create-level sales staff (draft-only check happens in the route).
+export function authorizeQuotationEdit(req, res, next) {
+  const { role, access_level } = req.user || {}
+  if (!canAccessPanel(role, 'sales')) return res.status(403).json({ error: 'No access to sales panel' })
+  if (canDoAction(access_level, 'update')) { req.draftEditOnly = false; return next() }
+  if (canDoAction(access_level, 'create')) { req.draftEditOnly = true; return next() }
+  return res.status(403).json({ error: 'Your access level cannot update' })
+}
+
+export function assertDraftEditOr403(req, res, quotation) {
+  if (!req.draftEditOnly) return null
+  if (quotation?.status === 'Draft' && quotation.owner_id === req.user.id) return null
+  return res.status(403).json({ error: 'You can only edit your own draft quotations' })
+}
+
 // Guard a route by panel + action
 export function authorize(panel, action) {
   return (req, res, next) => {

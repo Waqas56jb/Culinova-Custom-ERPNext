@@ -16,8 +16,14 @@ import QuotationPreview from '../components/QuotationPreview.jsx'
 
 // mirrors server rbac/permissions.financialRoles — decides whether cost/GP UI renders at all
 const FINANCIAL_ROLES = ['Management', 'System Admin', 'Accounts User', 'Purchase User', 'Stock User', 'Project Manager']
-// roles whose access level includes 'update' (server gates edit/discount/revise on 'update')
+// roles whose access level includes 'update' (server gates discount/revise on 'update')
 const EDITORS = ['Management', 'System Admin', 'Sales Manager']
+// Sales User (Create) may reopen their own Draft to finish building before Send — server allows PATCH on own Draft only.
+const canEditQuote = (q, user) => {
+  if (['Ordered', 'Lost'].includes(q?.status)) return false
+  if (EDITORS.includes(user?.role)) return true
+  return user?.role === 'Sales User' && q?.status === 'Draft' && q?.owner_id === user?.id
+}
 const APPROVERS = ['Management', 'System Admin', 'Sales Manager']
 // Sending and marking Lost are 'create'-level actions on the server — a Sales User must be able to do
 // both, otherwise the quotation they just built is unreachable forever (and CEO rule #10 says a
@@ -61,6 +67,7 @@ export default function Quotations() {
   const { user } = useAuth()
   const showFin = FINANCIAL_ROLES.includes(user?.role)
   const canEdit = EDITORS.includes(user?.role)
+  const canEditRow = (q) => canEditQuote(q, user)
   const canApprove = APPROVERS.includes(user?.role)
   const canSend = SENDERS.includes(user?.role)
 
@@ -330,7 +337,7 @@ export default function Quotations() {
                       <div className="flex flex-wrap items-center gap-1.5">
                         <Act onClick={() => setPreview(q)} tone="slate" icon={FileText}>PDF</Act>
                         <Act onClick={() => openRevisions(q)} tone="slate" icon={History} loading={busy === q.id}>Revisions</Act>
-                        {canEdit && !locked && <Act onClick={() => openBuilder(q)} icon={Pencil} loading={busy === q.id}>{q.status === 'Draft' ? 'Build' : 'Edit'}</Act>}
+                        {canEditRow(q) && <Act onClick={() => openBuilder(q)} icon={Pencil} loading={busy === q.id}>{q.status === 'Draft' ? 'Build' : 'Edit'}</Act>}
                         {canSend && q.status === 'Draft' && <Act onClick={() => confirmSend(q)} tone="emerald" icon={Send} loading={busy === q.id}>Send</Act>}
                         {canSend && !locked && q.status !== 'Lost' && <Act onClick={() => markLost(q)} tone="rose" icon={X} loading={busy === q.id}>Lost</Act>}
                         {pending && canApprove && (

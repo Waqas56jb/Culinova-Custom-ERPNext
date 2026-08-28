@@ -21,7 +21,7 @@
 import { Router } from 'express'
 import { supabase } from '../../config/supabase.js'
 import { authRequired } from '../../middleware/auth.js'
-import { authorize, redactFinancials } from '../../middleware/rbac.js'
+import { authorize, authorizeQuotationEdit, assertDraftEditOr403, redactFinancials } from '../../middleware/rbac.js'
 import { isManagement } from '../../rbac/permissions.js'
 import { asyncWrap } from '../../middleware/error.js'
 import { logAudit } from '../../core/audit.js'
@@ -398,9 +398,11 @@ export function quotationRouter() {
   }))
 
   // ── UPDATE header (+ optional full line replacement) → recompute ──
-  r.patch('/:id', authRequired, authorize('sales', 'update'), asyncWrap(async (req, res) => {
+  r.patch('/:id', authRequired, authorizeQuotationEdit, asyncWrap(async (req, res) => {
     const { data: existing } = await supabase.from('quotations').select('*, quotation_items(*)').eq('id', req.params.id).single()
     if (!existing) return res.status(404).json({ error: 'Not found' })
+    const draftBlock = assertDraftEditOr403(req, res, existing)
+    if (draftBlock) return draftBlock
     const blocked = notEditable(existing)
     if (blocked) return res.status(422).json({ error: blocked })
 
@@ -478,9 +480,11 @@ export function quotationRouter() {
   }))
 
   // ── add ONE line (snapshot specs) → recompute ──
-  r.post('/:id/items', authRequired, authorize('sales', 'update'), asyncWrap(async (req, res) => {
+  r.post('/:id/items', authRequired, authorizeQuotationEdit, asyncWrap(async (req, res) => {
     const { data: q } = await supabase.from('quotations').select('*, quotation_items(*)').eq('id', req.params.id).single()
     if (!q) return res.status(404).json({ error: 'Not found' })
+    const draftBlock = assertDraftEditOr403(req, res, q)
+    if (draftBlock) return draftBlock
     const blocked = notEditable(q)
     if (blocked) return res.status(422).json({ error: blocked })
     const p = req.body || {}
@@ -495,9 +499,11 @@ export function quotationRouter() {
   }))
 
   // ── update ONE line → recompute ──
-  r.patch('/:id/items/:lineId', authRequired, authorize('sales', 'update'), asyncWrap(async (req, res) => {
+  r.patch('/:id/items/:lineId', authRequired, authorizeQuotationEdit, asyncWrap(async (req, res) => {
     const { data: q } = await supabase.from('quotations').select('*').eq('id', req.params.id).single()
     if (!q) return res.status(404).json({ error: 'Not found' })
+    const draftBlock = assertDraftEditOr403(req, res, q)
+    if (draftBlock) return draftBlock
     const blocked = notEditable(q)
     if (blocked) return res.status(422).json({ error: blocked })
     const { data: line } = await supabase.from('quotation_items').select('*').eq('id', req.params.lineId).eq('quotation_id', q.id).maybeSingle()
@@ -520,9 +526,11 @@ export function quotationRouter() {
   }))
 
   // ── delete ONE line → recompute ──
-  r.delete('/:id/items/:lineId', authRequired, authorize('sales', 'update'), asyncWrap(async (req, res) => {
-    const { data: q } = await supabase.from('quotations').select('status').eq('id', req.params.id).single()
+  r.delete('/:id/items/:lineId', authRequired, authorizeQuotationEdit, asyncWrap(async (req, res) => {
+    const { data: q } = await supabase.from('quotations').select('id, status, owner_id').eq('id', req.params.id).single()
     if (!q) return res.status(404).json({ error: 'Not found' })
+    const draftBlock = assertDraftEditOr403(req, res, q)
+    if (draftBlock) return draftBlock
     const blocked = notEditable(q)
     if (blocked) return res.status(422).json({ error: blocked })
     const { error } = await supabase.from('quotation_items').delete().eq('id', req.params.lineId).eq('quotation_id', req.params.id)
@@ -533,9 +541,11 @@ export function quotationRouter() {
   }))
 
   // ── apply a discount (respects the item max_discount cap) ──
-  r.post('/:id/apply-discount', authRequired, authorize('sales', 'update'), asyncWrap(async (req, res) => {
+  r.post('/:id/apply-discount', authRequired, authorizeQuotationEdit, asyncWrap(async (req, res) => {
     const { data: q } = await supabase.from('quotations').select('*, quotation_items(*)').eq('id', req.params.id).single()
     if (!q) return res.status(404).json({ error: 'Not found' })
+    const draftBlock = assertDraftEditOr403(req, res, q)
+    if (draftBlock) return draftBlock
     const blocked = notEditable(q)
     if (blocked) return res.status(422).json({ error: blocked })
     const p = req.body || {}
