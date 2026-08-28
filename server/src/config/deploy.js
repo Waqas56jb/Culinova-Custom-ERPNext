@@ -27,6 +27,8 @@ export function erpCorsOrigins() {
       'https://culinova-client.vercel.app',
       'https://culinova-admin.vercel.app',
       'https://culinova-customer.vercel.app',
+      'https://culinova-suplier.vercel.app',
+      'https://culinova-technician.vercel.app',
       'http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175',
       'http://localhost:5176', 'http://localhost:5177',
     ]
