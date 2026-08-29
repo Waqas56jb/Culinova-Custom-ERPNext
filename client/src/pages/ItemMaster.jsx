@@ -70,18 +70,6 @@ export default function ItemMaster() {
   const [q, setQ] = useState('')
   const [g, setG] = useState('All')
   const [disableBusy, setDisableBusy] = useState(null)
-
-  const toggleDisabled = async (i, e) => {
-    e.stopPropagation()
-    const next = !i.disabled
-    if (!window.confirm(`${next ? 'Disable' : 'Enable'} “${i.item_name || i.model}”?${next ? ' Disabled items are hidden from quotation pickers.' : ''}`)) return
-    setDisableBusy(i.id)
-    try {
-      await api(`/items/${i.id}`, { method: 'PATCH', body: { disabled: next } })
-      await d.loadItems?.()
-    } catch (err) { alert(err.message) }
-    finally { setDisableBusy(null) }
-  }
   const [page, setPage] = useState(0)
   const [masterItems, setMasterItems] = useState([])
   const [masterTotal, setMasterTotal] = useState(0)
@@ -150,6 +138,21 @@ export default function ItemMaster() {
     const t = setTimeout(loadMaster, q.trim() ? 300 : 0)
     return () => clearTimeout(t)
   }, [loadMaster, q])
+
+  const toggleDisabled = async (i, e) => {
+    e.stopPropagation()
+    const next = !i.disabled
+    if (!window.confirm(`${next ? 'Disable' : 'Enable'} “${i.item_name || i.model}”?${next ? ' Disabled items are hidden from quotation pickers.' : ''}`)) return
+    setDisableBusy(i.id)
+    try {
+      await api(`/items/${i.id}`, { method: 'PATCH', body: { disabled: next } })
+      // Table uses masterItems (paged API), not DataContext — must reload this list
+      setMasterItems((rows) => rows.map((r) => (r.id === i.id ? { ...r, disabled: next } : r)))
+      await loadMaster()
+      await d.loadItems?.()
+    } catch (err) { alert(err.message || 'Failed to update item') }
+    finally { setDisableBusy(null) }
+  }
 
   // Global search / deep links open ?item=<uuid> — open the detail modal even when already on this page.
   useEffect(() => {
