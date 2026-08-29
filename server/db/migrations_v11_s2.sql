@@ -10,6 +10,9 @@ comment on column stock_reservations.requested_qty is 'Original requested reserv
 
 -- Cap reserved so it never exceeds physical qty on the balance row.
 -- Returns the actual reserved delta applied (may be < p_qty).
+-- Must drop first: return type changes from void → numeric.
+drop function if exists reserve_stock(uuid, text, numeric);
+
 create or replace function reserve_stock(p_item_id uuid, p_warehouse text, p_qty numeric)
 returns numeric
 language plpgsql
