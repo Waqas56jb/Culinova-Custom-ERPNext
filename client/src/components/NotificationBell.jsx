@@ -80,7 +80,9 @@ export default function NotificationBell() {
             {items.length === 0 && <div className="px-4 py-12 text-center text-sm text-slate-400">You're all caught up 🎉</div>}
             {items.map((n) => {
               const isVr = n.type === 'vr_change' && n.action_status === 'pending'
-              const actionable = isVr
+              const isCredit = n.type === 'credit_override' && n.action_status === 'pending'
+              const isApproval = n.type === 'approval' && n.action_status === 'pending'
+              const actionable = isVr || isCredit || isApproval
               return (
                 <div key={n.id} className={`border-b border-slate-50 px-4 py-3 ${n.read ? '' : 'bg-brand-50/40'}`}>
                   <button type="button" onClick={() => !actionable && markOne(n)} className="flex w-full gap-3 text-left">
@@ -91,20 +93,23 @@ export default function NotificationBell() {
                       <p className="mt-1 text-[11px] text-slate-400">{n.sender ? `${n.sender} · ` : ''}{timeAgo(n.created_at)}</p>
                     </div>
                   </button>
-                  {isVr && (
+                  {actionable && (
                     <div className="mt-2.5 flex flex-wrap gap-2 pl-5">
                       <button type="button" onClick={() => actVr(n, 'approved')} disabled={busy === n.id}
                         className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-emerald-600 disabled:opacity-60">
                         {busy === n.id ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Approve
                       </button>
-                      {rejectId === n.id ? (
+                      {isVr && rejectId === n.id ? (
                         <span className="flex items-center gap-1">
                           <input value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} placeholder="Reason" className="w-24 rounded border px-1.5 py-1 text-xs" />
                           <button type="button" onClick={() => actVr(n, 'rejected')} className="rounded bg-rose-500 px-2 py-1 text-xs font-semibold text-white">OK</button>
                           <button type="button" onClick={() => setRejectId(null)} className="text-xs text-slate-400">×</button>
                         </span>
                       ) : (
-                        <button type="button" onClick={() => { setRejectId(n.id); setRejectReason('') }}
+                        <button type="button" onClick={() => {
+                          if (isVr) { setRejectId(n.id); setRejectReason('') }
+                          else actVr(n, 'rejected')
+                        }}
                           className="inline-flex items-center gap-1.5 rounded-lg bg-rose-500 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-rose-600">
                           <XIcon size={13} /> Reject
                         </button>

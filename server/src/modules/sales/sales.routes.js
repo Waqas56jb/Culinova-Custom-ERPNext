@@ -18,6 +18,8 @@ import { nextNumber } from '../../core/numbering.js'
 import { acceptQuotation } from '../../core/acceptQuotation.js'
 import { assertTransition, LIVE_QUOTE_STATUSES } from '../../core/quotationStatus.js'
 import { validateLostReason, LOST_REASONS } from '../../core/lostReasons.js'
+import { sendQuotationToCustomer } from '../../core/sendQuotation.js'
+import { creditStatus } from '../../core/customerCredit.js'
 
 const r = Router()
 // Document numbers come from the editable numbering_series (Company Settings), NOT from Date.now();
@@ -263,26 +265,29 @@ r.post('/quotations/:id/reject', authRequired, authorize('sales', 'approve'), as
   res.json(redactFinancials(req.user.role, data))
 }))
 
-// ── SEND — blocked while approval pending; hard-require §16 fields → Sent ──
+// ── SEND — status Sent + portal notify + email (portal link); overdue needs confirm_overdue ──
 r.post('/quotations/:id/send', authRequired, authorize('sales', 'create'), asyncWrap(async (req, res) => {
-  const { data: q } = await supabase.from('quotations').select('*').eq('id', req.params.id).single()
-  if (!q) return res.status(404).json({ error: 'Not found' })
-  if (q.approval_status === 'Pending' || q.status === 'Pending Approval') {
-    return res.status(403).json({ error: 'Quotation needs approval before it can be sent' })
-  }
-  const missing = validateRequiredFields(q)
-  if (missing.length) {
-    return res.status(422).json({
-      error: 'Quotation is incomplete and cannot be sent to the customer',
-      missing_fields: missing,
+  try {
+    const result = await sendQuotationToCustomer({
+      quotationId: req.params.id,
+      actor: req.user,
+      confirmOverdue: !!(req.body?.confirm_overdue || req.body?.confirmOverdue),
     })
+    res.json(result)
+  } catch (e) {
+    const payload = { error: e.message, code: e.code }
+    if (e.missing_fields) payload.missing_fields = e.missing_fields
+    if (e.credit_warning) payload.credit_warning = e.credit_warning
+    return res.status(e.status || 500).json(payload)
   }
-  try { assertTransition(q.status, 'Sent') } catch (e) {
-    return res.status(e.status || 422).json({ error: e.message, code: e.code })
-  }
-  await supabase.from('quotations').update({ status: 'Sent' }).eq('id', req.params.id)
-  await logAudit(req.user, 'quotation', req.params.id, 'sent', { to: q.customer_email })
-  res.json({ ok: true, sent_to: q.customer_email, status: 'Sent' })
+}))
+
+// Sprint 3 Block 2 — Customer credit mini (§8) for party detail / builder
+r.get('/customers/:name/credit', authRequired, authorize('sales', 'read'), asyncWrap(async (req, res) => {
+  const name = decodeURIComponent(req.params.name || '').trim()
+  if (!name) return res.status(422).json({ error: 'Customer name required' })
+  const credit = await creditStatus(name)
+  res.json(credit)
 }))
 
 // ── ACCEPT → auto Sales Order + Project + BOQ (full chain, #17) ── (salesperson records customer's yes → 'create')

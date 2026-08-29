@@ -7,6 +7,7 @@ import { notifyOwnerDecision } from '../../core/notify.js'
 import { approveVrRequest, rejectVrRequest } from '../../core/vrApproval.js'
 import { isManagement } from '../../rbac/permissions.js'
 import { redactFinancials } from '../../middleware/rbac.js'
+import { decideCreditOverride } from '../../core/creditOverride.js'
 
 const r = Router()
 
@@ -53,12 +54,22 @@ r.post('/:id/act', authRequired, asyncWrap(async (req, res) => {
   // Quotation discount approval (existing)
   if (n.type === 'approval' && n.ref_type === 'quotation') {
     const patch = decision === 'approved'
-      ? { approval_status: 'Approved', status: 'Open', approved_by: req.user.id }
-      : { approval_status: 'Rejected', status: 'Draft' }
+      ? { approval_status: 'Approved', status: 'Sent', approved_by: req.user.id }
+      : { approval_status: 'Rejected', status: 'Rejected' }
     const { data: q, error } = await supabase.from('quotations').update(patch).eq('id', n.ref_id).select('number, customer, owner_id').single()
     if (error) throw error
     await supabase.from('notifications').update({ action_status: decision, read: true }).eq('ref_id', n.ref_id).eq('type', 'approval')
     await notifyOwnerDecision(q, decision, req.user.name)
+    return res.json({ ok: true, decision })
+  }
+
+  // Credit override — 4th+ quotation for overdue customer (Sprint 3 Block 2)
+  if (n.type === 'credit_override' && n.ref_type === 'credit_override') {
+    try {
+      await decideCreditOverride(n.ref_id, decision, req.user)
+    } catch (e) {
+      return res.status(e.status || 500).json({ error: e.message })
+    }
     return res.json({ ok: true, decision })
   }
 

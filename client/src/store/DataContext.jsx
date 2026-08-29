@@ -463,7 +463,12 @@ export function DataProvider({ children }) {
   // CEO rule #10: quotations are NEVER deleted — only marked Lost (with a reason)
   const approveQuotation = async (id) => { await post(`sales/quotations/${id}/approve`, {}); await loadQuotations() }
   const rejectQuotation = async (id, reason) => { await post(`sales/quotations/${id}/reject`, { reason }); await loadQuotations() }
-  const sendQuotation = async (id) => { await post(`sales/quotations/${id}/send`, {}); await loadQuotations() }
+  const sendQuotation = async (id, opts = {}) => {
+    await post(`sales/quotations/${id}/send`, {
+      confirm_overdue: !!opts.confirm_overdue,
+    })
+    await loadQuotations()
+  }
   const acceptQuotation = async (id) => { const r = await post(`sales/quotations/${id}/accept`, {}); await Promise.all([loadQuotations(), reload('salesOrders'), loadProjects()]); return r }
   const lostQuotation = async (id, reason, note = null) => {
     await post(`sales/quotations/${id}/lost`, { reason, note })

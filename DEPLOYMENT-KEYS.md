@@ -13,6 +13,8 @@ Generate **one** strong random secret (e.g. `openssl rand -base64 48`) and set t
 | `EOS_API_URL` | **ERP server** (optional) | EOS API base; defaults on Vercel |
 | `ERP_API_URL` | **EOS server** (optional) | ERP API base; defaults on Vercel |
 | `DATABASE_URL` | **ERP server** (migrations only) | `npm run migrate` — not required for runtime API |
+| `CUSTOMER_PORTAL_URL` | **ERP server** | Portal base URL embedded in quotation send emails (default `http://localhost:5175`) |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM` | **ERP server** | Optional. Quotation send attaches **portal link** (no server PDF). If SMTP unset → email skipped, status still Sent + portal notification |
 
 ## Error messages when misconfigured
 

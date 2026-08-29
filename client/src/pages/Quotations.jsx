@@ -291,7 +291,16 @@ export default function Quotations() {
       }
       const zeroCount = (full.quotation_items || []).filter((l) => l.needs_rate || n0(l.rate) === 0).length
       if (zeroCount > 0 && !window.confirm(`${zeroCount} line(s) have no price. Send anyway?`)) return
-      await sendQuotation(q.id)
+      try {
+        await sendQuotation(q.id)
+      } catch (e) {
+        if (e.status === 422 && e.payload?.code === 'CREDIT_OVERDUE_CONFIRM') {
+          const amt = e.payload?.credit_warning?.overdue_amount
+          const msg = `Customer overdue SAR ${Math.round(Number(amt) || 0).toLocaleString('en-US')} — send anyway?`
+          if (!window.confirm(msg)) return
+          await sendQuotation(q.id, { confirm_overdue: true })
+        } else throw e
+      }
     } catch (e) { alert(e.message) } finally { setBusy(null) }
   }
 
@@ -465,11 +474,23 @@ export default function Quotations() {
     }
     try {
       if (builder.editingId) await api(`/quotations/${builder.editingId}`, { method: 'PATCH', body })
-      else await api('/quotations', { method: 'POST', body })
+      else {
+        const created = await api('/quotations', { method: 'POST', body })
+        if (created?.credit_warning?.overdue_amount > 0) {
+          // Banner already shown live; soft notice on success
+        }
+      }
       setBuilder(null)
       setSaving(false)
       ;(loadQuotations || loadAll)().catch(() => {})
-    } catch (e) { setError(e.message); setSaving(false) }
+    } catch (e) {
+      if (e.status === 422 && (e.payload?.requires_approval || e.payload?.code === 'CREDIT_OVERRIDE_REQUIRED')) {
+        setError(`Credit override requested — Management must approve before creating another quotation. ${e.payload?.error || e.message}`)
+      } else {
+        setError(e.message)
+      }
+      setSaving(false)
+    }
   }
 
   const revise = async () => {
@@ -747,6 +768,21 @@ export default function Quotations() {
 function Builder({ builder, setH, items, customers, projects, opportunities, currencies, addLine, setLine, removeLine, totals, showFin, canEditRate, canLineMargin, onClose, onSave, onRevise, saving, error, canRefreshPrices }) {
   const d = useData()
   const nav = useNavigate()
+  const [creditWarn, setCreditWarn] = useState(null)
+
+  useEffect(() => {
+    const name = (builder?.customer || '').trim()
+    if (!name) { setCreditWarn(null); return }
+    let cancelled = false
+    api(`/sales/customers/${encodeURIComponent(name)}/credit`)
+      .then((c) => {
+        if (cancelled) return
+        if (c?.has_overdue) setCreditWarn(c)
+        else setCreditWarn(null)
+      })
+      .catch(() => { if (!cancelled) setCreditWarn(null) })
+    return () => { cancelled = true }
+  }, [builder?.customer])
   const [q, setQ] = useState('')
   const [terms, setTerms] = useState([])
   const [paymentTemplates, setPaymentTemplates] = useState([])
@@ -986,6 +1022,18 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
         </>
       }>
       {/* customer + project */}
+      {creditWarn && (
+        <div className="mb-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+          <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-600" />
+          <div>
+            <p className="font-semibold">Customer has overdue balance SAR {Math.round(Number(creditWarn.overdue_amount) || 0).toLocaleString('en-US')}</p>
+            <p className="text-[12px] text-amber-800/90">
+              {creditWarn.overdue_invoice_count} open overdue invoice(s) · {creditWarn.active_quotations_count} active quotation(s)
+              {creditWarn.blocked ? ' — a 4th quotation needs Management approval' : ''}
+            </p>
+          </div>
+        </div>
+      )}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <label className="block">
           <span className="mb-1.5 block text-xs font-semibold text-slate-600">Customer *</span>

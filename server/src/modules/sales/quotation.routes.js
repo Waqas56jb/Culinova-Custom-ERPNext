@@ -36,6 +36,8 @@ import { allocateLines, allocationSummary, allocationColumns } from '../../core/
 import { canSeeFinancials } from '../../rbac/permissions.js'
 import { enrichQuotationRecord, enrichQuotationList } from '../../core/quotationLines.js'
 import { assertTransition } from '../../core/quotationStatus.js'
+import { creditStatus, needsCreditOverride } from '../../core/customerCredit.js'
+import { findApprovedCreditOverride, consumeCreditOverride, requestCreditOverride } from '../../core/creditOverride.js'
 
 // CEO rule R1 — STOCK FIRST. Every quotation is allocated against live stock BEFORE it is saved:
 // each line records how much is served from stock we already own and how much is a shortfall that
@@ -290,6 +292,38 @@ export function quotationRouter() {
     })
     if (decision.blocked) return res.status(422).json({ error: decision.reason, requiresOverrideReason: !!decision.requiresOverrideReason })
 
+    // Sprint 3 Block 2 — credit control (§8): warning always; 4th+ active when overdue needs override
+    const credit = await creditStatus(String(p.customer).trim())
+    let consumedOverrideId = null
+    if (needsCreditOverride(credit)) {
+      if (isManagement(req.user.role)) {
+        // Management creating = implicit override
+      } else {
+        const approved = await findApprovedCreditOverride(p.customer)
+        if (approved) {
+          consumedOverrideId = approved.id
+        } else {
+          const reqRow = await requestCreditOverride({
+            customer: p.customer,
+            requestedBy: req.user,
+            credit,
+            note: clean(p.credit_override_note),
+          })
+          return res.status(422).json({
+            error: `Customer has overdue balance and ${credit.active_quotations_count} active quotations. Management approval is required for another quotation.`,
+            code: 'CREDIT_OVERRIDE_REQUIRED',
+            requires_approval: true,
+            credit_warning: {
+              overdue_amount: credit.overdue_amount,
+              overdue_invoice_count: credit.overdue_invoice_count,
+              active_quotations_count: credit.active_quotations_count,
+            },
+            credit_override_request_id: reqRow.id,
+          })
+        }
+      }
+    }
+
     const validity = num(p.validity_days) ?? 30
     const { data: consultant } = await supabase.from('users').select('name, email, phone').eq('id', req.user.id).maybeSingle()
     const header = {
@@ -358,7 +392,17 @@ export function quotationRouter() {
       _approval: { needsApproval: !!decision.needsApproval },
       stock,
       missing_fields: validateRequiredFields(full),
+      credit_warning: credit.has_overdue
+        ? {
+            overdue_amount: credit.overdue_amount,
+            overdue_invoice_count: credit.overdue_invoice_count,
+            active_quotations_count: credit.active_quotations_count + 1,
+          }
+        : null,
     })
+    if (consumedOverrideId) {
+      try { await consumeCreditOverride(consumedOverrideId) } catch { /* best-effort */ }
+    }
   }))
 
   // ── active commercial terms (for the terms picker) — registered BEFORE '/:id' ──

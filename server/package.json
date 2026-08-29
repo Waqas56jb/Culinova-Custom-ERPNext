@@ -22,7 +22,8 @@
     "verify:s2:block1": "node scripts/verify_s2_block1.mjs",
     "verify:s2:block2": "node scripts/verify_s2_block2.mjs",
     "verify:s2:block3": "node scripts/verify_s2_block3.mjs",
-    "verify:s3:block1": "node scripts/verify_s3_block1.mjs"
+    "verify:s3:block1": "node scripts/verify_s3_block1.mjs",
+    "verify:s3:block2": "node scripts/verify_s3_block2.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
@@ -32,6 +33,7 @@
     "express": "^4.21.0",
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
+    "nodemailer": "^6.10.1",
     "pg": "^8.22.0",
     "xlsx": "^0.18.5",
     "zod": "^3.23.8"

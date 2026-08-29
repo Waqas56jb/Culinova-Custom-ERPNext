@@ -1,18 +1,35 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Loader2, Plus, Trash2, User, MapPin, FileText, Star } from 'lucide-react'
+import { Loader2, Plus, Trash2, User, MapPin, FileText, Star, Wallet } from 'lucide-react'
 import { Modal, Field, Select } from './Modal.jsx'
 import { useData } from '../store/DataContext.jsx'
+import { useAuth } from '../auth/AuthContext.jsx'
+import { api } from '../api.js'
+import { sar } from '../data/mockData.js'
+
+const FINANCIAL_ROLES = ['Management', 'System Admin', 'Accounts User', 'Purchase User', 'Stock User', 'Project Manager']
 
 // Reusable customer/supplier detail: profile + contacts / addresses / documents child CRUD.
 export default function PartyDetailModal({ party, id, open, onClose, canEdit }) {
   const d = useData()
+  const { user } = useAuth()
   const [rec, setRec] = useState(null)
   const [tab, setTab] = useState('Contacts')
   const [add, setAdd] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [credit, setCredit] = useState(null)
+  const showCredit = party === 'customer' && FINANCIAL_ROLES.includes(user?.role)
 
   const load = useCallback(() => { if (id) d.getParty(party, id).then(setRec).catch(() => setRec(null)) }, [d, party, id])
   useEffect(() => { if (open) { setTab('Contacts'); setAdd(null); load() } }, [open, load])
+
+  useEffect(() => {
+    if (!open || !showCredit || !rec?.name) { setCredit(null); return }
+    let cancelled = false
+    api(`/sales/customers/${encodeURIComponent(rec.name)}/credit`)
+      .then((c) => { if (!cancelled) setCredit(c) })
+      .catch(() => { if (!cancelled) setCredit(null) })
+    return () => { cancelled = true }
+  }, [open, showCredit, rec?.name])
 
   const CHILD = {
     Contacts: { key: 'contacts', icon: User, fields: [{ key: 'name', label: 'Name', req: true }, { key: 'designation', label: 'Designation' }, { key: 'email', label: 'Email' }, { key: 'phone', label: 'Phone' }], row: (c) => <><b className="text-ink">{c.name}</b>{c.is_primary && <Star size={11} className="ml-1 inline text-gold-500" />}<span className="block text-[11px] text-muted">{[c.designation, c.email, c.phone].filter(Boolean).join(' · ')}</span></> },
@@ -33,6 +50,28 @@ export default function PartyDetailModal({ party, id, open, onClose, canEdit }) 
       footer={<button className="btn-ghost" onClick={onClose}>Close</button>}>
       {!rec ? <div className="grid place-items-center py-8 text-muted"><Loader2 className="animate-spin" /></div> : (
         <div className="space-y-3">
+          {showCredit && credit && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-3.5 py-3">
+              <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-500">
+                <Wallet size={13} /> Credit
+              </p>
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div>
+                  <p className="text-[11px] text-muted">Overdue</p>
+                  <p className={`text-sm font-bold ${credit.has_overdue ? 'text-amber-700' : 'text-ink'}`}>{sar(credit.overdue_amount || 0)}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] text-muted">Open overdue inv.</p>
+                  <p className="text-sm font-bold text-ink">{credit.overdue_invoice_count || 0}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] text-muted">Active quotes</p>
+                  <p className="text-sm font-bold text-ink">{credit.active_quotations_count || 0}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="flex gap-1.5">
             {Object.entries(CHILD).map(([k, c]) => (
               <button key={k} onClick={() => { setTab(k); setAdd(null) }} className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold ${tab === k ? 'bg-brand-500 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
