@@ -597,7 +597,7 @@ export default function Quotations() {
                     <p className="truncate font-display text-sm font-bold tracking-tight text-brand-700">{q.ref}</p>
                     <p className="mt-0.5 truncate text-sm font-medium text-ink">{q.customer}</p>
                   </div>
-                  <Badge tone={statusTone(q.status)}>{q.status}</Badge>
+                  <Badge tone={statusTone(q.status)}>{q.status === 'Open' ? 'Sent' : q.status}</Badge>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3 px-4 py-3.5 text-sm">
@@ -668,9 +668,9 @@ export default function Quotations() {
               </tr>
             </thead>
             <tbody>
-              {quotations.map((q) => {
+              {filteredQuotes.map((q) => {
                 const pending = q.approval === 'Pending'
-                const locked = ['Ordered', 'Lost'].includes(q.status)
+                const locked = ['Ordered', 'Lost', 'Rejected'].includes(q.status)
                 const st = stockOf(q)
                 return (
                   <tr key={q.id} className="transition-colors hover:bg-slate-50/70">
@@ -698,14 +698,14 @@ export default function Quotations() {
                         : (q.validity ? `${q.validity} days` : '—')}
                     </td>
                     <td className="td text-slate-400">r{q.revision ?? 0}</td>
-                    <td className="td"><Badge tone={statusTone(q.status)}>{q.status}</Badge></td>
+                    <td className="td"><Badge tone={statusTone(q.status)}>{q.status === 'Open' ? 'Sent' : q.status}</Badge></td>
                     <td className="td">
                       <QuoteActions q={q} locked={locked} pending={pending} {...actionProps} />
                     </td>
                   </tr>
                 )
               })}
-              {quotations.length === 0 && (
+              {filteredQuotes.length === 0 && (
                 <tr>
                   <td className="td text-slate-400" colSpan={showFin ? 10 : 9}>
                     No quotations yet. Click “New from Opportunity” to build one from the Item Master.
@@ -716,6 +716,8 @@ export default function Quotations() {
           </table>
         </div>
       </div>
+      </>
+      )}
 
       {builder && (
         <Builder
@@ -729,6 +731,14 @@ export default function Quotations() {
 
       {revView && <RevisionsModal open onClose={() => setRevView(null)} data={revView} showFin={showFin} />}
       <QuotationPreview open={!!preview_} onClose={() => setPreview(null)} quotation={preview_} />
+      <LostReasonModal
+        open={!!lostModal}
+        title={lostModal ? `Mark ${lostModal.ref || lostModal.number} as Lost` : 'Mark as Lost'}
+        onClose={() => setLostModal(null)}
+        onConfirm={async ({ reason, note }) => {
+          await lostQuotation(lostModal.id, reason, note)
+        }}
+      />
     </>
   )
 }
@@ -942,6 +952,8 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
   // options come from /lookups/projects → { id, ref, name, label } (readable by Sales)
   const projOpts = [{ value: '', label: '— none —' }, ...(projects || []).map((p) => ({ value: p.id, label: p.label || [p.ref, p.name].filter(Boolean).join(' · ') }))]
   const currOpts = (currencies?.length ? currencies.map((c) => c.code) : ['SAR'])
+  const incompleteFields = missingMandatory(builder)
+  const incompleteLabel = incompleteFields.map((f) => FIELD_LABEL[f] || f).join(', ')
 
   return (
     <Modal open size="xl" onClose={onClose}
@@ -950,6 +962,11 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
       footer={
         <>
           {error && <span className="mr-auto self-center text-xs font-semibold text-rose-600">{error}</span>}
+          {incompleteFields.length > 0 && !error && (
+            <span className="mr-auto self-center rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800" title={incompleteLabel}>
+              Incomplete: {incompleteLabel}
+            </span>
+          )}
           {!error && blockedByStock && (
             <span className="mr-auto self-center text-xs font-semibold text-amber-700">
               {toBuy} unit{plural(toBuy)} are not in stock — tick the purchase acknowledgement below the totals to save.

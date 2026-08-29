@@ -6,6 +6,7 @@ import { sar } from '../data/mockData.js'
 import { api } from '../api.js'
 import { useData } from '../store/DataContext.jsx'
 import CrmDetailModal from '../components/CrmDetailModal.jsx'
+import LostReasonModal from '../components/LostReasonModal.jsx'
 
 const stages = ['Prospecting', 'Quotation', 'Negotiation', 'Won']
 const stageColor = { Prospecting: '#94a3b8', Quotation: '#3b82f6', Negotiation: '#E0A82E', Won: '#0EA99A' }
@@ -13,6 +14,7 @@ const stageColor = { Prospecting: '#94a3b8', Quotation: '#3b82f6', Negotiation: 
 export default function Opportunities() {
   const { opportunities, salesOrders, openForm, lostOpportunity, getOpportunityQuotationPrefill, reload } = useData()
   const [openId, setOpenId] = useState(null)   // the opportunity being viewed / edited
+  const [lostModal, setLostModal] = useState(null)
   const navigate = useNavigate()
   const lost = opportunities.filter((o) => o.stage === 'Lost')
   const [busy, setBusy] = useState(null)
@@ -20,12 +22,7 @@ export default function Opportunities() {
   const run = async (id, fn) => { setBusy(id); try { await fn() } catch (e) { alert(e.message) } finally { setBusy(null) } }
   // No manual "Won": an opportunity is Won only when the customer approves its quotation (which creates
   // the Sales Order). Marking Lost is the flow's "Customer Approved? → No → Close the Opportunity".
-  const markLost = (o) => {
-    const reason = window.prompt(`Mark ${o.customer} as LOST — reason (required):`)
-    if (reason == null) return
-    if (!reason.trim()) { alert('A reason is required to mark an opportunity as Lost.'); return }
-    run(o.id, () => lostOpportunity(o.id, reason.trim()))
-  }
+  const markLost = (o) => setLostModal(o)
   const createQuote = async (o) => {
     setBusy(o.id)
     try {
@@ -143,6 +140,14 @@ export default function Opportunities() {
         open={!!openId}
         onClose={() => setOpenId(null)}
         onSaved={() => reload('opportunities')}
+      />
+      <LostReasonModal
+        open={!!lostModal}
+        title={lostModal ? `Mark ${lostModal.customer} as Lost` : 'Mark as Lost'}
+        onClose={() => setLostModal(null)}
+        onConfirm={async ({ reason, note }) => {
+          await lostOpportunity(lostModal.id, reason, note)
+        }}
       />
     </>
   )

@@ -153,14 +153,15 @@ r.get('/quotations', authRequired, authorize('sales', 'read'), asyncWrap(async (
   const { data, error } = await supabase.from('quotations').select('*, quotation_items(*)').order('created_at', { ascending: false })
   if (error) throw error
   const enriched = await enrichQuotationList(data || [])
-  res.json(redactFinancials(req.user.role, enriched))
+  const withMissing = enriched.map((q) => ({ ...q, missing_fields: validateRequiredFields(q) }))
+  res.json(redactFinancials(req.user.role, withMissing))
 }))
 
 r.get('/quotations/:id', authRequired, authorize('sales', 'read'), asyncWrap(async (req, res) => {
   const { data, error } = await supabase.from('quotations').select('*, quotation_items(*)').eq('id', req.params.id).single()
   if (error) return res.status(404).json({ error: 'Not found' })
   const enriched = await enrichQuotationRecord(data)
-  res.json(redactFinancials(req.user.role, enriched))
+  res.json(redactFinancials(req.user.role, { ...enriched, missing_fields: validateRequiredFields(enriched) }))
 }))
 
 // ── CREATE (legacy) — retired in Sprint 1a Block 4; use the quotation builder (/api/quotations) ──
