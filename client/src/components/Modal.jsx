@@ -7,20 +7,26 @@ export function Modal({ open, onClose, title, subtitle, children, footer, size =
   // Portal to body so the modal is always centered to the viewport,
   // independent of any transformed/scrolled ancestor.
   return createPortal(
-    <div className="fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto p-3 sm:p-6">
+    <div className="fixed inset-0 z-[80] flex items-end justify-center overflow-y-auto p-0 sm:items-start sm:p-4 md:p-6"
+      style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
       <div className="fixed inset-0 bg-navy-900/50 backdrop-blur-sm" onClick={onClose} />
-      <div className={`relative z-10 my-auto flex max-h-[92vh] w-full ${w} flex-col card animate-fade-up`}>
-        <div className="flex shrink-0 items-start justify-between border-b border-slate-100 p-5">
-          <div>
-            <h3 className="font-display text-lg font-bold text-ink">{title}</h3>
-            {subtitle && <p className="mt-0.5 text-xs text-muted">{subtitle}</p>}
+      <div className={`relative z-10 my-0 flex max-h-[min(92vh,100dvh)] w-full flex-col rounded-t-2xl border border-slate-200/60 bg-white shadow-card animate-fade-up sm:my-auto sm:rounded-2xl ${w}`}>
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 px-4 py-4 sm:p-5">
+          <div className="min-w-0">
+            <h3 className="font-display text-base font-bold text-ink sm:text-lg">{title}</h3>
+            {subtitle && <p className="mt-0.5 text-xs leading-relaxed text-muted">{subtitle}</p>}
           </div>
-          <button onClick={onClose} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-ink">
+          <button type="button" onClick={onClose} className="shrink-0 rounded-xl p-2 text-slate-400 hover:bg-slate-100 hover:text-ink" aria-label="Close">
             <X size={20} />
           </button>
         </div>
-        <div className="flex-1 space-y-4 overflow-y-auto p-5">{children}</div>
-        {footer && <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-slate-100 bg-slate-50/50 p-4">{footer}</div>}
+        <div className="flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4 sm:p-5">{children}</div>
+        {footer && (
+          <div className="flex shrink-0 flex-col-reverse gap-2 border-t border-slate-100 bg-slate-50/80 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end sm:p-4"
+            style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom, 0px))' }}>
+            {footer}
+          </div>
+        )}
       </div>
     </div>,
     document.body,

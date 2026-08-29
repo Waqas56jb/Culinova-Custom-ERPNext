@@ -419,33 +419,121 @@ export default function Quotations() {
     catch (e) { alert(e.message) } finally { setBusy(null) }
   }
 
+  const actionProps = {
+    canEditRow, canSend, canApprove, isBusy, setPreview, openRevisions, openBuilder,
+    confirmSend, markLost, run, approveQuotation, reject,
+  }
+
   return (
     <>
       <PageHeader title="Quotations / Estimation" subtitle="Create from Opportunity — EOS specs, images & fixed pricing from Item Master">
-        <button className="btn-primary" onClick={() => navigate('/sales/opportunities')}><Plus size={16} /> New from Opportunity</button>
+        <button type="button" className="btn-primary w-full sm:w-auto" onClick={() => navigate('/sales/opportunities')}>
+          <Plus size={16} /> New from Opportunity
+        </button>
       </PageHeader>
 
-      <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="mb-5 grid grid-cols-2 gap-2.5 sm:gap-3 lg:grid-cols-4">
         <KpiCard label="Quotations" value={quotations.length} icon={FileText} accent="brand" />
         <KpiCard label="Open / Draft" value={openCount} icon={ClipboardList} accent="violet" />
         <KpiCard label="Ordered" value={orderedCount} icon={Check} accent="emerald" />
         <KpiCard label="Pipeline Value" value={sar(totalValue)} icon={Wallet} accent="gold" />
       </div>
 
-      <div className="mb-4 flex items-center gap-3 rounded-2xl border border-brand-200 bg-brand-50 px-4 py-3 text-sm text-brand-800 animate-fade-up">
-        <AlertTriangle size={18} className="shrink-0" />
-        <span><b>Workflow:</b> Lead → Opportunity → <b>Create Quotation</b> on the opportunity card. Customer, contact, project &amp; location inherit automatically. Prices come from the pricing chain — sales cannot edit rates.</span>
+      <div className="mb-4 flex items-start gap-3 rounded-2xl border border-brand-200/70 bg-gradient-to-r from-brand-50 to-white px-3.5 py-3 text-sm text-brand-900 sm:items-center sm:px-4 animate-fade-up">
+        <AlertTriangle size={18} className="mt-0.5 shrink-0 text-brand-600 sm:mt-0" />
+        <span className="leading-relaxed">
+          <b className="font-semibold">Workflow:</b> Lead → Opportunity → <b className="font-semibold">Create Quotation</b> on the opportunity card.
+          <span className="hidden sm:inline"> Customer, contact, project &amp; location inherit automatically. Prices come from the pricing chain — sales cannot edit rates.</span>
+        </span>
       </div>
 
-      <div className="card overflow-hidden">
+      {/* ── Mobile / tablet cards ── */}
+      <div className="space-y-3 lg:hidden">
+        {quotations.length === 0 && (
+          <div className="card px-5 py-10 text-center text-sm text-slate-400">
+            No quotations yet. Create one from an Opportunity.
+          </div>
+        )}
+        {quotations.map((q) => {
+          const pending = q.approval === 'Pending'
+          const locked = ['Ordered', 'Lost'].includes(q.status)
+          const st = stockOf(q)
+          return (
+            <article key={q.id} className="card overflow-hidden animate-fade-up">
+              <div className="border-b border-slate-100 bg-slate-50/50 px-4 py-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate font-display text-sm font-bold tracking-tight text-brand-700">{q.ref}</p>
+                    <p className="mt-0.5 truncate text-sm font-medium text-ink">{q.customer}</p>
+                  </div>
+                  <Badge tone={statusTone(q.status)}>{q.status}</Badge>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3 px-4 py-3.5 text-sm">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Amount</p>
+                  <p className="mt-0.5 font-bold tabular-nums text-ink">{sar(q.amount)}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Discount</p>
+                  <p className="mt-0.5 font-semibold text-slate-600">{q.discount ? `${q.discount}%` : '—'}</p>
+                </div>
+                {showFin && (
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">GP</p>
+                    <span className={`chip mt-0.5 ${q.gp < 35 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>{q.gp}%</span>
+                  </div>
+                )}
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Valid till</p>
+                  <p className="mt-0.5 text-xs font-medium leading-snug text-slate-600">
+                    {q.valid_till
+                      ? `${q.valid_till}${q.validity_days ? ` (${q.validity_days} days)` : ''}`
+                      : (q.validity ? `${q.validity} days` : '—')}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Stock</p>
+                  <div className="mt-0.5">
+                    {st ? (
+                      <span
+                        title={`${st.from_stock} of ${st.total_qty} unit${plural(st.total_qty)} from stock · ${st.to_purchase} to purchase`}
+                        className={`chip ${st.to_purchase === 0 ? 'bg-emerald-50 text-emerald-600' : st.from_stock === 0 ? 'bg-slate-100 text-slate-600' : 'bg-amber-50 text-amber-700'}`}>
+                        {st.pct}%{st.to_purchase > 0 ? ` · buy ${st.to_purchase}` : ''}
+                      </span>
+                    ) : <span className="text-slate-300">—</span>}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Revision</p>
+                  <p className="mt-0.5 font-medium text-slate-500">r{q.revision ?? 0}</p>
+                </div>
+              </div>
+              <div className="border-t border-slate-100 bg-white px-4 py-3">
+                <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Actions</p>
+                <QuoteActions q={q} locked={locked} pending={pending} {...actionProps} />
+              </div>
+            </article>
+          )
+        })}
+      </div>
+
+      {/* ── Desktop table ── */}
+      <div className="card hidden overflow-hidden lg:block">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[980px]">
             <thead>
-              <tr className="bg-slate-50/60">
-                <th className="th">Quotation</th><th className="th">Customer</th><th className="th">Amount (incl. VAT)</th>
-                <th className="th">Disc.</th>{showFin && <th className="th">GP</th>}
+              <tr className="bg-slate-50/80">
+                <th className="th">Quotation</th>
+                <th className="th">Customer</th>
+                <th className="th">Amount (incl. VAT)</th>
+                <th className="th">Disc.</th>
+                {showFin && <th className="th">GP</th>}
                 <th className="th">Stock</th>
-                <th className="th">Valid Till</th><th className="th">Rev.</th><th className="th">Status</th><th className="th">Actions</th>
+                <th className="th">Valid Till</th>
+                <th className="th">Rev.</th>
+                <th className="th">Status</th>
+                <th className="th">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -454,12 +542,16 @@ export default function Quotations() {
                 const locked = ['Ordered', 'Lost'].includes(q.status)
                 const st = stockOf(q)
                 return (
-                  <tr key={q.id} className="hover:bg-slate-50/60">
+                  <tr key={q.id} className="transition-colors hover:bg-slate-50/70">
                     <td className="td font-semibold text-brand-600">{q.ref}</td>
                     <td className="td font-medium text-ink">{q.customer}</td>
-                    <td className="td font-semibold">{sar(q.amount)}</td>
+                    <td className="td font-semibold tabular-nums">{sar(q.amount)}</td>
                     <td className="td text-slate-500">{q.discount ? `${q.discount}%` : '—'}</td>
-                    {showFin && <td className="td"><span className={`chip ${q.gp < 35 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>{q.gp}%</span></td>}
+                    {showFin && (
+                      <td className="td">
+                        <span className={`chip ${q.gp < 35 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>{q.gp}%</span>
+                      </td>
+                    )}
                     <td className="td">
                       {st ? (
                         <span
@@ -469,34 +561,26 @@ export default function Quotations() {
                         </span>
                       ) : <span className="text-slate-300">—</span>}
                     </td>
-                    <td className="td text-slate-500">{
-                      q.valid_till
+                    <td className="td text-slate-500">
+                      {q.valid_till
                         ? `${q.valid_till}${q.validity_days ? ` (${q.validity_days} days)` : ''}`
-                        : (q.validity ? `${q.validity} days` : '—')
-                    }</td>
+                        : (q.validity ? `${q.validity} days` : '—')}
+                    </td>
                     <td className="td text-slate-400">r{q.revision ?? 0}</td>
                     <td className="td"><Badge tone={statusTone(q.status)}>{q.status}</Badge></td>
                     <td className="td">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <QuoteAct onClick={() => setPreview(q)} tone="slate" icon={FileText}>PDF</QuoteAct>
-                        <QuoteAct onClick={() => openRevisions(q)} tone="slate" icon={History} loading={isBusy(q.id, 'revisions')}>Revisions</QuoteAct>
-                        {canEditRow(q) && <QuoteAct onClick={() => openBuilder(q)} icon={Pencil} loading={isBusy(q.id, 'build')}>{q.status === 'Draft' ? 'Build' : 'Edit'}</QuoteAct>}
-                        {canSend && q.status === 'Draft' && <QuoteAct onClick={() => confirmSend(q)} tone="emerald" icon={Send} loading={isBusy(q.id, 'send')}>Send</QuoteAct>}
-                        {canSend && !locked && q.status !== 'Lost' && <QuoteAct onClick={() => markLost(q)} tone="rose" icon={X} loading={isBusy(q.id, 'lost')}>Lost</QuoteAct>}
-                        {pending && canApprove && (
-                          <>
-                            <QuoteAct onClick={() => run(q.id, 'approve', () => approveQuotation(q.id))} tone="emerald" icon={ThumbsUp} loading={isBusy(q.id, 'approve')}>Approve</QuoteAct>
-                            <QuoteAct onClick={() => reject(q)} tone="rose" icon={X} loading={isBusy(q.id, 'reject')}>Reject</QuoteAct>
-                          </>
-                        )}
-                        {q.status === 'Ordered' && <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600"><Check size={13} /> Ordered</span>}
-                        {q.status === 'Open' && <span className="text-xs font-medium text-slate-400">Sent · awaiting customer</span>}
-                      </div>
+                      <QuoteActions q={q} locked={locked} pending={pending} {...actionProps} />
                     </td>
                   </tr>
                 )
               })}
-              {quotations.length === 0 && <tr><td className="td text-slate-400" colSpan={showFin ? 10 : 9}>No quotations yet. Click “New Quotation” to build one from the Item Master.</td></tr>}
+              {quotations.length === 0 && (
+                <tr>
+                  <td className="td text-slate-400" colSpan={showFin ? 10 : 9}>
+                    No quotations yet. Click “New from Opportunity” to build one from the Item Master.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

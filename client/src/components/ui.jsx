@@ -55,11 +55,11 @@ export function KpiCard({ label, value, delta, sub, icon: Icon, accent = 'brand'
   const hasDelta = delta != null && !Number.isNaN(Number(delta))
   const up = delta >= 0
   return (
-    <div className="card card-pad relative overflow-hidden animate-fade-up">
+    <div className="card relative overflow-hidden animate-fade-up p-3.5 sm:p-5">
       <div className={`absolute -right-6 -top-6 h-24 w-24 rounded-full bg-gradient-to-br ${accentMap[accent]} opacity-[0.08]`} />
-      <div className="flex items-start justify-between">
-        <div className={`grid h-11 w-11 place-items-center rounded-xl bg-gradient-to-br ${accentMap[accent]} text-white shadow-soft`}>
-          {Icon && <Icon size={20} />}
+      <div className="flex items-start justify-between gap-2">
+        <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br ${accentMap[accent]} text-white shadow-soft sm:h-11 sm:w-11`}>
+          {Icon && <Icon size={18} />}
         </div>
         {hasDelta && (
           <span className={`chip ${up ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
@@ -68,8 +68,8 @@ export function KpiCard({ label, value, delta, sub, icon: Icon, accent = 'brand'
           </span>
         )}
       </div>
-      <p className="mt-4 text-3xl font-extrabold tracking-tight text-ink">{value}</p>
-      <p className="mt-0.5 text-sm font-medium text-slate-500">{label}</p>
+      <p className="mt-3 text-xl font-extrabold tracking-tight text-ink sm:mt-4 sm:text-3xl">{value}</p>
+      <p className="mt-0.5 text-xs font-medium text-slate-500 sm:text-sm">{label}</p>
       {sub && <p className="mt-1 text-xs text-muted">{sub}</p>}
     </div>
   )
