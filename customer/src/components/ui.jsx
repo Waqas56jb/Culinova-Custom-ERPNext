@@ -58,7 +58,9 @@ export function statusTone(s) {
   const map = {
     'On Track': 'green', 'At Risk': 'amber', Delayed: 'red', Completed: 'blue',
     Installed: 'green', Delivered: 'amber', 'In Progress': 'blue', Waiting: 'gray', Assigned: 'violet',
-    Open: 'blue', Accepted: 'green', Declined: 'red', Expired: 'gray',
+    Open: 'blue', Sent: 'blue', 'Under Negotiation': 'amber', Rejected: 'red',
+    Ordered: 'green', Lost: 'red', Draft: 'gray', 'Pending Approval': 'violet',
+    Accepted: 'green', Declined: 'red', Expired: 'gray',
     Paid: 'green', 'Partly Paid': 'amber', Unpaid: 'gray', Overdue: 'red',
     Active: 'green', Resolved: 'green', High: 'red', Medium: 'amber', Low: 'gray',
   }

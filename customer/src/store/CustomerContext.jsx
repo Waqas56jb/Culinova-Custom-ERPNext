@@ -65,13 +65,21 @@ export function CustomerProvider({ children }) {
   const acceptQuote = async (id) => { await api(`/portal/customer/quotations/${id}/accept`, { method: 'POST' }); await load(); await loadMessages() }
   const saveCommercialProfile = async (body) => { await api('/portal/customer/commercial-profile', { method: 'PATCH', body }); await load() }
   const getCommercialProfile = () => api('/portal/customer/commercial-profile')
-  const rejectQuote = async (id, reason) => { await api(`/portal/customer/quotations/${id}/reject`, { method: 'POST', body: { reason } }); await load(); await loadMessages() }
-  const requestConcession = async (id, note) => { await api(`/portal/customer/quotations/${id}/concession`, { method: 'POST', body: { note } }); await loadMessages() }
-  const deleteQuote = async (id) => { await api(`/portal/customer/quotations/${id}`, { method: 'DELETE' }); await load(); await loadMessages() }
+  const rejectQuote = async (id, reason, note = null) => {
+    await api(`/portal/customer/quotations/${id}/reject`, { method: 'POST', body: { reason, note } })
+    await load()
+    await loadMessages()
+  }
+  const requestConcession = async (id, note) => {
+    await api(`/portal/customer/quotations/${id}/concession`, { method: 'POST', body: { note } })
+    await load()
+    await loadMessages()
+  }
+  // Delete removed — Sales Rules §10/§18; API returns 410. Decline via rejectQuote only.
   const payInvoice = (id) => setInvoices((p) => p.map((i) => (i.id === id ? { ...i, paid: i.total, status: 'Paid' } : i)))
   const raiseTicket = async (d) => { await api('/portal/customer/tickets', { method: 'POST', body: { subject: d.subject, priority: d.priority } }); await load() }
   // chat — message goes to ONE recipient: the sales team
   const sendMessage = async (body, attachment) => { await api('/portal/customer/messages', { method: 'POST', body: { body, attachment } }); await loadMessages() }
 
-  return <Ctx.Provider value={{ projects, quotations, invoices, tickets, messages, deliveries, acceptQuote, rejectQuote, requestConcession, deleteQuote, payInvoice, raiseTicket, sendMessage, loadMessages, acceptDelivery, rejectDelivery, returnDelivery, saveCommercialProfile, getCommercialProfile }}>{children}</Ctx.Provider>
+  return <Ctx.Provider value={{ projects, quotations, invoices, tickets, messages, deliveries, acceptQuote, rejectQuote, requestConcession, payInvoice, raiseTicket, sendMessage, loadMessages, acceptDelivery, rejectDelivery, returnDelivery, saveCommercialProfile, getCommercialProfile }}>{children}</Ctx.Provider>
 }
