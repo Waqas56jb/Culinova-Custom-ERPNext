@@ -117,7 +117,9 @@ console.log('\n── Regressions (s2:block2 nests block1 + block4) ──')
   const r = spawnSync('node', [path.join(__dirname, 'verify_s2_block2.mjs')], {
     encoding: 'utf8', cwd: path.resolve(__dirname, '..'), timeout: 600000,
   })
-  pass('d) verify:s2:block2 (incl. block1 + block4)', r.status === 0, r.status === 0 ? 'exit 0' : `exit ${r.status}`)
+  const out = `${r.stdout || ''}${r.stderr || ''}`
+  const tail = out.split(/\r?\n/).filter(Boolean).slice(-6).join(' | ')
+  pass('d) verify:s2:block2 (incl. block1 + block4)', r.status === 0, r.status === 0 ? 'exit 0' : `exit ${r.status} · ${tail.slice(0, 240)}`)
 }
 
 console.log('\n======== RESULTS ========')
