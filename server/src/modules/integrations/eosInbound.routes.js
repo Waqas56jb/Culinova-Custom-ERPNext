@@ -6,6 +6,8 @@ import { authRequired } from '../../middleware/auth.js'
 import { isManagement, canAccessPanel } from '../../rbac/permissions.js'
 import { STATUSES } from '../../core/engineeringSync.js'
 import { logAudit } from '../../core/audit.js'
+import { importEosEntries } from '../../core/eos.js'
+import { lastEosTimerRunAt, markWebhookImport, lastWebhookImportAt } from '../../core/eosautosync.js'
 
 const r = Router()
 
@@ -29,6 +31,8 @@ r.get('/status', authRequired, adminOrManagement, asyncWrap(async (_req, res) =>
     eos_api_url: eosUrl || 'default',
     integration_key_set: Boolean(env.erpEosIntegrationKey),
     can_reach_eos,
+    last_webhook_import_at: lastWebhookImportAt(),
+    last_timer_run_at: lastEosTimerRunAt(),
   })
 }))
 
@@ -41,6 +45,39 @@ function requireIntegrationKey(req, res, next) {
 }
 
 r.use(requireIntegrationKey)
+
+/**
+ * EOS → ERP instant Item Master import (Sprint 2 Block 3).
+ * Fired on knowledge approval; same logic as manual Import / timer fallback.
+ * Body: { eos_entry_ids: [uuid, ...] }  (also accepts ids for convenience)
+ */
+r.post('/items/import', asyncWrap(async (req, res) => {
+  const raw = req.body?.eos_entry_ids ?? req.body?.ids
+  const ids = Array.isArray(raw) ? [...new Set(raw.filter(Boolean).map(String))] : []
+  if (!ids.length) return res.status(422).json({ error: 'eos_entry_ids is required (non-empty array)' })
+  if (ids.length > 200) return res.status(422).json({ error: 'Max 200 entries per import' })
+
+  let results
+  try {
+    results = await importEosEntries(ids, null)
+  } catch (e) {
+    return res.status(502).json({ error: `EOS import failed: ${e.message}` })
+  }
+
+  markWebhookImport()
+  await logAudit({ id: null, name: 'EOS Webhook', role: 'System' }, 'item', null, 'eos-import', {
+    source: 'eos-webhook',
+    created: results.created,
+    updated: results.updated,
+    linked: results.linked,
+    unchanged: results.unchanged,
+    failed: results.failed,
+    items: (results.items || []).slice(0, 50),
+    errors: (results.errors || []).slice(0, 20),
+  }).catch(() => {})
+
+  res.json({ source: 'eos-webhook', ...results })
+}))
 
 /** EOS → ERP push when engineering completes BOQ / status changes. */
 r.post('/engineering-requests/sync', asyncWrap(async (req, res) => {

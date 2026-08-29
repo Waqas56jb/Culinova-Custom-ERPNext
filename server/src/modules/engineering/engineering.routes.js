@@ -80,6 +80,8 @@ r.post('/requests', authRequired, authorize('sales', 'create'), asyncWrap(async 
     project_type: clean(p.project_type) || opp.project_type,
     project_location: clean(p.project_location) || opp.project_location || [opp.project_city, opp.project_district].filter(Boolean).join(' → '),
     drawings: Array.isArray(p.drawings) ? p.drawings : [],
+    // G9 parity: same attachment ingest as from-opportunity path
+    attachments: await ingestAttachments(p.attachments),
     boq_text: clean(p.boq_text),
     sales_notes: clean(p.sales_notes),
     required_date: clean(p.required_date),
@@ -90,7 +92,7 @@ r.post('/requests', authRequired, authorize('sales', 'create'), asyncWrap(async 
   const { data, error } = await supabase.from('engineering_requests').insert(row).select().single()
   if (error) throw error
 
-  const eos = await pushEngineeringRequest(data)
+  const eos = await pushEngineeringRequest({ ...data, attachments: await signAttachmentList(data.attachments) })
   if (eos?.id) {
     await supabase.from('engineering_requests').update({ eos_request_id: eos.id }).eq('id', data.id)
     data.eos_request_id = eos.id

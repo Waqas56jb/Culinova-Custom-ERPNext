@@ -184,7 +184,7 @@ export default function ItemMaster() {
   // bulk import, edit, delete. Under the live 'eos' policy it is false for EVERY role, Management included.
   const erpOwnsItems = canEdit && !eosOnly
   const autoOn = (policy?.eos_auto_sync || 'on').toLowerCase() === 'on'
-  const cadence = Number(policy?.eos_auto_sync_minutes) || 30
+  const cadence = Number(policy?.eos_auto_sync_minutes) || 60
   const reachable = status?.eos_reachable !== false
 
   const syncTimes = [status?.last_sync, status?.last_auto_sync?.finished]

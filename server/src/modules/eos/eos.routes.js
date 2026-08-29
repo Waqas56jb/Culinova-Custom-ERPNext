@@ -6,7 +6,7 @@ import { asyncWrap } from '../../middleware/error.js'
 import { logAudit } from '../../core/audit.js'
 import { eosCatalog, eosDetail, eosPending, importEosEntries, syncLinkedItems, eosUpdatesAvailable } from '../../core/eos.js'
 import { versionsOf, stripEosOwned } from '../../core/eosfields.js'
-import { runEosSync, lastEosSync } from '../../core/eosautosync.js'
+import { runEosSync, lastEosSync, lastWebhookImportAt, lastEosTimerRunAt } from '../../core/eosautosync.js'
 import { settings as systemSettings, invalidatePolicy } from '../../core/policy.js'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -154,6 +154,8 @@ export function eosRouter() {
       // the governing policy — the UI shows the user WHY it cannot create an item here
       policy: await systemSettings(),
       last_auto_sync: lastEosSync(),
+      last_webhook_import_at: lastWebhookImportAt(),
+      last_timer_run_at: lastEosTimerRunAt(),
     })
   }))
 

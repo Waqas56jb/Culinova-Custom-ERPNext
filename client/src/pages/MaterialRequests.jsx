@@ -1,10 +1,11 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
-import { Plus, Search, Send, CheckCircle2, Split, Trash2, Package, ClipboardList, ShoppingCart, X } from 'lucide-react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { Plus, Search, Send, CheckCircle2, Split, Trash2, Package, ClipboardList, ShoppingCart, X, Loader2 } from 'lucide-react'
 import { PageHeader, Badge } from '../components/ui.jsx'
 import { Modal, Field, Select, TextArea } from '../components/Modal.jsx'
 import { sar } from '../data/mockData.js'
 import { useData } from '../store/DataContext.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
+import { api } from '../api.js'
 
 // mirrors server rbac/permissions.financialRoles — decides whether est-rate / PO-value UI renders at all.
 // The server ALSO redacts, so a non-financial viewer simply gets undefined — we never render NaN.
@@ -14,7 +15,7 @@ const pill = { Draft: 'gray', Submitted: 'amber', Approved: 'green', Ordered: 'v
 const money = (n) => (n == null || Number.isNaN(Number(n)) ? '—' : sar(n))
 
 export default function MaterialRequests() {
-  const { items, projects, suppliers, settings, resList, resGet, resAdd, resUpdate, resDelete } = useData()
+  const { items, projects, suppliers, settings, resAdd } = useData()
   const { user } = useAuth()
   const canCreate = ['Create', 'Edit', 'Approval', 'Full Admin'].includes(user?.access_level)
   const canEdit = ['Edit', 'Approval', 'Full Admin'].includes(user?.access_level)
@@ -26,12 +27,15 @@ export default function MaterialRequests() {
   const [loading, setLoading] = useState(true)
   const [newOpen, setNewOpen] = useState(false)
   const [detailId, setDetailId] = useState(null)
+  const firstLoad = useRef(true)
 
+  // Use api() directly — resList from DataContext is a new function every poll (12s) and
+  // would re-trigger this effect, flashing "Loading…" forever (same fix as BOQ page).
   const load = useCallback(async () => {
-    setLoading(true)
-    try { setRows(await resList('purchase-requisitions') || []) } catch { setRows([]) }
-    setLoading(false)
-  }, [resList])
+    if (firstLoad.current) setLoading(true)
+    try { setRows(await api('/purchase-requisitions') || []) } catch { setRows([]) }
+    finally { setLoading(false); firstLoad.current = false }
+  }, [])
   useEffect(() => { load() }, [load])
 
   const counts = useMemo(() => ({
@@ -65,7 +69,11 @@ export default function MaterialRequests() {
               <th className="th">Status</th><th className="th text-right">Action</th>
             </tr></thead>
             <tbody>
-              {loading && <tr><td className="td text-muted" colSpan={8}>Loading requisitions…</td></tr>}
+              {loading && rows.length === 0 && (
+                <tr><td className="td text-muted" colSpan={8}>
+                  <span className="inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Loading requisitions…</span>
+                </td></tr>
+              )}
               {!loading && rows.length === 0 && (
                 <tr><td className="td text-muted" colSpan={8}>
                   No requisitions yet.{canCreate ? <> Click <span className="font-semibold text-ink">New Requisition</span> to raise one from the Item Master.</> : ' Ask a buyer to raise one.'}
@@ -102,7 +110,7 @@ export default function MaterialRequests() {
 
       {detailId && (
         <PRDetail
-          id={detailId} resGet={resGet} resAdd={resAdd} resList={resList} resDelete={resDelete}
+          id={detailId}
           suppliers={suppliers} settings={settings} showMoney={showMoney}
           canEdit={canEdit} canApprove={canApprove} canDelete={canDelete}
           onChanged={load}
@@ -132,8 +140,11 @@ function NewPRModal({ items, projects, deptOptions, showMoney, onClose, onCreate
   const [requiredBy, setRequiredBy] = useState('')
   const [priority, setPriority] = useState('Medium')
   const [notes, setNotes] = useState('')
+  const [overrideReason, setOverrideReason] = useState('')
+  const [buyShortfall, setBuyShortfall] = useState(false)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  const [suggestions, setSuggestions] = useState([])
 
   const chosenIds = new Set(lines.map((l) => l.id))
   const filtered = useMemo(() => {
@@ -151,18 +162,28 @@ function NewPRModal({ items, projects, deptOptions, showMoney, onClose, onCreate
 
   const submit = async () => {
     setErr('')
+    setSuggestions([])
     if (!lines.length) { setErr('Add at least one item from the Item Master.'); return }
     setBusy(true)
     try {
-      await onCreate({
+      const body = {
         project_id: project || null,
         department: department || null,
         required_by: requiredBy || null,
         priority,
         notes: notes || null,
+        buy_shortfall_only: buyShortfall || undefined,
+        override: overrideReason.trim() ? { reason: overrideReason.trim() } : undefined,
         items: lines.map((l) => ({ item_id: l.id, item_name: l.item_name, uom: l.uom, qty: Number(l.qty) || 1, est_rate: l.est_rate === '' ? null : Number(l.est_rate), notes: l.notes || null })),
-      })
-    } catch (e) { setErr(e.message || 'Failed to create requisition'); setBusy(false) }
+      }
+      await onCreate(body)
+    } catch (e) {
+      const msg = e.message || 'Failed to create requisition'
+      setErr(msg)
+      const sug = e.payload?.suggestions || []
+      if (Array.isArray(sug) && sug.length) setSuggestions(sug)
+      setBusy(false)
+    }
   }
 
   return (
@@ -228,34 +249,54 @@ function NewPRModal({ items, projects, deptOptions, showMoney, onClose, onCreate
       </div>
 
       <TextArea label="Notes (optional)" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+      <TextArea
+        label="Stock override reason (Management — only if buying an in-stock item)"
+        rows={2}
+        value={overrideReason}
+        onChange={(e) => setOverrideReason(e.target.value)}
+        placeholder="Required when purchasing items that are already available in stock"
+      />
+      <label className="flex cursor-pointer items-start gap-2 rounded-xl border border-amber-200 bg-amber-50/50 px-3 py-2">
+        <input type="checkbox" checked={buyShortfall} onChange={(e) => setBuyShortfall(e.target.checked)} className="mt-0.5 h-4 w-4 accent-amber-600" />
+        <span className="text-xs font-semibold text-amber-900">Buy shortfall only — reduce qty to what is not already in stock</span>
+      </label>
       {err && <p className="text-xs font-semibold text-rose-600">{err}</p>}
+      {suggestions.length > 0 && (
+        <ul className="space-y-1 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
+          {suggestions.map((s, i) => (
+            <li key={i}>
+              <b>{s.item_name}</b> — {s.message || `Buy shortfall only (${s.buy_shortfall_only})`}
+            </li>
+          ))}
+        </ul>
+      )}
     </Modal>
   )
 }
 
 // ── DETAIL (header · items · actions · linked POs · allocation) ──────────────────
-function PRDetail({ id, resGet, resAdd, resList, resDelete, suppliers, settings, showMoney, canEdit, canApprove, canDelete, onChanged, onClose, onDeleted }) {
+function PRDetail({ id, suppliers, settings, showMoney, canEdit, canApprove, canDelete, onChanged, onClose, onDeleted }) {
   const [pr, setPr] = useState(null)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState('')
   const [allocOpen, setAllocOpen] = useState(false)
 
   const load = useCallback(async () => {
-    try { setPr(await resGet('purchase-requisitions', id)) } catch (e) { setErr(e.message) }
-  }, [id, resGet])
+    try { setPr(await api(`/purchase-requisitions/${id}`)) } catch (e) { setErr(e.message) }
+  }, [id])
   useEffect(() => { load() }, [load])
 
   const refresh = async () => { await load(); onChanged?.() }
 
   const act = async (verb) => {
     setErr(''); setBusy(verb)
-    try { await resAdd(`purchase-requisitions/${id}/${verb}`, {}); await refresh() }
+    try { await api(`/purchase-requisitions/${id}/${verb}`, { method: 'POST', body: {} }); await refresh() }
     catch (e) { setErr(e.message || `Failed to ${verb}`) } finally { setBusy('') }
   }
   const remove = async () => {
     if (!window.confirm('Delete this requisition?')) return
     setErr(''); setBusy('delete')
-    try { await resDelete('purchase-requisitions', id); onDeleted?.() }
+    try { await api(`/purchase-requisitions/${id}`, { method: 'DELETE' }); onDeleted?.() }
     catch (e) { setErr(e.message || 'Failed to delete'); setBusy('') }
   }
 
@@ -330,7 +371,7 @@ function PRDetail({ id, resGet, resAdd, resList, resDelete, suppliers, settings,
       {err && <p className="text-xs font-semibold text-rose-600">{err}</p>}
 
       {allocOpen && (
-        <AllocateModal prId={id} resList={resList} resAdd={resAdd} suppliers={suppliers} currencies={settings?.currencies} showMoney={showMoney}
+        <AllocateModal prId={id} suppliers={suppliers} currencies={settings?.currencies} showMoney={showMoney}
           onClose={() => setAllocOpen(false)}
           onDone={async () => { setAllocOpen(false); await refresh() }} />
       )}
@@ -348,7 +389,7 @@ function Meta({ label, value }) {
 }
 
 // ── SUPPLIER ALLOCATION ──────────────────────────────────────────────────────────
-function AllocateModal({ prId, resList, resAdd, suppliers, currencies, showMoney, onClose, onDone }) {
+function AllocateModal({ prId, suppliers, currencies, showMoney, onClose, onDone }) {
   const [suggest, setSuggest] = useState(null)
   const [alloc, setAlloc] = useState({}) // pr_item_id → { supplier, rate, currency }
   const [busy, setBusy] = useState(false)
@@ -356,10 +397,15 @@ function AllocateModal({ prId, resList, resAdd, suppliers, currencies, showMoney
   const curOpts = currencies?.length ? currencies.map((c) => c.code) : ['SAR', 'USD', 'EUR', 'AED']
 
   useEffect(() => {
-    (async () => {
-      try { setSuggest(await resList(`purchase-requisitions/${prId}/suggest-suppliers`)) } catch (e) { setErr(e.message) }
+    let alive = true
+    ;(async () => {
+      try {
+        const data = await api(`/purchase-requisitions/${prId}/suggest-suppliers`)
+        if (alive) setSuggest(data)
+      } catch (e) { if (alive) setErr(e.message) }
     })()
-  }, [prId, resList])
+    return () => { alive = false }
+  }, [prId])
 
   const supNames = (suppliers || []).map((s) => s.name).filter(Boolean)
   const set = (pid, k, v) => setAlloc((p) => ({ ...p, [pid]: { ...(p[pid] || { currency: 'SAR' }), [k]: v } }))
@@ -378,7 +424,7 @@ function AllocateModal({ prId, resList, resAdd, suppliers, currencies, showMoney
     if (!allocations.length) { setErr('Assign a supplier to at least one item.'); return }
     if (allocations.some((a) => a.rate == null || Number.isNaN(a.rate))) { setErr('Enter a rate for every allocated item.'); return }
     setBusy(true)
-    try { await resAdd(`purchase-requisitions/${prId}/to-po`, { allocations }); await onDone() }
+    try { await api(`/purchase-requisitions/${prId}/to-po`, { method: 'POST', body: { allocations } }); await onDone() }
     catch (e) { setErr(e.message || 'Failed to create purchase orders'); setBusy(false) }
   }
 
