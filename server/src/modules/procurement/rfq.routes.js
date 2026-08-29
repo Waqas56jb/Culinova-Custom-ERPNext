@@ -14,6 +14,7 @@ import { asyncWrap } from '../../middleware/error.js'
 import { nextNumber } from '../../core/numbering.js'
 import { fxRate, baseCurrency } from '../../core/pricing.js'
 import { logAudit } from '../../core/audit.js'
+import { assertPurchaseAllowed, recordStockOverride } from '../../core/procurementGuard.js'
 
 // '' from a form control must never reach a uuid/numeric/date column (Postgres 22P02) — coerce to null.
 const clean = (v) => (v === '' || v === undefined ? null : v)
@@ -274,6 +275,23 @@ export function rfqRouter() {
     const { data: quote } = await supabase.from('rfq_quotes').select('*').eq('rfq_id', id).ilike('supplier', supplier).maybeSingle()
     if (!quote) return res.status(422).json({ error: `No quote from "${supplier}" — record their quotation before awarding.` })
 
+    const qty = Number(rfq.qty) || 1
+    const amount = Number(quote.quote) || 0
+    const rate = qty > 0 ? round(amount / qty) : amount
+
+    // Guard BEFORE awarding — a failed stock check must not leave the RFQ stuck as Awarded
+    const guard = await assertPurchaseAllowed({
+      lines: [{ item_id: rfq.item_id || null, item_name: rfq.item_name, qty }],
+      actor: req.user,
+      override: req.body?.override,
+      buy_shortfall_only: !!req.body?.buy_shortfall_only,
+    })
+    if (!guard.ok) return res.status(guard.status).json(guard.body)
+    const poQty = guard.buy_shortfall_only ? (guard.adjusted_lines[0]?.qty || 0) : qty
+    if (poQty <= 0) return res.status(422).json({ error: 'Nothing to purchase after stock-first shortfall reduction.' })
+    const poAmount = guard.buy_shortfall_only && qty > 0 ? round(amount * (poQty / qty)) : amount
+    const poRate = poQty > 0 ? round(poAmount / poQty) : rate
+
     const stamp = nowIso()
     const { data: updated, error: e1 } = await supabase.from('rfqs')
       .update({ awarded_supplier: supplier, awarded_at: stamp, status: 'Awarded' }).eq('id', id).select().single()
@@ -286,26 +304,35 @@ export function rfqRouter() {
     // link the PO back to the supplier record when we know it
     const { data: supRow } = await supabase.from('rfq_suppliers').select('supplier_id').eq('rfq_id', id).ilike('supplier', supplier).maybeSingle()
 
-    const qty = Number(rfq.qty) || 1
-    const amount = Number(quote.quote) || 0
-    const rate = qty > 0 ? round(amount / qty) : amount
     const poNumber = await nextNumber('purchase_orders', 'PO')
     const { data: po, error: e2 } = await supabase.from('purchase_orders').insert({
       number: poNumber,
       supplier,
       supplier_id: supRow?.supplier_id || null,
       item_name: rfq.item_name,
-      qty,
-      rate,
-      amount,
+      qty: poQty,
+      rate: poRate,
+      amount: poAmount,
       currency: quote.currency || 'SAR',
       rfq_id: id,
       project_id: rfq.project_id || null,
       status: 'Pending',
+      override_reason: guard.override_reason || null,
+      stock_override_by: guard.override_reason ? req.user.id : null,
     }).select().single()
     if (e2) throw e2
 
-    await logAudit(req.user, 'rfq', id, 'award', { supplier, po: poNumber, amount, currency: quote.currency || 'SAR' })
+    await logAudit(req.user, 'rfq', id, 'award', { supplier, po: poNumber, amount: poAmount, currency: quote.currency || 'SAR', override: !!guard.override_reason })
+    if (guard.override_reason) {
+      await recordStockOverride({
+        actor: req.user,
+        docType: 'purchase_order',
+        docId: po.id,
+        docNumber: poNumber,
+        override_reason: guard.override_reason,
+        lines: guard.lines,
+      })
+    }
     res.status(201).json(redactFinancials(req.user.role, { rfq: updated, po }))
   }))
 

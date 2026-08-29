@@ -73,6 +73,7 @@ export default function ItemMaster() {
   const [page, setPage] = useState(0)
   const [masterItems, setMasterItems] = useState([])
   const [masterTotal, setMasterTotal] = useState(0)
+  const [disabledCount, setDisabledCount] = useState(0)
   const [masterLoading, setMasterLoading] = useState(false)
   const [familyFilter, setFamilyFilter] = useState('')
   const [brandFilter, setBrandFilter] = useState('')
@@ -124,6 +125,11 @@ export default function ItemMaster() {
       const r = await api(`/items?${params}`)
       setMasterItems(r.items || [])
       setMasterTotal(Number(r.total) || 0)
+      // KPI must match Item Master truth (include disabled), not DataContext cache
+      try {
+        const dc = await api('/items?include_disabled=1&status=disabled&limit=1&offset=0')
+        setDisabledCount(Number(dc.total) || 0)
+      } catch { /* keep previous */ }
     } catch {
       setMasterItems([])
       setMasterTotal(0)
@@ -148,6 +154,7 @@ export default function ItemMaster() {
       await api(`/items/${i.id}`, { method: 'PATCH', body: { disabled: next } })
       // Table uses masterItems (paged API), not DataContext — must reload this list
       setMasterItems((rows) => rows.map((r) => (r.id === i.id ? { ...r, disabled: next } : r)))
+      setDisabledCount((n) => Math.max(0, n + (next ? 1 : -1)))
       await loadMaster()
       await d.loadItems?.()
     } catch (err) { alert(err.message || 'Failed to update item') }
@@ -340,7 +347,7 @@ export default function ItemMaster() {
         <Stat label="Items" value={items.filter((i) => !i.has_variants).length} icon={Package} tone="text-brand-600" />
         <Stat label="Templates" value={items.filter((i) => i.has_variants).length} icon={Layers} tone="text-violet-600" />
         <Stat label="Product Families" value={(d.productFamilies || []).length} icon={Tag} tone="text-gold-600" />
-        <Stat label="Disabled" value={items.filter((i) => i.disabled).length} icon={Sparkles} tone="text-rose-600" />
+        <Stat label="Disabled" value={disabledCount} icon={Sparkles} tone="text-rose-600" />
       </div>
 
       <div className="card overflow-hidden">

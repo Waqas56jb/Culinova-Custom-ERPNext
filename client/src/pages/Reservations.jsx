@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
-import { Lock, Unlock, Check, X, Loader2, Package } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { Lock, Unlock, Check, X, Loader2, Package, Search } from 'lucide-react'
 import { PageHeader, Badge } from '../components/ui.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
 import { api } from '../api.js'
@@ -10,6 +11,14 @@ const ageDays = (iso) => {
   return d <= 0 ? 'today' : `${d}d`
 }
 
+const STATUS_OPTS = [
+  { value: 'Active,Release Requested', label: 'Active + Pending release' },
+  { value: 'Active', label: 'Active' },
+  { value: 'Release Requested', label: 'Release Requested' },
+  { value: 'Consumed', label: 'Consumed' },
+  { value: 'Released', label: 'Released' },
+]
+
 export default function Reservations() {
   const { user } = useAuth()
   const canRequest = ['Management', 'System Admin', 'Stock User', 'Stock Manager'].includes(user?.role)
@@ -18,19 +27,36 @@ export default function Reservations() {
   const [rows, setRows] = useState([])
   const [busy, setBusy] = useState(null)
   const [err, setErr] = useState('')
+  const [q, setQ] = useState('')
+  const [statusFilter, setStatusFilter] = useState('Active,Release Requested')
 
   const load = useCallback(async () => {
     setErr('')
     try {
-      const data = await api('/inventory/reservations?status=Active,Release%20Requested')
+      const params = new URLSearchParams()
+      if (statusFilter) params.set('status', statusFilter)
+      const data = await api(`/inventory/reservations?${params}`)
       setRows(Array.isArray(data) ? data : [])
     } catch (e) {
       setErr(e.message)
       setRows([])
     }
-  }, [])
+  }, [statusFilter])
 
   useEffect(() => { load() }, [load])
+
+  const filtered = useMemo(() => {
+    const s = q.trim().toLowerCase()
+    if (!s) return rows
+    return rows.filter((r) =>
+      (r.item_name || '').toLowerCase().includes(s)
+      || (r.warehouse || '').toLowerCase().includes(s)
+      || String(r.sales_order_id || '').toLowerCase().includes(s)
+      || String(r.project_id || '').toLowerCase().includes(s)
+      || (r.so_number || '').toLowerCase().includes(s)
+      || (r.project_number || '').toLowerCase().includes(s)
+    )
+  }, [rows, q])
 
   const run = async (id, fn) => {
     setBusy(id)
@@ -57,6 +83,20 @@ export default function Reservations() {
       <PageHeader title="Stock Reservations" subtitle="Active holds on Sales Orders — request release when stock must be freed" />
       {err && <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{err}</div>}
       <div className="card overflow-hidden">
+        <div className="flex flex-col gap-3 border-b border-slate-100 p-4 sm:flex-row sm:items-end sm:justify-between">
+          <label className="block min-w-[200px] flex-1">
+            <span className="mb-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-muted"><Search size={12} /> Item / SO / Project</span>
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search…"
+              className="w-full rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm outline-none focus:border-brand-400 focus:bg-white" />
+          </label>
+          <label className="block min-w-[180px]">
+            <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-muted">Status</span>
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+              className="w-full rounded-lg border border-slate-200 bg-slate-50/70 px-2 py-2 text-sm outline-none focus:border-brand-400 focus:bg-white">
+              {STATUS_OPTS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </label>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[900px]">
             <thead>
@@ -72,19 +112,30 @@ export default function Reservations() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
+              {filtered.map((r) => (
                 <tr key={r.id} className="hover:bg-slate-50/60">
                   <td className="td font-medium text-ink">{r.item_name || '—'}</td>
                   <td className="td text-slate-500">{r.warehouse || '—'}</td>
                   <td className="td tabular-nums font-semibold">{Number(r.qty) || 0}</td>
                   <td className="td tabular-nums text-amber-700">{Number(r.short_qty) > 0 ? r.short_qty : '—'}</td>
-                  <td className="td text-xs text-slate-500">
-                    {r.sales_order_id ? <span className="font-mono">{String(r.sales_order_id).slice(0, 8)}…</span> : '—'}
+                  <td className="td text-xs text-slate-600">
+                    <div className="flex flex-col gap-0.5">
+                      {r.sales_order_id ? (
+                        <Link className="font-semibold text-brand-600 hover:underline" to="/sales/orders" title={r.sales_order_id}>
+                          SO {r.so_number || String(r.sales_order_id).slice(0, 8)}
+                        </Link>
+                      ) : <span className="text-slate-400">—</span>}
+                      {r.project_id ? (
+                        <Link className="text-violet-600 hover:underline" to={`/projects/${r.project_id}`} title={r.project_id}>
+                          {r.project_number || 'Project'}
+                        </Link>
+                      ) : null}
+                    </div>
                     {r.release_reason && <div className="mt-0.5 text-[10px] text-slate-400">{r.release_reason}</div>}
                   </td>
                   <td className="td text-slate-500">{ageDays(r.created_at)}</td>
                   <td className="td">
-                    <Badge tone={r.status === 'Release Requested' ? 'amber' : 'green'}>{r.status}</Badge>
+                    <Badge tone={r.status === 'Release Requested' ? 'amber' : r.status === 'Active' ? 'green' : 'slate'}>{r.status}</Badge>
                   </td>
                   <td className="td">
                     <div className="flex flex-wrap gap-1.5">
@@ -113,11 +164,11 @@ export default function Reservations() {
                   </td>
                 </tr>
               ))}
-              {rows.length === 0 && (
+              {filtered.length === 0 && (
                 <tr>
                   <td className="td py-10 text-center text-slate-400" colSpan={8}>
                     <Package size={20} className="mx-auto mb-2 opacity-40" />
-                    No active or release-requested reservations.
+                    No reservations match this filter.
                   </td>
                 </tr>
               )}

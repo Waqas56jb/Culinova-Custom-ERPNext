@@ -10,6 +10,8 @@ import { sar } from '../data/mockData.js'
 import { hasCost, collectionPctOf, procurementPctOf } from '../data/projectData.js'
 import { useData } from '../store/DataContext.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
+import { api } from '../api.js'
+import { StockAvailabilityChips } from '../components/StockAvailabilityChips.jsx'
 
 const BOQ_STATUSES = ['Waiting', 'Assigned', 'In Progress', 'Installed']
 const MANAGEMENT_ROLES = ['Management', 'System Admin']
@@ -44,6 +46,7 @@ export default function ProjectDetail() {
   const [procErr, setProcErr] = useState('')
   const [boqErr, setBoqErr] = useState('')
   const [completeErr, setCompleteErr] = useState('')
+  const [availMap, setAvailMap] = useState({})
 
   // the manager picker's options (readable by every internal role)
   useEffect(() => {
@@ -92,6 +95,16 @@ export default function ProjectDetail() {
   const installed = boq.filter((b) => ['Installed', 'Delivered'].includes(b.status)).length
   const allDone = boq.length > 0 && installed === boq.length
   const pending = boq.filter((b) => b.status === 'Waiting').length
+
+  useEffect(() => {
+    const ids = [...new Set(boq.map((b) => b.item_id).filter(Boolean))]
+    if (!ids.length) { setAvailMap({}); return }
+    let alive = true
+    api(`/inventory/availability-bulk?ids=${ids.join(',')}`)
+      .then((m) => { if (alive) setAvailMap(m && typeof m === 'object' ? m : {}) })
+      .catch(() => { if (alive) setAvailMap({}) })
+    return () => { alive = false }
+  }, [p?.id, boq.map((b) => b.item_id).join(',')]) // eslint-disable-line react-hooks/exhaustive-deps
   // the honest root cause of a missing margin: the BOQ was seeded from items that carry no cost.
   // Only claim this to a role that can actually SEE cost — otherwise budget_cost is merely redacted,
   // not zero, and the banner would be a guess.
@@ -297,7 +310,17 @@ export default function ProjectDetail() {
               {boq.map((b, i) => (
                 <tr key={b.id || i} className="hover:bg-slate-50/60">
                   <td className="td text-slate-400">{i + 1}</td>
-                  <td className="td font-medium text-ink">{b.item}</td>
+                  <td className="td font-medium text-ink">
+                    {b.item}
+                    <StockAvailabilityChips
+                      compact
+                      available={availMap[b.item_id]?.in_stock}
+                      reserved={availMap[b.item_id]?.reserved}
+                      incoming={availMap[b.item_id]?.in_transit}
+                      from_stock={b.from_stock}
+                      to_purchase={b.to_purchase}
+                    />
+                  </td>
                   <td className="td text-slate-600">{b.qty}</td>
                   <td className="td"><CostCell label={`Budget cost of ${b.item}`} value={b.budget_cost} onCommit={(v) => commitBoq(i, { budget_cost: v })} /></td>
                   <td className="td"><CostCell label={`Actual cost of ${b.item}`} value={b.actual_cost} onCommit={(v) => commitBoq(i, { actual_cost: v })} /></td>

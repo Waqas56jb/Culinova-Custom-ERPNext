@@ -15,6 +15,7 @@ import { authorize, redactFinancials } from '../../middleware/rbac.js'
 import { asyncWrap } from '../../middleware/error.js'
 import { nextNumber } from '../../core/numbering.js'
 import { logAudit } from '../../core/audit.js'
+import { assertPurchaseAllowed, recordStockOverride } from '../../core/procurementGuard.js'
 
 // '' from a form control must never reach a uuid/numeric/date column (Postgres 22P02) — coerce to null.
 const clean = (v) => (v === '' || v === undefined ? null : v)
@@ -116,8 +117,27 @@ export function prRouter() {
     const b = req.body || {}
     const rawItems = Array.isArray(b.items) ? b.items : []
     const master = await masterMap(rawItems)
-    const lines = rawItems.map((i) => lineFrom(i, master)).filter((li) => li.item_name)
+    let lines = rawItems.map((i) => lineFrom(i, master)).filter((li) => li.item_name)
     if (!lines.length) return res.status(422).json({ error: 'A requisition needs at least one item — pick from the Item Master.' })
+
+    const guard = await assertPurchaseAllowed({
+      lines,
+      actor: req.user,
+      override: b.override,
+      buy_shortfall_only: !!b.buy_shortfall_only,
+      docLabel: 'purchase_requisition',
+    })
+    if (!guard.ok) return res.status(guard.status).json(guard.body)
+    if (guard.buy_shortfall_only) {
+      lines = guard.adjusted_lines.map((c) => ({
+        item_id: c.item_id,
+        item_name: c.item_name,
+        qty: c.qty,
+        uom: lines.find((l) => l.item_id === c.item_id || l.item_name === c.item_name)?.uom || null,
+        est_rate: lines.find((l) => l.item_id === c.item_id || l.item_name === c.item_name)?.est_rate ?? null,
+        notes: lines.find((l) => l.item_id === c.item_id || l.item_name === c.item_name)?.notes ?? null,
+      }))
+    }
 
     const number = await nextNumber('purchase_requisitions', 'PR')
     const { data: pr, error } = await supabase.from('purchase_requisitions').insert({
@@ -130,6 +150,8 @@ export function prRouter() {
       priority: b.priority || 'Medium',
       status: 'Draft',
       notes: clean(b.notes),
+      override_reason: guard.override_reason || null,
+      stock_override_by: guard.override_reason ? req.user.id : null,
     }).select().single()
     if (error) throw error
 
@@ -137,7 +159,17 @@ export function prRouter() {
       .from('purchase_requisition_items').insert(lines.map((li) => ({ ...li, pr_id: pr.id }))).select()
     if (e2) throw e2
 
-    await logAudit(req.user, 'purchase_requisition', pr.id, 'create', { number, items: lines.length })
+    await logAudit(req.user, 'purchase_requisition', pr.id, 'create', { number, items: lines.length, override: !!guard.override_reason })
+    if (guard.override_reason) {
+      await recordStockOverride({
+        actor: req.user,
+        docType: 'purchase_requisition',
+        docId: pr.id,
+        docNumber: number,
+        override_reason: guard.override_reason,
+        lines: guard.lines,
+      })
+    }
     res.status(201).json(redactFinancials(req.user.role, { ...pr, items: insItems || [] }))
   }))
 
@@ -296,6 +328,14 @@ export function prRouter() {
       if (rate == null || Number.isNaN(rate) || rate < 0) return res.status(422).json({ error: `A valid rate is required for "${li.item_name}".` })
       resolved.push({ li, supplier, rate, currency: a.currency || 'SAR' })
     }
+
+    const guard = await assertPurchaseAllowed({
+      lines: resolved.map((x) => ({ item_id: x.li.item_id, item_name: x.li.item_name, qty: x.li.qty })),
+      actor: req.user,
+      override: req.body?.override || (pr.override_reason ? { reason: pr.override_reason } : null),
+      buy_shortfall_only: !!req.body?.buy_shortfall_only,
+    })
+    if (!guard.ok) return res.status(guard.status).json(guard.body)
 
     // resolve supplier ids once
     const names = [...new Set(resolved.map((x) => x.supplier.toLowerCase()))]

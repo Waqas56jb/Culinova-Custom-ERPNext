@@ -11,6 +11,7 @@ import { useAuth } from '../auth/AuthContext.jsx'
 import { api, getToken } from '../api.js'
 import { erpApiBase } from '@deploy'
 import { specPreview } from '@shared/specs.js'
+import { StockAvailabilityChips } from '../components/StockAvailabilityChips.jsx'
 
 // Roles allowed to see cost / margin / supplier price (mirrors server rbac/permissions.financialRoles).
 // The server ALSO redacts, so a non-financial viewer simply gets undefined — we never render it.
@@ -43,6 +44,7 @@ export default function BOQ() {
   const [quotes, setQuotes] = useState([])
   const [quotesErr, setQuotesErr] = useState('')
   const [quotesLoading, setQuotesLoading] = useState(true)
+  const [availMap, setAvailMap] = useState({})
 
   const currencies = (settings?.currencies || []).map((c) => c.code).filter(Boolean)
 
@@ -61,6 +63,19 @@ export default function BOQ() {
 
   useEffect(() => { if (!selId) loadList() }, [selId, loadList])
   useEffect(() => { loadDetail(selId) }, [selId, loadDetail])
+
+  useEffect(() => {
+    const lines = []
+    for (const g of detail?.groups || []) for (const l of g.items || []) if (l.item_id) lines.push(l)
+    for (const l of detail?.items || []) if (l.item_id) lines.push(l)
+    const ids = [...new Set(lines.map((l) => l.item_id).filter(Boolean))]
+    if (!ids.length) { setAvailMap({}); return }
+    let alive = true
+    api(`/inventory/availability-bulk?ids=${ids.join(',')}`)
+      .then((m) => { if (alive) setAvailMap(m && typeof m === 'object' ? m : {}) })
+      .catch(() => { if (alive) setAvailMap({}) })
+    return () => { alive = false }
+  }, [detail])
 
   useEffect(() => {
     let alive = true
@@ -228,6 +243,14 @@ export default function BOQ() {
                                   {l.description || specPreview(l.specifications, 80)}
                                 </div>
                               )}
+                              <StockAvailabilityChips
+                                compact
+                                available={availMap[l.item_id]?.in_stock}
+                                reserved={availMap[l.item_id]?.reserved}
+                                incoming={availMap[l.item_id]?.in_transit}
+                                from_stock={l.from_stock}
+                                to_purchase={l.to_purchase}
+                              />
                             </td>
                             <td className="td text-slate-500">{l.uom || 'Nos'}</td>
                             <td className="td">

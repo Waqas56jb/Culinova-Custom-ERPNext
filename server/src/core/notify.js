@@ -85,3 +85,22 @@ export async function notifyReservationReleaseRequest(rv, senderName) {
   }))
   await supabase.from('notifications').insert(rows)
 }
+
+/** Sprint 2 Block 2 — stock-override purchase → notify Management. */
+export async function notifyStockOverridePurchase({ actor, docType, docNumber, reason, lines = [] }) {
+  const { data: managers } = await supabase.from('users').select('id').or('role.eq.Management,role.eq.System Admin')
+  if (!managers?.length) return
+  const itemsBit = (lines || []).slice(0, 3).map((l) => `${l.item_name || 'item'}×${l.qty}`).join(', ')
+  const more = lines.length > 3 ? ` +${lines.length - 3} more` : ''
+  const rows = managers.map((u) => ({
+    user_id: u.id,
+    type: 'stock_override',
+    ref_type: docType || 'purchase',
+    ref_id: null,
+    action_status: 'info',
+    title: 'Stock-override purchase created',
+    body: `Stock-override purchase created by ${actor?.name || 'user'}: ${docNumber || docType} · ${itemsBit}${more}${reason ? ` · reason: ${reason}` : ''}`,
+    sender: actor?.name || 'Procurement',
+  }))
+  await supabase.from('notifications').insert(rows)
+}

@@ -7,6 +7,7 @@ import { asyncWrap } from '../middleware/error.js'
 import { logAudit } from './audit.js'
 import { nextNumber } from './numbering.js'
 import { recomputeProject } from './projectcost.js'
+import { assertPurchaseAllowed, recordStockOverride } from './procurementGuard.js'
 
 // When a resource declares recomputeProject: true, any create/update/delete that carries a project_id
 // re-rolls that project's committed/actual cost (so raising a PO or a variation against a project keeps
@@ -93,6 +94,46 @@ export function crudRouter(name, cfg) {
     const pfx = NUMBER_PREFIX[t]
     // consume the editable numbering series (Company Settings) when configured; else fall back
     if (pfx && !body.number) body.number = await nextNumber(t, pfx)
+
+    // Sprint 2 Block 2 — generic PO create must not bypass stock-first guard
+    if (t === 'purchase_orders') {
+      const guard = await assertPurchaseAllowed({
+        lines: [{ item_id: body.item_id, item_name: body.item_name, qty: body.qty }],
+        actor: req.user,
+        override: req.body?.override,
+        buy_shortfall_only: !!req.body?.buy_shortfall_only,
+      })
+      if (!guard.ok) return res.status(guard.status).json(guard.body)
+      delete body.override
+      delete body.buy_shortfall_only
+      if (guard.buy_shortfall_only) {
+        const q = guard.adjusted_lines[0]?.qty || 0
+        if (q <= 0) return res.status(422).json({ error: 'Nothing to purchase — fully covered by stock' })
+        body.qty = q
+      }
+      if (guard.override_reason) {
+        body.override_reason = guard.override_reason
+        body.stock_override_by = req.user.id
+      }
+      const { data, error } = await supabase.from(t).insert(body).select().single()
+      if (error) return res.status(500).json({ error: error.message, details: error.details, hint: error.hint })
+      await logAudit(req.user, name, data.id, 'created', body)
+      if (guard.override_reason) {
+        try {
+          await recordStockOverride({
+            actor: req.user,
+            docType: 'purchase_order',
+            docId: data.id,
+            docNumber: data.number,
+            override_reason: guard.override_reason,
+            lines: guard.lines,
+          })
+        } catch { /* notify best-effort */ }
+      }
+      await maybeRecompute(cfg, data)
+      return res.status(201).json(redactFinancials(req.user.role, passwordSafe(data)))
+    }
+
     const { data, error } = await supabase.from(t).insert(body).select().single()
     if (error) throw error
     await logAudit(req.user, name, data.id, 'created', body)

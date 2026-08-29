@@ -118,7 +118,21 @@ r.get('/reservations', authRequired, authorize('warehouse', 'read'), asyncWrap(a
   }
   const { data, error } = await q
   if (error) throw error
-  res.json(data || [])
+  const rows = data || []
+  const soIds = [...new Set(rows.map((r) => r.sales_order_id).filter(Boolean))]
+  const projIds = [...new Set(rows.map((r) => r.project_id).filter(Boolean))]
+  const [{ data: sos }, { data: projs }] = await Promise.all([
+    soIds.length ? supabase.from('sales_orders').select('id, number').in('id', soIds) : Promise.resolve({ data: [] }),
+    projIds.length ? supabase.from('projects').select('id, number, name').in('id', projIds) : Promise.resolve({ data: [] }),
+  ])
+  const soMap = Object.fromEntries((sos || []).map((s) => [s.id, s]))
+  const pMap = Object.fromEntries((projs || []).map((p) => [p.id, p]))
+  res.json(rows.map((r) => ({
+    ...r,
+    so_number: soMap[r.sales_order_id]?.number || null,
+    project_number: pMap[r.project_id]?.number || null,
+    project_name: pMap[r.project_id]?.name || null,
+  })))
 }))
 
 // INV-007: anyone with stock access can REQUEST a release …
