@@ -16,14 +16,22 @@ const canActOn = (status) => ['Open', 'Sent', 'Under Negotiation'].includes(stat
 
 export default function Quotations() {
   const { quotations, acceptQuote, rejectQuote, requestConcession, saveCommercialProfile, getCommercialProfile } = useCustomer()
-  const [busy, setBusy] = useState(null) // `${quoteId}:${action}` so only the clicked button spins
+  const [busy, setBusy] = useState(null) // `${quoteId}:${action}` — only that button spins
+  const [doc, setDoc] = useState(null)
+  const [profileModal, setProfileModal] = useState(null)
+  const [profile, setProfile] = useState(blankProfile())
+  const [profileErr, setProfileErr] = useState('')
+  const [rejectFor, setRejectFor] = useState(null)
+  const [rejectReason, setRejectReason] = useState('')
+  const [rejectNote, setRejectNote] = useState('')
+  const [rejectErr, setRejectErr] = useState('')
 
   const run = async (id, action, fn) => {
     setBusy(`${id}:${action}`)
     try { await fn() } catch (e) { alert(e.message) } finally { setBusy(null) }
   }
   const isBusy = (id, action) => busy === `${id}:${action}`
-  const rowBusy = (id) => busy?.startsWith(`${id}:`)
+  const rowBusy = (id) => typeof busy === 'string' && busy.startsWith(`${id}:`)
 
   const accept = async (q) => {
     if (!window.confirm(`Accept ${q.ref}? This confirms your order — CULINOVA will start your project.`)) return
@@ -89,12 +97,12 @@ export default function Quotations() {
 
   const Btn = ({ onClick, tone = 'slate', icon: Icon, children, loading, disabled }) => (
     <button type="button" onClick={onClick} disabled={!!(disabled || loading)}
-      className={`inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-60 ${
+      className={`inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition-opacity disabled:cursor-not-allowed disabled:opacity-50 ${
         tone === 'brand' ? 'bg-brand-500 text-white hover:bg-brand-600'
           : tone === 'amber' ? 'border border-amber-200 text-amber-600 hover:bg-amber-50'
             : tone === 'rose' ? 'border border-slate-200 text-slate-500 hover:bg-rose-50 hover:text-rose-600'
               : 'border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
-      {loading ? <Loader2 size={13} className="animate-spin" /> : Icon && <Icon size={13} />} {children}
+      {loading ? <Loader2 size={13} className="animate-spin shrink-0" /> : Icon && <Icon size={13} className="shrink-0" />} {children}
     </button>
   )
 
@@ -120,12 +128,43 @@ export default function Quotations() {
                   <td className="td"><Badge tone={statusTone(q.status)}>{q.status === 'Open' ? 'Sent' : q.status}</Badge></td>
                   <td className="td">
                     <div className="flex flex-wrap items-center justify-end gap-1.5">
-                      <Btn onClick={() => setDoc(q)} icon={FileText} id={q.id}>View PDF</Btn>
+                      <Btn
+                        onClick={() => setDoc(q)}
+                        icon={FileText}
+                        loading={isBusy(q.id, 'pdf')}
+                        disabled={rowBusy(q.id) && !isBusy(q.id, 'pdf')}
+                      >
+                        View PDF
+                      </Btn>
                       {canActOn(q.status) && (
                         <>
-                          <Btn onClick={() => accept(q)} tone="brand" icon={Check} id={q.id}>Accept</Btn>
-                          <Btn onClick={() => concession(q)} tone="amber" icon={MessageCircle} id={q.id}>Concession</Btn>
-                          <Btn onClick={() => openReject(q)} tone="rose" icon={XIcon} id={q.id}>Reject</Btn>
+                          <Btn
+                            onClick={() => accept(q)}
+                            tone="brand"
+                            icon={Check}
+                            loading={isBusy(q.id, 'accept')}
+                            disabled={rowBusy(q.id) && !isBusy(q.id, 'accept')}
+                          >
+                            Accept
+                          </Btn>
+                          <Btn
+                            onClick={() => concession(q)}
+                            tone="amber"
+                            icon={MessageCircle}
+                            loading={isBusy(q.id, 'concession')}
+                            disabled={rowBusy(q.id) && !isBusy(q.id, 'concession')}
+                          >
+                            Concession
+                          </Btn>
+                          <Btn
+                            onClick={() => openReject(q)}
+                            tone="rose"
+                            icon={XIcon}
+                            loading={isBusy(q.id, 'reject')}
+                            disabled={rowBusy(q.id) && !isBusy(q.id, 'reject')}
+                          >
+                            Reject
+                          </Btn>
                         </>
                       )}
                     </div>
@@ -172,9 +211,9 @@ export default function Quotations() {
             {rejectErr && <p className="mt-3 text-xs font-semibold text-rose-600">{rejectErr}</p>}
             <div className="mt-5 flex justify-end gap-2">
               <button type="button" onClick={() => setRejectFor(null)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">Cancel</button>
-              <button type="button" onClick={confirmReject} disabled={busy === rejectFor.id}
+              <button type="button" onClick={confirmReject} disabled={isBusy(rejectFor.id, 'reject')}
                 className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-60">
-                {busy === rejectFor.id ? <Loader2 size={14} className="animate-spin" /> : <XIcon size={14} />} Reject
+                {isBusy(rejectFor.id, 'reject') ? <Loader2 size={14} className="animate-spin" /> : <XIcon size={14} />} Reject
               </button>
             </div>
           </div>
@@ -205,9 +244,9 @@ export default function Quotations() {
             {profileErr && <p className="mt-3 text-xs font-semibold text-rose-600">{profileErr}</p>}
             <div className="mt-5 flex justify-end gap-2">
               <button type="button" onClick={() => setProfileModal(null)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">Cancel</button>
-              <button type="button" onClick={saveProfileAndAccept} disabled={busy === profileModal.id}
+              <button type="button" onClick={saveProfileAndAccept} disabled={isBusy(profileModal.id, 'accept')}
                 className="inline-flex items-center gap-1.5 rounded-xl bg-brand-500 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-60">
-                {busy === profileModal.id ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Save &amp; Accept
+                {isBusy(profileModal.id, 'accept') ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Save &amp; Accept
               </button>
             </div>
           </div>
