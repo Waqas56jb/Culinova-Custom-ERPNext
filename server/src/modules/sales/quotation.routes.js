@@ -230,7 +230,12 @@ function diffSnap(prev, cur) {
   return out
 }
 
-const notEditable = (q) => (q.status === 'Ordered' ? 'An ordered quotation cannot be edited' : q.status === 'Lost' ? 'A lost quotation cannot be edited' : null)
+const notEditable = (q) => (
+  q.status === 'Ordered' ? 'An ordered quotation cannot be edited'
+    : q.status === 'Lost' ? 'A lost quotation cannot be edited'
+    : q.status === 'Rejected' ? 'A rejected quotation cannot be edited — use Revise'
+    : null
+)
 
 export function quotationRouter() {
   const r = Router()
