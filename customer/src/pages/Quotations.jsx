@@ -16,21 +16,18 @@ const canActOn = (status) => ['Open', 'Sent', 'Under Negotiation'].includes(stat
 
 export default function Quotations() {
   const { quotations, acceptQuote, rejectQuote, requestConcession, saveCommercialProfile, getCommercialProfile } = useCustomer()
-  const [busy, setBusy] = useState(null)
-  const [doc, setDoc] = useState(null)
-  const [profileModal, setProfileModal] = useState(null)
-  const [profile, setProfile] = useState(blankProfile())
-  const [profileErr, setProfileErr] = useState('')
-  const [rejectFor, setRejectFor] = useState(null)
-  const [rejectReason, setRejectReason] = useState('')
-  const [rejectNote, setRejectNote] = useState('')
-  const [rejectErr, setRejectErr] = useState('')
+  const [busy, setBusy] = useState(null) // `${quoteId}:${action}` so only the clicked button spins
 
-  const run = async (id, fn) => { setBusy(id); try { await fn() } catch (e) { alert(e.message) } finally { setBusy(null) } }
+  const run = async (id, action, fn) => {
+    setBusy(`${id}:${action}`)
+    try { await fn() } catch (e) { alert(e.message) } finally { setBusy(null) }
+  }
+  const isBusy = (id, action) => busy === `${id}:${action}`
+  const rowBusy = (id) => busy?.startsWith(`${id}:`)
 
   const accept = async (q) => {
     if (!window.confirm(`Accept ${q.ref}? This confirms your order — CULINOVA will start your project.`)) return
-    setBusy(q.id)
+    setBusy(`${q.id}:accept`)
     try {
       await acceptQuote(q.id)
     } catch (e) {
@@ -54,7 +51,7 @@ export default function Quotations() {
   const saveProfileAndAccept = async () => {
     if (!profileModal) return
     setProfileErr('')
-    setBusy(profileModal.id)
+    setBusy(`${profileModal.id}:accept`)
     try {
       await saveCommercialProfile(profile)
       await acceptQuote(profileModal.id)
@@ -75,7 +72,7 @@ export default function Quotations() {
     if (!rejectFor) return
     if (!rejectReason) { setRejectErr('Select a reason'); return }
     if (rejectReason === 'Other' && !rejectNote.trim()) { setRejectErr('Please provide details for Other'); return }
-    setBusy(rejectFor.id)
+    setBusy(`${rejectFor.id}:reject`)
     setRejectErr('')
     try {
       await rejectQuote(rejectFor.id, rejectReason, rejectNote.trim() || null)
@@ -87,17 +84,17 @@ export default function Quotations() {
 
   const concession = (q) => {
     const n = window.prompt(`Request a better price on ${q.ref} — your note to the sales team:`)
-    if (n !== null) run(q.id, () => requestConcession(q.id, n.trim()))
+    if (n !== null) run(q.id, 'concession', () => requestConcession(q.id, n.trim()))
   }
 
-  const Btn = ({ onClick, tone = 'slate', icon: Icon, children, id }) => (
-    <button type="button" onClick={onClick} disabled={busy === id}
+  const Btn = ({ onClick, tone = 'slate', icon: Icon, children, loading, disabled }) => (
+    <button type="button" onClick={onClick} disabled={!!(disabled || loading)}
       className={`inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-60 ${
         tone === 'brand' ? 'bg-brand-500 text-white hover:bg-brand-600'
           : tone === 'amber' ? 'border border-amber-200 text-amber-600 hover:bg-amber-50'
             : tone === 'rose' ? 'border border-slate-200 text-slate-500 hover:bg-rose-50 hover:text-rose-600'
               : 'border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
-      {busy === id ? <Loader2 size={13} className="animate-spin" /> : Icon && <Icon size={13} />} {children}
+      {loading ? <Loader2 size={13} className="animate-spin" /> : Icon && <Icon size={13} />} {children}
     </button>
   )
 
