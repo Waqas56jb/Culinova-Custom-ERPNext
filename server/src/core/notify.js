@@ -60,3 +60,28 @@ export async function notifyVrDecision(req, decision, byName) {
     sender: byName,
   })
 }
+
+/** Sprint 2 — release request → notify warehouse approvers + Management. */
+export async function notifyReservationReleaseRequest(rv, senderName) {
+  if (!rv?.id) return
+  await supabase.from('notifications').delete().eq('ref_id', rv.id).eq('type', 'stock_release').eq('action_status', 'pending')
+  const { data: approvers } = await supabase.from('users').select('id, role, access_level')
+    .or('role.eq.Management,role.eq.System Admin')
+  const { data: stockApprovers } = await supabase.from('users').select('id')
+    .eq('role', 'Stock User').in('access_level', ['Approve', 'Full'])
+  const seen = new Set()
+  const targets = [...(approvers || []), ...(stockApprovers || [])].filter((u) => {
+    if (!u?.id || seen.has(u.id)) return false
+    seen.add(u.id)
+    return true
+  })
+  if (!targets.length) return
+  const rows = targets.map((u) => ({
+    user_id: u.id,
+    type: 'stock_release', ref_type: 'stock_reservation', ref_id: rv.id, action_status: 'pending',
+    title: 'Stock release approval needed',
+    body: `${rv.item_name || 'Item'} · qty ${rv.qty}${rv.release_reason ? ` · ${rv.release_reason}` : ''}. Approve or Deny.`,
+    sender: senderName || 'Warehouse',
+  }))
+  await supabase.from('notifications').insert(rows)
+}

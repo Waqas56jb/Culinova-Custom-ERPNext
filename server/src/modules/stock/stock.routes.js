@@ -6,6 +6,7 @@ import { asyncWrap } from '../../middleware/error.js'
 import { logAudit } from '../../core/audit.js'
 import { nextNumber } from '../../core/numbering.js'
 import { findItem, postStock, defaultWarehouse } from '../../core/stockmove.js'
+import { consumeReservationsForDelivery } from '../../core/inventory.js'
 
 // These routers are mounted BEFORE the generic CRUD at the same paths and only intercept POST,
 // so creating a document ALSO moves real stock (balances + ledger). GET/PATCH/DELETE fall through.
@@ -71,17 +72,45 @@ export function deliveryNotesRouter() {
   r.post('/', authRequired, authorize('warehouse', 'create'), asyncWrap(async (req, res) => {
     const b = req.body
     const qty = Math.abs(Number(b.qty) || 0) || 1
-    const item = await findItem({ item_name: b.item_name })
+    const item = await findItem({ item_name: b.item_name, item_id: b.item_id })
     const warehouse = b.warehouse || (await defaultWarehouse())
     const number = await nextNumber('delivery_notes', 'DN')
+    const salesOrderId = b.sales_order_id || null
+    let projectId = b.project_id || null
+    // Resolve SO from project when only project is supplied (SO-linked delivery)
+    if (!salesOrderId && projectId) {
+      const { data: proj } = await supabase.from('projects').select('sales_order_id').eq('id', projectId).maybeSingle()
+      if (proj?.sales_order_id) {/* keep projectId; SO resolved below */}
+    }
+    let soId = salesOrderId
+    if (!soId && projectId) {
+      const { data: proj } = await supabase.from('projects').select('sales_order_id').eq('id', projectId).maybeSingle()
+      soId = proj?.sales_order_id || null
+    }
+
+    let consumeNote = b.customer || null
+    if (item && (soId || projectId)) {
+      const { consumed, notes } = await consumeReservationsForDelivery({
+        itemId: item.id,
+        itemName: item.item_name || b.item_name,
+        salesOrderId: soId,
+        projectId,
+        qty,
+        warehouse,
+      })
+      if (consumed > 0) {
+        consumeNote = [consumeNote, ...notes].filter(Boolean).join(' · ')
+      }
+    }
+
     const { data, error } = await supabase.from('delivery_notes').insert({
-      number, project_id: b.project_id || null, customer: b.customer || null,
+      number, project_id: projectId, customer: b.customer || null,
       item_name: b.item_name || null, qty, value: Number(b.value) || 0,
       area: b.area || null, position: b.position || null, status: b.status || 'Delivered',
     }).select().single()
     if (error) return res.status(500).json({ error: error.message })
-    if (item) await postStock({ item, warehouse, qtyOut: qty, refType: 'Delivery Note', refId: number, note: b.customer })
-    await logAudit(req.user, 'delivery_note', data.id, 'created', { number, qty }).catch(() => {})
+    if (item) await postStock({ item, warehouse, qtyOut: qty, refType: 'Delivery Note', refId: number, note: consumeNote })
+    await logAudit(req.user, 'delivery_note', data.id, 'created', { number, qty, reservation_note: consumeNote }).catch(() => {})
     res.status(201).json(data)
   }))
   return r

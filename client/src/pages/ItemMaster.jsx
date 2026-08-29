@@ -65,9 +65,23 @@ export default function ItemMaster() {
   const { user } = useAuth()
   // Role gate: who may run the ERP-owned actions at all (sync, EOS import, pricing masters).
   const canEdit = ['Management', 'Stock Manager', 'Stock User'].includes(user?.role) || user?.access_level === 'Full Admin'
+  const isMgmt = ['Management', 'System Admin'].includes(user?.role)
   const items = d.items || []
   const [q, setQ] = useState('')
   const [g, setG] = useState('All')
+  const [disableBusy, setDisableBusy] = useState(null)
+
+  const toggleDisabled = async (i, e) => {
+    e.stopPropagation()
+    const next = !i.disabled
+    if (!window.confirm(`${next ? 'Disable' : 'Enable'} “${i.item_name || i.model}”?${next ? ' Disabled items are hidden from quotation pickers.' : ''}`)) return
+    setDisableBusy(i.id)
+    try {
+      await api(`/items/${i.id}`, { method: 'PATCH', body: { disabled: next } })
+      await d.loadItems?.()
+    } catch (err) { alert(err.message) }
+    finally { setDisableBusy(null) }
+  }
   const [page, setPage] = useState(0)
   const [masterItems, setMasterItems] = useState([])
   const [masterTotal, setMasterTotal] = useState(0)
@@ -370,6 +384,7 @@ export default function ItemMaster() {
             <thead><tr className="bg-slate-50/60">
               <th className="th">Model</th><th className="th">Item</th><th className="th">Family</th><th className="th">Category</th><th className="th">Brand</th>
               <th className="th">Type</th>{seeCost && <th className="th">Cost</th>}<th className="th">Sell Rate</th><th className="th">Status</th>
+              {isMgmt && <th className="th">Actions</th>}
             </tr></thead>
             <tbody>
               {rows.map((i) => (
@@ -401,10 +416,19 @@ export default function ItemMaster() {
                   {seeCost && <td className="td text-slate-600">{i.cost != null ? sar(i.cost) : '—'}</td>}
                   <td className="td font-semibold">{sar(i.standard_rate || 0)}</td>
                   <td className="td"><Badge tone={i.disabled ? 'red' : 'green'}>{i.disabled ? 'Disabled' : 'Active'}</Badge></td>
+                  {isMgmt && (
+                    <td className="td" onClick={(e) => e.stopPropagation()}>
+                      <button type="button" className="btn-ghost !px-2 !py-1 text-[11px]" disabled={disableBusy === i.id}
+                        onClick={(e) => toggleDisabled(i, e)}>
+                        {disableBusy === i.id ? <Loader2 size={12} className="animate-spin" /> : null}
+                        {i.disabled ? 'Enable' : 'Disable'}
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
               {rows.length === 0 && (
-                <tr><td className="td text-slate-400" colSpan={seeCost ? 9 : 8}>
+                <tr><td className="td text-slate-400" colSpan={(seeCost ? 9 : 8) + (isMgmt ? 1 : 0)}>
                   {masterLoading ? 'Loading…'
                     : masterTotal === 0
                       ? (eosOnly ? 'No items yet — approve an item in CULINOVA EOS and it will appear here.' : 'No items yet.')

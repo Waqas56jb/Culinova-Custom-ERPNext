@@ -11,11 +11,11 @@ import { projectFieldsFromQuote } from '../../core/handover.js'
 import { customerCommercialGate } from '../../core/customerGate.js'
 import { notifyManagementApproval } from '../../core/notify.js'
 import { recomputeProject } from '../../core/projectcost.js'
-import { reserveForSalesOrder } from '../../core/inventory.js'
 import { allocateLines } from '../../core/availability.js'
 import { enrichQuotationList, enrichQuotationRecord } from '../../core/quotationLines.js'
 import { validateRequiredFields, computeFinancials, evaluateApproval, discountSource, RULES } from './quotation.rules.js'
 import { nextNumber } from '../../core/numbering.js'
+import { acceptQuotation } from '../../core/acceptQuotation.js'
 
 const r = Router()
 // Document numbers come from the editable numbering_series (Company Settings), NOT from Date.now();
@@ -259,55 +259,20 @@ r.post('/quotations/:id/accept', authRequired, authorize('sales', 'create'), asy
   // RULE: only the CUSTOMER accepts (via their portal). A salesperson must never accept on their behalf.
   // Internal acceptance is limited to Management for phone / walk-in orders where there's no portal customer.
   if (!isManagement(req.user.role)) return res.status(403).json({ error: 'Only the customer can accept this quotation (from their portal). Internal acceptance is limited to Management.' })
-  const { data: q } = await supabase.from('quotations').select('*, quotation_items(*)').eq('id', req.params.id).single()
-  if (!q) return res.status(404).json({ error: 'Not found' })
-  if (q.status === 'Ordered') return res.status(422).json({ error: 'Quotation already accepted' })
-  if (q.approval_status === 'Pending') return res.status(403).json({ error: 'Quotation needs approval before it can be accepted' })
-  const gate = await customerCommercialGate(q.customer)
-  if (!gate.ok) return res.status(422).json({ error: gate.error, code: 'COMMERCIAL_PROFILE_REQUIRED', missing: gate.missing })
-
-  // 1) Sales Order
-  const { data: so, error: soErr } = await supabase.from('sales_orders').insert({
-    number: num('SO'), quotation_id: q.id, customer: q.customer, amount: q.total_amount,
-  }).select().single()
-  if (soErr) throw soErr
-
-  // 2) Project (auto) — with the full Sales → PM handover details
-  const handover = await projectFieldsFromQuote(q)
-  const { data: proj, error: pErr } = await supabase.from('projects').insert({
-    number: num('PRJ'), name: `${q.customer} — ${q.project_name || 'Project'}`, customer: q.customer,
-    sales_order_id: so.id, contract_value: q.total_amount, manager_id: req.user.id, status: 'On Track', ...handover,
-  }).select().single()
-  if (pErr) throw pErr
-
-  // 3) BOQ (required items) from the quotation lines — budget cost auto-seeded from the
-  //    sales Item-Master cost so the PM starts with a ready budget (can adjust later).
-  //    STOCK FIRST (CEO rule R1): the line carries the split computed when the quotation was built —
-  //    from_stock is already ours, to_purchase is the ONLY part Procurement may ever buy. Re-allocate
-  //    against LIVE stock at acceptance time, because stock may have moved since the quote was sent.
-  const items = q.quotation_items || []
-  const alloc = await allocateLines(items.map((it) => ({ item_id: it.item_id, item_name: it.item_name, qty: it.qty })))
-  if (items.length) {
-    await supabase.from('project_boq').insert(items.map((it, i) => ({
-      project_id: proj.id, item_id: it.item_id || null, item_name: it.item_name, qty: it.qty, status: 'Waiting',
-      budget_cost: (Number(it.cost) || 0) * (Number(it.qty) || 0),
-      from_stock: Number(alloc[i]?.from_stock) || 0,
-      to_purchase: Number(alloc[i]?.to_purchase) || 0,
-    })))
+  try {
+    const result = await acceptQuotation({
+      quotationId: req.params.id,
+      actor: req.user,
+      channel: 'management',
+    })
+    res.status(201).json({ ok: true, sales_order: result.sales_order, project: result.project })
+  } catch (e) {
+    const status = e.status || 500
+    const body = { error: e.message }
+    if (e.code) body.code = e.code
+    if (e.missing) body.missing = e.missing
+    return res.status(status).json(body)
   }
-  // 4) link + mark ordered
-  await supabase.from('sales_orders').update({ project_id: proj.id }).eq('id', so.id)
-  await supabase.from('quotations').update({ status: 'Ordered' }).eq('id', q.id)
-  await recomputeProject(proj.id) // set committed cost / GP from the seeded budget
-  // reserve ONLY what is genuinely on the shelf — reserving a quantity we do not own would create
-  // phantom stock and hide the real purchase requirement
-  await reserveForSalesOrder({
-    items: alloc.filter((l) => Number(l.from_stock) > 0).map((l) => ({ item_name: l.item_name, qty: l.from_stock })),
-    sales_order_id: so.id, project_id: proj.id, userId: req.user.id,
-  })
-  await winOpportunityForCustomer(q.customer, q.total_amount) // opportunity auto-Won
-  await logAudit(req.user, 'quotation', q.id, 'accepted', { sales_order: so.number, project: proj.number })
-  res.status(201).json({ ok: true, sales_order: so, project: proj })
 }))
 
 // ── LOST — reason mandatory (#13), kept in revision history ── (salesperson records outcome → 'create')

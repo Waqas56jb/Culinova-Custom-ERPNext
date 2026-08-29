@@ -7,10 +7,9 @@ import { uploadAttachment, signAttachments } from '../../core/chatfiles.js'
 import { ensureLeadAndOpportunity, advanceOpportunity, winOpportunityForCustomer, loseOpportunityForCustomer } from '../../core/crmflow.js'
 import { projectFieldsFromQuote } from '../../core/handover.js'
 import { customerCommercialGate } from '../../core/customerGate.js'
-import { recomputeProject } from '../../core/projectcost.js'
-import { reserveForSalesOrder } from '../../core/inventory.js'
 import { enrichQuotationList } from '../../core/quotationLines.js'
 import { stripCustomerQuotationFields } from '../../rbac/permissions.js'
+import { acceptQuotation } from '../../core/acceptQuotation.js'
 
 const r = Router()
 const num = (p) => `${p}-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`
@@ -88,35 +87,21 @@ r.post('/customer/messages', authRequired, asyncWrap(async (req, res) => {
 const ownsQuote = (q, user) => q && (q.customer || '').toLowerCase() === (user.name || '').toLowerCase()
 
 r.post('/customer/quotations/:id/accept', authRequired, asyncWrap(async (req, res) => {
-  const { data: q } = await supabase.from('quotations').select('*, quotation_items(*)').eq('id', req.params.id).single()
-  if (!ownsQuote(q, req.user)) return res.status(403).json({ error: 'Not your quotation' })
-  if (q.status === 'Ordered') return res.status(422).json({ error: 'Already accepted' })
-  if (q.approval_status === 'Pending' || q.status === 'Pending Approval') return res.status(422).json({ error: 'This quotation is pending internal approval and cannot be accepted yet.' })
-
-  const gate = await customerCommercialGate(q.customer)
-  if (!gate.ok) {
-    return res.status(422).json({
-      error: gate.error,
-      code: 'COMMERCIAL_PROFILE_REQUIRED',
-      missing: gate.missing,
-      customer_exists: gate.customer_exists,
+  try {
+    const result = await acceptQuotation({
+      quotationId: req.params.id,
+      actor: req.user,
+      channel: 'portal',
     })
+    res.json({ ok: true, sales_order: result.sales_order?.number || result.sales_order })
+  } catch (e) {
+    const status = e.status || 500
+    const body = { error: e.message }
+    if (e.code) body.code = e.code
+    if (e.missing) body.missing = e.missing
+    if (e.customer_exists != null) body.customer_exists = e.customer_exists
+    return res.status(status).json(body)
   }
-
-  const { data: so, error: e1 } = await supabase.from('sales_orders').insert({ number: num('SO'), quotation_id: q.id, customer: q.customer, amount: q.total_amount }).select().single()
-  if (e1) throw e1
-  const handover = await projectFieldsFromQuote(q)
-  const { data: proj, error: e2 } = await supabase.from('projects').insert({ number: num('PRJ'), name: `${q.customer} — ${q.project_name || 'Project'}`, customer: q.customer, sales_order_id: so.id, contract_value: q.total_amount, status: 'On Track', ...handover }).select().single()
-  if (e2) throw e2
-  const items = q.quotation_items || []
-  if (items.length) await supabase.from('project_boq').insert(items.map((it) => ({ project_id: proj.id, item_name: it.item_name, qty: it.qty, status: 'Waiting', budget_cost: (Number(it.cost) || 0) * (Number(it.qty) || 0) })))
-  await supabase.from('sales_orders').update({ project_id: proj.id }).eq('id', so.id)
-  await supabase.from('quotations').update({ status: 'Ordered' }).eq('id', q.id)
-  await recomputeProject(proj.id) // committed cost / GP from the seeded budget
-  await reserveForSalesOrder({ items, sales_order_id: so.id, project_id: proj.id, userId: req.user.id }) // INV-006 auto-reserve
-  await winOpportunityForCustomer(q.customer, q.total_amount) // opportunity auto-Won
-  await supabase.from('messages').insert({ customer_name: req.user.name, customer_email: req.user.email, sender: 'customer', body: `✅ I have ACCEPTED quotation ${q.number}.` })
-  res.json({ ok: true, sales_order: so.number })
 }))
 
 // Customer completes commercial registration before order confirmation (CR/VAT/address)

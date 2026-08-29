@@ -315,6 +315,12 @@ r.patch('/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async 
     return res.status(403).json({ error: 'Not allowed to change valuation rate' })
   }
 
+  // Sprint 2 — Disable/Enable is Management-only (ERP-owned operational flag)
+  if (p.disabled !== undefined && !isManagement(req.user.role) && req.user.role !== 'System Admin') {
+    return res.status(403).json({ error: 'Only Management may disable or enable items' })
+  }
+  const togglingDisabled = p.disabled !== undefined && Boolean(p.disabled) !== Boolean(cur.disabled)
+
   // Sprint 1b Block 2 — VR approval gate (Ali §3)
   let pendingVr = null
   let vrAppliedDirect = null
@@ -411,7 +417,10 @@ r.patch('/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async 
   if (item.standard_rate != null && item.standard_rate !== cur.standard_rate) {
     await supabase.from('item_prices').update({ price_list_rate: Number(item.standard_rate) }).eq('item_id', item.id).eq('price_list', 'Standard Selling').eq('selling', true)
   }
-  await logAudit(req.user, 'item', item.id, 'updated', {})
+  await logAudit(req.user, 'item', item.id, 'updated', togglingDisabled ? { disabled: item.disabled } : {})
+  if (togglingDisabled) {
+    await logAudit(req.user, 'item', item.id, item.disabled ? 'disabled' : 'enabled', { disabled: item.disabled }).catch(() => {})
+  }
   // keep a version snapshot of the PRE-edit state so every change is auditable/reversible (not just EOS syncs)
   try { await recordVersion(cur.id, { source: 'erp-edit', changed_by: req.user.id, change_note: 'Manual edit', snapshot: cur }) } catch { /* versioning is best-effort */ }
   if (pendingVr) {
