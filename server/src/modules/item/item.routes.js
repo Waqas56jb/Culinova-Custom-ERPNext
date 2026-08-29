@@ -9,6 +9,15 @@ import { resolveItemAuto, getBrand, supplierPriceFor } from '../../core/itempric
 import { priceItem, persistable } from '../../core/pricing.js'
 import { stripEosOwned, recordVersion } from '../../core/eosfields.js'
 import { eosOnlyItemCreation, eosOnlyItemDeletion, itemsComeFromEosOnly, stripErpOwned, EOS_ONLY_EDIT_MESSAGE } from '../../core/policy.js'
+import {
+  applyVrDirectAsApprover,
+  createPendingVrRequest,
+  approveVrRequest,
+  rejectVrRequest,
+  cancelVrRequest,
+  listVrRequests,
+  writeVrHistory,
+} from '../../core/vrApproval.js'
 
 // Resolve an item's pricing inputs (brand factors + price-list supplier price are the fallbacks the
 // CEO's chain relies on), then run THE pricing chain (core/pricing.js) over the merged item.
@@ -78,7 +87,10 @@ const nullEmpty = (o) => { for (const k of Object.keys(o)) if (o[k] === '') o[k]
 const FIELD_HISTORY = ['valuation_rate', 'exchange_factor', 'price_factor']
 const strVal = (v) => (v == null ? null : String(v))
 
-async function writeFieldPricingHistory({ itemId, field, oldVal, newVal, source, createdBy }) {
+async function writeFieldPricingHistory({ itemId, field, oldVal, newVal, source, createdBy, note }) {
+  if (field === 'valuation_rate') {
+    return writeVrHistory({ itemId, oldVal, newVal, source, createdBy, note })
+  }
   if (strVal(oldVal) === strVal(newVal)) return
   await supabase.from('item_pricing_history').insert({
     item_id: itemId,
@@ -87,6 +99,7 @@ async function writeFieldPricingHistory({ itemId, field, oldVal, newVal, source,
     new_value: strVal(newVal),
     source,
     created_by: createdBy || null,
+    note: note || null,
   })
 }
 
@@ -132,6 +145,51 @@ r.get('/', authRequired, internalOnly, asyncWrap(async (req, res) => {
   res.json(rows)
 }))
 
+// ── Sprint 1b Block 2 — VR change requests (BEFORE /:id) ─────────────────────
+r.get('/vr-requests', authRequired, asyncWrap(async (req, res) => {
+  if (!canSeeFinancials(req.user.role)) return res.status(403).json({ error: 'Not allowed' })
+  const status = req.query.status ? String(req.query.status) : null
+  const rows = await listVrRequests({
+    status,
+    user: req.user,
+    isApprover: isManagement(req.user.role),
+  })
+  res.json(rows)
+}))
+
+r.post('/vr-requests/:id/approve', authRequired, asyncWrap(async (req, res) => {
+  if (!isManagement(req.user.role)) return res.status(403).json({ error: 'Only Management may approve VR changes' })
+  try {
+    const result = await approveVrRequest(req.params.id, req.user)
+    await logAudit(req.user, 'item', result.item.id, 'vr-approved', { request_id: req.params.id, new_value: result.request.new_value })
+    res.json(result)
+  } catch (e) {
+    return res.status(e.status || 500).json({ error: e.message })
+  }
+}))
+
+r.post('/vr-requests/:id/reject', authRequired, asyncWrap(async (req, res) => {
+  if (!isManagement(req.user.role)) return res.status(403).json({ error: 'Only Management may reject VR changes' })
+  try {
+    const result = await rejectVrRequest(req.params.id, req.user, req.body?.reason || req.body?.decision_note)
+    await logAudit(req.user, 'item', result.request.item_id, 'vr-rejected', { request_id: req.params.id })
+    res.json(result)
+  } catch (e) {
+    return res.status(e.status || 500).json({ error: e.message })
+  }
+}))
+
+r.post('/vr-requests/:id/cancel', authRequired, asyncWrap(async (req, res) => {
+  if (!canSeeFinancials(req.user.role)) return res.status(403).json({ error: 'Not allowed' })
+  try {
+    const result = await cancelVrRequest(req.params.id, req.user, { isApprover: isManagement(req.user.role) })
+    await logAudit(req.user, 'item', result.request.item_id, 'vr-cancelled', { request_id: req.params.id })
+    res.json(result)
+  } catch (e) {
+    return res.status(e.status || 500).json({ error: e.message })
+  }
+}))
+
 // ── GET ONE (full item + all child tables) ──
 r.get('/:id', authRequired, internalOnly, asyncWrap(async (req, res) => {
   const { data: item, error } = await supabase.from('items').select('*').eq('id', req.params.id).single()
@@ -170,6 +228,7 @@ r.get('/:id/pricing-history', authRequired, asyncWrap(async (req, res) => {
   res.json(rows.map((row) => ({
     ...row,
     changed_by: users[row.created_by] || row.created_by || '—',
+    note: row.note || null,
   })))
 }))
 
@@ -222,6 +281,12 @@ r.post('/', authRequired, authorize('warehouse', 'create'), eosOnlyItemCreation,
 // ── UPDATE (lock rules after stock exists, like ERPNext cant_change) ──
 r.patch('/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async (req, res) => {
   const p = req.body
+  // Pull VR request reason BEFORE EOS/ERP field strippers (vr_reason is not an item column)
+  const vrReason = p.vr_reason ?? p.reason ?? null
+  if (p.vr_reason !== undefined) delete p.vr_reason
+  // keep p.reason only if it is a real item field elsewhere — VR reason is not persisted on items
+  if (p.reason !== undefined && p.valuation_rate !== undefined) delete p.reason
+
   const { data: cur } = await supabase.from('items').select('*').eq('id', req.params.id).single()
   if (!cur) return res.status(404).json({ error: 'Item not found' })
 
@@ -250,6 +315,42 @@ r.patch('/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async 
     return res.status(403).json({ error: 'Not allowed to change valuation rate' })
   }
 
+  // Sprint 1b Block 2 — VR approval gate (Ali §3)
+  let pendingVr = null
+  let vrAppliedDirect = null
+  if (p.valuation_rate !== undefined) {
+    const nextVr = Number(p.valuation_rate)
+    if (!Number.isFinite(nextVr) || nextVr < 0) {
+      return res.status(422).json({ error: 'valuation_rate must be a non-negative number' })
+    }
+    if (Number(cur.valuation_rate) === nextVr) {
+      delete p.valuation_rate // no-op
+    } else if (isManagement(req.user.role)) {
+      try {
+        const { item: updatedVr, request } = await applyVrDirectAsApprover({
+          item: cur, newValue: nextVr, actor: req.user,
+        })
+        vrAppliedDirect = { item: updatedVr, request }
+        delete p.valuation_rate // already applied; don't double-write below
+        Object.assign(cur, updatedVr) // subsequent reprice/history see new VR
+      } catch (e) {
+        return res.status(e.status || 500).json({ error: e.message })
+      }
+    } else {
+      try {
+        pendingVr = await createPendingVrRequest({
+          item: cur,
+          newValue: nextVr,
+          reason: vrReason,
+          actor: req.user,
+        })
+        delete p.valuation_rate
+      } catch (e) {
+        return res.status(e.status || 500).json({ error: e.message, request_id: e.request_id })
+      }
+    }
+  }
+
   const locked = await hasStock(cur.id)
   if (locked) {
     const guard = ['is_stock_item', 'has_serial_no', 'has_batch_no', 'stock_uom']
@@ -267,6 +368,25 @@ r.patch('/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async 
     const priced = await repriceItem({ ...cur, ...cols })
     Object.assign(cols, priced)
   }
+
+  // VR-only PATCH: no other columns — return without empty update
+  if (!Object.keys(cols).length) {
+    const base = vrAppliedDirect?.item || cur
+    const full = { ...base, ...(await loadChildren(base.id)) }
+    if (pendingVr) {
+      return res.status(202).json({
+        pending: true,
+        request_id: pendingVr.id,
+        message: 'VR change sent for Management approval',
+        request: pendingVr,
+        ...full,
+        valuation_rate: cur.valuation_rate, // unchanged until approved
+      })
+    }
+    await logAudit(req.user, 'item', base.id, 'updated', { vr_direct: !!vrAppliedDirect })
+    return res.json({ ...full, _vr_request: vrAppliedDirect?.request || null })
+  }
+
   const { data: item, error } = await supabase.from('items').update(nullEmpty(cols)).eq('id', cur.id).select().single()
   if (error) throw error
   await replaceChildren(cur.id, p)
@@ -294,7 +414,17 @@ r.patch('/:id', authRequired, authorize('warehouse', 'update'), asyncWrap(async 
   await logAudit(req.user, 'item', item.id, 'updated', {})
   // keep a version snapshot of the PRE-edit state so every change is auditable/reversible (not just EOS syncs)
   try { await recordVersion(cur.id, { source: 'erp-edit', changed_by: req.user.id, change_note: 'Manual edit', snapshot: cur }) } catch { /* versioning is best-effort */ }
-  res.json({ ...item, ...(await loadChildren(item.id)) })
+  if (pendingVr) {
+    return res.status(202).json({
+      pending: true,
+      request_id: pendingVr.id,
+      message: 'VR change sent for Management approval; other fields saved',
+      request: pendingVr,
+      ...item,
+      ...(await loadChildren(item.id)),
+    })
+  }
+  res.json({ ...item, ...(await loadChildren(item.id)), _vr_request: vrAppliedDirect?.request || null })
 }))
 
 // Deleting an item is an EOS decision (reject / remove it there and the ERP follows). Guarded by the

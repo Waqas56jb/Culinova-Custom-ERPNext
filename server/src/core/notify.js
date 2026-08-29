@@ -30,3 +30,32 @@ export async function notifyOwnerDecision(quotation, decision, byName) {
     sender: byName,
   })
 }
+
+/** Sprint 1b Block 2 — pending VR change → notify Management (actionable). */
+export async function notifyVrChangeRequest(req, senderName) {
+  if (!req?.id) return
+  await supabase.from('notifications').delete().eq('ref_id', req.id).eq('type', 'vr_change').eq('action_status', 'pending')
+  const { data: managers } = await supabase.from('users').select('id').eq('role', 'Management')
+  if (!managers?.length) return
+  const oldV = req.old_value != null ? Number(req.old_value) : '—'
+  const newV = Number(req.new_value)
+  const rows = managers.map((u) => ({
+    user_id: u.id,
+    type: 'vr_change', ref_type: 'vr_request', ref_id: req.id, action_status: 'pending',
+    title: 'Valuation Rate approval needed',
+    body: `${req.item_name || 'Item'} · VR ${oldV} → ${newV}${req.reason ? ` · ${req.reason}` : ''}. Approve or Reject.`,
+    sender: senderName || req.requested_by || 'Stock',
+  }))
+  await supabase.from('notifications').insert(rows)
+}
+
+/** Tell the VR requester the approve/reject outcome. */
+export async function notifyVrDecision(req, decision, byName) {
+  if (!req?.requested_by_id) return
+  await supabase.from('notifications').insert({
+    user_id: req.requested_by_id,
+    title: `VR change ${decision}`,
+    body: `${req.item_name || 'Item'} · VR ${req.old_value ?? '—'} → ${req.new_value} was ${decision} by ${byName}.`,
+    sender: byName,
+  })
+}

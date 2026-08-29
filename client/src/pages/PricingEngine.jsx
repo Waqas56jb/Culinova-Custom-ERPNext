@@ -115,6 +115,7 @@ function KpiRow({ items }) {
 }
 
 const FINANCIAL_ROLES = ['Management', 'System Admin', 'Accounts User', 'Purchase User', 'Stock User', 'Project Manager']
+const MGMT_ROLES = ['Management', 'System Admin']
 const fmtHistDate = (iso) => {
   if (!iso) return '—'
   const dt = new Date(iso)
@@ -122,36 +123,87 @@ const fmtHistDate = (iso) => {
 }
 const fmtHistVal = (v) => (v == null || v === '' ? '—' : v)
 
-function ValuationRateCell({ item, showFin, onSaved, onHistory }) {
+function ValuationRateCell({ item, showFin, isMgmt, pendingReq, onSaved, onHistory, onRequested }) {
   const d = useData()
   const [val, setVal] = useState(item?.valuation_rate ?? '')
+  const [reason, setReason] = useState('')
   const [saving, setSaving] = useState(false)
+  const [askReason, setAskReason] = useState(false)
   useEffect(() => { setVal(item?.valuation_rate ?? '') }, [item?.id, item?.valuation_rate])
   if (!showFin) return null
-  const save = async () => {
+
+  if (pendingReq) {
+    return (
+      <div className="flex flex-col items-end gap-0.5" onClick={(e) => e.stopPropagation()}>
+        <span className="rounded-md bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800" title="Awaiting Management approval">
+          Pending: {fmtHistVal(pendingReq.new_value)} (requested by {pendingReq.requested_by || '—'})
+        </span>
+        <span className="text-xs tabular-nums text-slate-500">current {money(item?.valuation_rate)}</span>
+        <button type="button" title="Valuation rate history" onClick={() => onHistory(item)}
+          className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-brand-600">
+          <History size={14} />
+        </button>
+      </div>
+    )
+  }
+
+  const save = async (withReason) => {
     const next = Number(val) || 0
-    if (Number(item?.valuation_rate) === next) return
+    if (Number(item?.valuation_rate) === next) { setAskReason(false); return }
     setSaving(true)
     try {
-      await api(`/items/${item.id}`, { method: 'PATCH', body: { valuation_rate: next } })
+      const body = { valuation_rate: next }
+      if (!isMgmt && withReason) body.vr_reason = withReason
+      const res = await api(`/items/${item.id}`, { method: 'PATCH', body })
       await d.loadAll?.()
-      onSaved?.()
+      if (res?.pending) {
+        onRequested?.(res.request || { item_id: item.id, new_value: next, status: 'Pending' })
+        alert(res.message || 'Sent for approval')
+      } else {
+        onSaved?.()
+      }
+      setAskReason(false)
+      setReason('')
     } catch (e) { alert(e.message) } finally { setSaving(false) }
   }
+
+  const onBlurOrEnter = () => {
+    const next = Number(val) || 0
+    if (Number(item?.valuation_rate) === next) return
+    if (isMgmt) save()
+    else setAskReason(true)
+  }
+
   return (
-    <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-      <input
-        type="number" step="any" min="0" title="Valuation Rate (cost basis for quotation pricing)"
-        value={val}
-        onChange={(e) => setVal(e.target.value)}
-        onBlur={save}
-        onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur() }}
-        className="w-24 rounded-lg border border-slate-200 bg-white px-2 py-1 text-right text-sm tabular-nums outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-500/15"
-      />
-      <button type="button" title="Valuation rate history" onClick={() => onHistory(item)}
-        className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-brand-600">
-        {saving ? <Loader2 size={14} className="animate-spin" /> : <History size={14} />}
-      </button>
+    <div className="flex flex-col items-end gap-1" onClick={(e) => e.stopPropagation()}>
+      <div className="flex items-center justify-end gap-1">
+        <input
+          type="number" step="any" min="0"
+          title={isMgmt ? 'Valuation Rate (direct apply)' : 'Request a Valuation Rate change (needs approval)'}
+          value={val}
+          onChange={(e) => setVal(e.target.value)}
+          onBlur={onBlurOrEnter}
+          onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur() }}
+          className="w-24 rounded-lg border border-slate-200 bg-white px-2 py-1 text-right text-sm tabular-nums outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-500/15"
+        />
+        <button type="button" title="Valuation rate history" onClick={() => onHistory(item)}
+          className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-brand-600">
+          {saving ? <Loader2 size={14} className="animate-spin" /> : <History size={14} />}
+        </button>
+      </div>
+      {askReason && !isMgmt && (
+        <div className="z-10 w-56 rounded-lg border border-amber-200 bg-amber-50 p-2 shadow-sm">
+          <p className="mb-1 text-[10px] font-semibold text-amber-800">Request change (optional note)</p>
+          <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason…"
+            className="mb-1.5 w-full rounded border border-amber-200 px-2 py-1 text-xs" />
+          <div className="flex justify-end gap-1">
+            <button type="button" className="rounded px-2 py-0.5 text-[10px] text-slate-500" onClick={() => { setAskReason(false); setVal(item?.valuation_rate ?? '') }}>Cancel</button>
+            <button type="button" className="rounded bg-amber-600 px-2 py-0.5 text-[10px] font-bold text-white" onClick={() => save(reason)}>
+              Request change
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -161,6 +213,7 @@ function PriceItemsTab() {
   const d = useData()
   const { user } = useAuth()
   const showFin = FINANCIAL_ROLES.includes(user?.role)
+  const isMgmt = MGMT_ROLES.includes(user?.role)
   const items = d.items || []
   const [q, setQ] = useState('')
   const [brand, setBrand] = useState('')
@@ -170,6 +223,24 @@ function PriceItemsTab() {
   const [vrHistFor, setVrHistFor] = useState(null)
   const [vrHistRows, setVrHistRows] = useState([])
   const [vrHistLoading, setVrHistLoading] = useState(false)
+  const [pendingByItem, setPendingByItem] = useState({})
+  const [vrQueue, setVrQueue] = useState([])
+  const [showVrQueue, setShowVrQueue] = useState(false)
+  const [vrActBusy, setVrActBusy] = useState(null)
+  const [rejectFor, setRejectFor] = useState(null)
+  const [rejectNote, setRejectNote] = useState('')
+
+  const loadVrPending = useCallback(async () => {
+    if (!showFin) return
+    try {
+      const rows = await api('/items/vr-requests?status=Pending')
+      const list = Array.isArray(rows) ? rows : []
+      setVrQueue(list)
+      setPendingByItem(Object.fromEntries(list.map((r) => [r.item_id, r])))
+    } catch { setVrQueue([]); setPendingByItem({}) }
+  }, [showFin])
+
+  useEffect(() => { loadVrPending() }, [loadVrPending])
 
   const openVrHistory = async (it) => {
     setVrHistFor(it)
@@ -179,6 +250,23 @@ function PriceItemsTab() {
       const rows = await api(`/items/${it.id}/pricing-history?field=valuation_rate`)
       setVrHistRows(Array.isArray(rows) ? rows : [])
     } catch { setVrHistRows([]) } finally { setVrHistLoading(false) }
+  }
+
+  const decideVr = async (req, decision) => {
+    setVrActBusy(req.id)
+    try {
+      if (decision === 'approved') {
+        await api(`/items/vr-requests/${req.id}/approve`, { method: 'POST' })
+      } else {
+        const reason = rejectNote.trim()
+        if (!reason) { alert('Reject reason is required'); setVrActBusy(null); return }
+        await api(`/items/vr-requests/${req.id}/reject`, { method: 'POST', body: { reason } })
+        setRejectFor(null)
+        setRejectNote('')
+      }
+      await d.loadAll?.()
+      await loadVrPending()
+    } catch (e) { alert(e.message) } finally { setVrActBusy(null) }
   }
 
   const vrColSpan = showFin ? 1 : 0
@@ -233,12 +321,69 @@ function PriceItemsTab() {
               {families.map((f) => <option key={f} value={f}>{f}</option>)}
             </select>
           </label>
+          {isMgmt && (
+            <button type="button" onClick={() => setShowVrQueue((v) => !v)}
+              className={`relative flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold ${showVrQueue ? 'bg-amber-500 text-white' : 'bg-amber-50 text-amber-800 hover:bg-amber-100'}`}>
+              VR Requests
+              {vrQueue.length > 0 && (
+                <span className="ml-0.5 grid h-5 min-w-[20px] place-items-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">{vrQueue.length}</span>
+              )}
+            </button>
+          )}
           <button className="btn-primary" disabled={recalc.busy} onClick={runRecalc}>
             {recalc.busy ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />} Recalculate all
           </button>
         </div>
         {recalc.msg && <p className="mt-3 rounded-lg bg-brand-50 px-3 py-2 text-xs font-medium text-brand-700">{recalc.msg}</p>}
       </div>
+
+      {isMgmt && showVrQueue && (
+        <div className="card overflow-hidden border-amber-200">
+          <div className="border-b border-amber-100 bg-amber-50/60 p-4">
+            <h3 className="text-[15px] font-bold text-ink">Pending Valuation Rate requests <span className="text-xs font-medium text-muted">({vrQueue.length})</span></h3>
+            <p className="text-xs text-muted">Approve applies VR and reprices selling · Reject requires a reason</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead><tr className="bg-slate-50/60">
+                <th className="th">Item</th><th className="th text-right">Old</th><th className="th text-right">New</th>
+                <th className="th">Requester</th><th className="th">Reason</th><th className="th">Actions</th>
+              </tr></thead>
+              <tbody>
+                {vrQueue.map((req) => (
+                  <tr key={req.id}>
+                    <td className="td font-semibold">{req.item_name || req.item_id}</td>
+                    <td className="td text-right tabular-nums">{fmtHistVal(req.old_value)}</td>
+                    <td className="td text-right font-semibold tabular-nums text-amber-700">{fmtHistVal(req.new_value)}</td>
+                    <td className="td text-xs">{req.requested_by || '—'}<br /><span className="text-muted">{fmtHistDate(req.requested_at)}</span></td>
+                    <td className="td text-xs text-muted">{req.reason || '—'}</td>
+                    <td className="td">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <button type="button" disabled={vrActBusy === req.id}
+                          onClick={() => decideVr(req, 'approved')}
+                          className="rounded-lg bg-emerald-500 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-600 disabled:opacity-60">
+                          {vrActBusy === req.id ? <Loader2 size={12} className="inline animate-spin" /> : 'Approve'}
+                        </button>
+                        {rejectFor === req.id ? (
+                          <span className="flex items-center gap-1">
+                            <input value={rejectNote} onChange={(e) => setRejectNote(e.target.value)} placeholder="Reject reason" className="w-28 rounded border px-1.5 py-1 text-xs" />
+                            <button type="button" className="rounded bg-rose-500 px-2 py-1 text-xs font-semibold text-white" onClick={() => decideVr(req, 'rejected')}>Confirm</button>
+                            <button type="button" className="text-xs text-slate-400" onClick={() => { setRejectFor(null); setRejectNote('') }}>×</button>
+                          </span>
+                        ) : (
+                          <button type="button" onClick={() => { setRejectFor(req.id); setRejectNote('') }}
+                            className="rounded-lg bg-rose-500 px-2.5 py-1 text-xs font-semibold text-white hover:bg-rose-600">Reject</button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {vrQueue.length === 0 && <tr><td className="td text-slate-400" colSpan={6}>No pending VR requests.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* priced table */}
       <div className="card overflow-hidden">
@@ -262,7 +407,8 @@ function PriceItemsTab() {
                   <td className="td text-slate-600">{it.brand || '—'}</td>
                   {showFin && (
                     <td className="td text-right">
-                      <ValuationRateCell item={it} showFin={showFin} onHistory={openVrHistory} />
+                      <ValuationRateCell item={it} showFin={showFin} isMgmt={isMgmt} pendingReq={pendingByItem[it.id]}
+                        onHistory={openVrHistory} onSaved={loadVrPending} onRequested={loadVrPending} />
                     </td>
                   )}
                   <td className="td text-right tabular-nums">{money(it.supplier_price)}</td>
@@ -303,7 +449,8 @@ function PriceItemsTab() {
                   <td className="td text-slate-600">{it.product_family || '—'}</td>
                   {showFin && (
                     <td className="td text-right">
-                      <ValuationRateCell item={it} showFin={showFin} onHistory={openVrHistory} />
+                      <ValuationRateCell item={it} showFin={showFin} isMgmt={isMgmt} pendingReq={pendingByItem[it.id]}
+                        onHistory={openVrHistory} onSaved={loadVrPending} onRequested={loadVrPending} />
                     </td>
                   )}
                 </tr>
@@ -321,7 +468,7 @@ function PriceItemsTab() {
 
       <Modal open={!!vrHistFor} onClose={() => setVrHistFor(null)} size="lg"
         title={vrHistFor ? `Valuation Rate History — ${vrHistFor.item_name}` : 'History'}
-        subtitle="Date · user · old → new · source"
+        subtitle="Date · user · old → new · source (manual / approved-request / opening-stock)"
         footer={<button type="button" className="btn-ghost" onClick={() => setVrHistFor(null)}>Close</button>}>
         {vrHistLoading ? (
           <div className="flex justify-center py-8"><Loader2 size={24} className="animate-spin text-brand-500" /></div>
@@ -340,7 +487,10 @@ function PriceItemsTab() {
                 {vrHistRows.map((row) => (
                   <tr key={row.id}>
                     <td className="td whitespace-nowrap text-xs text-muted">{fmtHistDate(row.created_at)}</td>
-                    <td className="td text-xs">{row.changed_by || '—'}</td>
+                    <td className="td text-xs">
+                      {row.changed_by || '—'}
+                      {row.note && <div className="mt-0.5 text-[10px] text-slate-400">{row.note}</div>}
+                    </td>
                     <td className="td text-xs tabular-nums">{fmtHistVal(row.old_value)}</td>
                     <td className="td text-xs tabular-nums">{fmtHistVal(row.new_value)}</td>
                     <td className="td text-xs text-muted">{row.source || '—'}</td>

@@ -154,6 +154,8 @@ export async function commit(lines, { actorId = null } = {}) {
       })
       out.posted++
 
+      // Opening-stock commit may write VR DIRECTLY (source='opening-stock').
+      // Sprint 1b Block 2 VR approval does NOT apply here — this is initial data load, not a commercial change.
       if (l.rate != null && l.rate > 0) {
         const { data: before } = await supabase.from('items').select('valuation_rate').eq('id', l.item_id).maybeSingle()
         const oldVr = before?.valuation_rate

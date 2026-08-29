@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Bell } from 'lucide-react'
+import { Bell, Check, X as XIcon, Loader2 } from 'lucide-react'
 import { api } from '../api.js'
 
 const timeAgo = (iso) => {
@@ -15,9 +15,11 @@ export default function NotificationBell() {
   const [items, setItems] = useState([])
   const [unread, setUnread] = useState(0)
   const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(null)
+  const [rejectId, setRejectId] = useState(null)
+  const [rejectReason, setRejectReason] = useState('')
   const ref = useRef(null)
 
-  // a failed poll must not wipe the list to "0 unread" — keep what we have and say the refresh failed
   const load = async () => {
     try { const r = await api('/notifications'); setItems(r.items || []); setUnread(r.unread || 0); setErr('') }
     catch (e) { setErr(e?.message || 'Could not refresh notifications') }
@@ -28,8 +30,6 @@ export default function NotificationBell() {
     document.addEventListener('mousedown', h); return () => document.removeEventListener('mousedown', h)
   }, [])
 
-  // Mark-as-read is persisted server-side. Only drop the badge once the server confirms, and re-sync
-  // from the server afterwards, so the count can never disagree with what is actually stored.
   const markAll = async () => {
     try {
       await api('/notifications/read-all', { method: 'POST' })
@@ -47,6 +47,22 @@ export default function NotificationBell() {
     } catch (e) { setErr(e?.message || 'Could not mark as read') }
   }
 
+  const actVr = async (n, decision) => {
+    setBusy(n.id)
+    try {
+      const body = { decision }
+      if (decision === 'rejected') {
+        const reason = rejectReason.trim()
+        if (!reason) { alert('Reject reason is required'); setBusy(null); return }
+        body.reason = reason
+      }
+      await api(`/notifications/${n.id}/act`, { method: 'POST', body })
+      setRejectId(null)
+      setRejectReason('')
+      await load()
+    } catch (e) { alert(e.message) } finally { setBusy(null) }
+  }
+
   return (
     <div className="relative" ref={ref}>
       <button onClick={() => setOpen((o) => !o)} className="relative grid h-10 w-10 place-items-center rounded-xl border border-slate-200 bg-white text-slate-500 transition hover:text-ink">
@@ -62,16 +78,42 @@ export default function NotificationBell() {
           {err && <div className="border-b border-amber-100 bg-amber-50 px-4 py-2 text-[12px] text-amber-800">{err}</div>}
           <div className="max-h-[60vh] overflow-y-auto">
             {items.length === 0 && <div className="px-4 py-12 text-center text-sm text-slate-400">You're all caught up 🎉</div>}
-            {items.map((n) => (
-              <button key={n.id} onClick={() => markOne(n)} className={`flex w-full gap-3 border-b border-slate-50 px-4 py-3 text-left transition hover:bg-slate-50 ${n.read ? '' : 'bg-brand-50/40'}`}>
-                <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${n.read ? 'bg-transparent' : 'bg-brand-500'}`} />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold text-ink">{n.title || 'Announcement'}</p>
-                  <p className="mt-0.5 whitespace-pre-wrap break-words text-[13px] text-slate-600">{n.body}</p>
-                  <p className="mt-1 text-[11px] text-slate-400">{n.sender ? `${n.sender} · ` : ''}{timeAgo(n.created_at)}</p>
+            {items.map((n) => {
+              const isVr = n.type === 'vr_change' && n.action_status === 'pending'
+              const actionable = isVr
+              return (
+                <div key={n.id} className={`border-b border-slate-50 px-4 py-3 ${n.read ? '' : 'bg-brand-50/40'}`}>
+                  <button type="button" onClick={() => !actionable && markOne(n)} className="flex w-full gap-3 text-left">
+                    <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${n.read ? 'bg-transparent' : 'bg-brand-500'}`} />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-ink">{n.title || 'Announcement'}</p>
+                      <p className="mt-0.5 whitespace-pre-wrap break-words text-[13px] text-slate-600">{n.body}</p>
+                      <p className="mt-1 text-[11px] text-slate-400">{n.sender ? `${n.sender} · ` : ''}{timeAgo(n.created_at)}</p>
+                    </div>
+                  </button>
+                  {isVr && (
+                    <div className="mt-2.5 flex flex-wrap gap-2 pl-5">
+                      <button type="button" onClick={() => actVr(n, 'approved')} disabled={busy === n.id}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-emerald-600 disabled:opacity-60">
+                        {busy === n.id ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Approve
+                      </button>
+                      {rejectId === n.id ? (
+                        <span className="flex items-center gap-1">
+                          <input value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} placeholder="Reason" className="w-24 rounded border px-1.5 py-1 text-xs" />
+                          <button type="button" onClick={() => actVr(n, 'rejected')} className="rounded bg-rose-500 px-2 py-1 text-xs font-semibold text-white">OK</button>
+                          <button type="button" onClick={() => setRejectId(null)} className="text-xs text-slate-400">×</button>
+                        </span>
+                      ) : (
+                        <button type="button" onClick={() => { setRejectId(n.id); setRejectReason('') }}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-rose-500 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-rose-600">
+                          <XIcon size={13} /> Reject
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
-              </button>
-            ))}
+              )
+            })}
           </div>
         </div>
       )}
