@@ -357,15 +357,21 @@ export function DataProvider({ children }) {
 
   useEffect(() => { if (user) loadAll() }, [user, loadAll])
 
+  // Pause background sync while a heavy editor (e.g. quotation builder) is open —
+  // otherwise the 12s full reload floods Supabase and a PATCH can take 50s+.
+  const [syncPaused, setSyncPaused] = useState(false)
+  const pauseSync = useCallback(() => setSyncPaused(true), [])
+  const resumeSync = useCallback(() => setSyncPaused(false), [])
+
   // ── REAL-TIME SYNC ── refresh EVERYTHING on an interval so every panel + its KPIs,
   // charts and values stay in sync via the shared store (Item Master, stock, leads,
   // quotations, orders, projects, procurement, finance, chat — all of it).
   useEffect(() => {
     if (!user) return
-    const id = setInterval(() => { loadAll() }, 12000)
+    const id = setInterval(() => { if (!syncPaused) loadAll() }, 12000)
     return () => clearInterval(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, loadAll])
+  }, [user, loadAll, syncPaused])
 
   // keep the module-level resolver maps in sync with loaded state (sales-order numbers have no lookup endpoint,
   // and projects/team refresh here too so the next reload cycle re-maps records with the latest labels)
@@ -613,7 +619,7 @@ export function DataProvider({ children }) {
     lookupProjects, lookupCustomers, lookupSuppliers, lookupItems, lookupWarehouses,
     lookupSalesOrders, lookupQuotations, lookupTeam, sendToProcurement,
     getPrefs, savePref,
-    reload, loadAll,
+    reload, loadAll, loadQuotations, pauseSync, resumeSync,
     addLead, addOpportunity, lostOpportunity, addInteraction, addQuotation, updateQuotation, addOrder, addCustomer, convertLead, closeLead, getOpportunityQuotationPrefill, getPaymentTemplates, checkAvailability, getOrderItems,
     approveQuotation, rejectQuotation, sendQuotation, acceptQuotation, lostQuotation,
     sendChatReply, markChatRead,

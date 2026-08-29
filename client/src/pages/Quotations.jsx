@@ -93,7 +93,7 @@ export default function Quotations() {
   const d = useData()
   const location = useLocation()
   const navigate = useNavigate()
-  const { quotations, items, customers, settings, opportunities, loadAll, approveQuotation, rejectQuotation, sendQuotation, lostQuotation } = d
+  const { quotations, items, customers, settings, opportunities, loadAll, loadQuotations, pauseSync, resumeSync, approveQuotation, rejectQuotation, sendQuotation, lostQuotation } = d
   const { user } = useAuth()
   const isMgmt = ['Management', 'System Admin'].includes(user?.role)
   const showFin = FINANCIAL_ROLES.includes(user?.role)
@@ -122,6 +122,12 @@ export default function Quotations() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
+  // Keep background loadAll off while the builder is open (avoids starving Save PATCH).
+  useEffect(() => {
+    if (!builder) { resumeSync?.(); return }
+    pauseSync?.()
+    return () => resumeSync?.()
+  }, [builder, pauseSync, resumeSync])
   const run = async (id, fn) => { setBusy(id); try { await fn() } catch (e) { alert(e.message) } finally { setBusy(null) } }
   const reject = (q) => { const reason = window.prompt('Reject (approval) — reason (optional):') ?? ''; run(q.id, () => rejectQuotation(q.id, reason)) }
   // A quotation is never deleted — it is marked Lost with a mandatory reason (CEO rule #10), which the
@@ -195,7 +201,7 @@ export default function Quotations() {
   }
   const openBuilder = async (q = null) => {
     setError('')
-    if (!q) { setBuilder({ editingId: null, ...emptyHeader, lines: [] }); return }
+    if (!q) { setBuilder({ editingId: null, ...emptyHeader, lines: [], linesDirty: true }); return }
     setBusy(q.id)
     try {
       const full = await api(`/quotations/${q.id}`)
@@ -220,7 +226,7 @@ export default function Quotations() {
         warranty_terms: full.warranty_terms || emptyHeader.warranty_terms,
         sales_consultant: full.sales_consultant || '', sales_consultant_phone: full.sales_consultant_phone || '',
         sales_consultant_email: full.sales_consultant_email || '', area: full.area || '', language: full.language || 'en',
-        lines,
+        lines, linesDirty: false,
       })
     } catch (e) { alert(e.message) } finally { setBusy(null) }
   }
@@ -232,7 +238,7 @@ export default function Quotations() {
     setBuilder((b) => {
       if (b.lines.some((l) => l.item_id === it.id)) return b
       return {
-        ...b, lines: [...b.lines, {
+        ...b, linesDirty: true, lines: [...b.lines, {
           item_id: it.id, item_code: it.item_code || it.code, item_name: it.item_name || it.name, brand: it.brand, model: it.model,
           uom: it.uom || it.stock_uom || 'Nos', description: it.description, specifications: it.specifications,
           image_url: it.image_url, datasheet_url: it.datasheet_url, pos: '',
@@ -243,8 +249,8 @@ export default function Quotations() {
       }
     })
   }
-  const setLine = (i, patch) => setBuilder((b) => ({ ...b, lines: b.lines.map((l, idx) => (idx === i ? { ...l, ...patch } : l)) }))
-  const removeLine = (i) => setBuilder((b) => ({ ...b, lines: b.lines.filter((_, idx) => idx !== i) }))
+  const setLine = (i, patch) => setBuilder((b) => ({ ...b, linesDirty: true, lines: b.lines.map((l, idx) => (idx === i ? { ...l, ...patch } : l)) }))
+  const removeLine = (i) => setBuilder((b) => ({ ...b, linesDirty: true, lines: b.lines.filter((_, idx) => idx !== i) }))
 
   // live totals (server recomputes authoritatively on save)
   const bNet = builder ? builder.lines.reduce((s, l) => s + n0(l.qty) * n0(l.rate) * (1 - n0(l.discount_pct) / 100), 0) : 0
@@ -280,27 +286,34 @@ export default function Quotations() {
       delivery_time: builder.delivery_time || null, warranty_terms: builder.warranty_terms || null,
       sales_consultant: builder.sales_consultant || null, sales_consultant_phone: builder.sales_consultant_phone || null,
       sales_consultant_email: builder.sales_consultant_email || null, area: builder.area || null, language: builder.language || 'en',
-      items: builder.lines.map((l, i) => ({
-        item_id: l.item_id, item_code: l.item_code, item_name: l.item_name, brand: l.brand, model: l.model, uom: l.uom,
-        description: l.description, specifications: l.specifications, image_url: l.image_url, datasheet_url: l.datasheet_url,
-        pos: l.pos || null,
-        qty: n0(l.qty), rate: n0(l.rate), discount_pct: n0(l.discount_pct), sort_order: i,
-        ...(l.add_margin_pct != null && n0(l.add_margin_pct) > 0 ? { add_margin_pct: n0(l.add_margin_pct) } : {}),
-      })),
+      // Skip full line rebuild on edit when only header/discount changed — that path was taking 50s+.
+      ...((!builder.editingId || builder.linesDirty) ? {
+        items: builder.lines.map((l, i) => ({
+          item_id: l.item_id, item_code: l.item_code, item_name: l.item_name, brand: l.brand, model: l.model, uom: l.uom,
+          description: l.description, specifications: l.specifications, image_url: l.image_url, datasheet_url: l.datasheet_url,
+          pos: l.pos || null,
+          qty: n0(l.qty), rate: n0(l.rate), discount_pct: n0(l.discount_pct), sort_order: i,
+          ...(l.add_margin_pct != null && n0(l.add_margin_pct) > 0 ? { add_margin_pct: n0(l.add_margin_pct) } : {}),
+        })),
+      } : {}),
     }
     try {
       if (builder.editingId) await api(`/quotations/${builder.editingId}`, { method: 'PATCH', body })
       else await api('/quotations', { method: 'POST', body })
-      await loadAll()
       setBuilder(null)
-    } catch (e) { setError(e.message) } finally { setSaving(false) }
+      setSaving(false)
+      ;(loadQuotations || loadAll)().catch(() => {})
+    } catch (e) { setError(e.message); setSaving(false) }
   }
 
   const revise = async () => {
     if (!builder?.editingId) return
     const note = window.prompt('Revision note (what changed / why):') ?? ''
     setSaving(true)
-    try { await api(`/quotations/${builder.editingId}/revise`, { method: 'POST', body: { note } }); await loadAll() }
+    try {
+      await api(`/quotations/${builder.editingId}/revise`, { method: 'POST', body: { note } })
+      await (loadQuotations?.() || loadAll())
+    }
     catch (e) { setError(e.message) } finally { setSaving(false) }
   }
 
