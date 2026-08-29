@@ -301,13 +301,21 @@ export default function Quotations() {
     setBusy(`${q.id}:build`)
     try {
       const full = await api(`/quotations/${q.id}`)
-      const lines = (full.quotation_items || []).sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)).map((l) => ({
-        item_id: l.item_id, item_code: l.item_code, item_name: l.item_name, brand: l.brand, model: l.model, uom: l.uom,
-        description: l.description, specifications: l.specifications, image_url: l.image_url, datasheet_url: l.datasheet_url,
-        pos: l.pos || l.area || '',
-        qty: n0(l.qty), rate: n0(l.rate), cost: l.cost, discount_pct: n0(l.discount_pct),
-        add_margin_pct: n0(l.add_margin_pct), base_rate: n0(l.rate),
-      }))
+      const lines = (full.quotation_items || []).sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)).map((l) => {
+        const margin = n0(l.add_margin_pct)
+        const rate = n0(l.rate)
+        // base_rate = chain price before margin (never the already-margined rate)
+        const base_rate = margin > 0.001
+          ? Math.round((rate / (1 + margin / 100)) * 100) / 100
+          : rate
+        return {
+          item_id: l.item_id, item_code: l.item_code, item_name: l.item_name, brand: l.brand, model: l.model, uom: l.uom,
+          description: l.description, specifications: l.specifications, image_url: l.image_url, datasheet_url: l.datasheet_url,
+          pos: l.pos || l.area || '',
+          qty: n0(l.qty), rate, cost: l.cost, discount_pct: n0(l.discount_pct),
+          add_margin_pct: margin, base_rate,
+        }
+      })
       setBuilder({
         editingId: full.id, opportunity_id: full.opportunity_id || '',
         customer: full.customer || '', contact_person: full.contact_person || '',
@@ -980,9 +988,19 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
                       <td className="px-2 py-2 text-right">
                         <input type="number" min="0" step="0.1" value={l.add_margin_pct ?? 0}
                           onChange={(e) => {
-                            const pct = n0(e.target.value)
-                            const base = n0(l.base_rate ?? l.rate)
-                            setLine(i, { add_margin_pct: e.target.value, rate: Math.round(base * (1 + pct / 100) * 100) / 100 })
+                            const pct = Math.max(0, n0(e.target.value))
+                            const oldMargin = n0(l.add_margin_pct)
+                            let base = n0(l.base_rate)
+                            // Recover chain base if base was wrongly set to the margined rate
+                            if (oldMargin > 0.001 && Math.abs(base - n0(l.rate)) < 0.05) {
+                              base = Math.round((n0(l.rate) / (1 + oldMargin / 100)) * 100) / 100
+                            }
+                            if (!(base > 0)) base = n0(l.rate)
+                            setLine(i, {
+                              add_margin_pct: e.target.value,
+                              base_rate: base,
+                              rate: Math.round(base * (1 + pct / 100) * 100) / 100,
+                            })
                           }}
                           className="w-16 rounded-lg border border-slate-200 px-2 py-1 text-right text-sm" title="Management-only additional margin (folded into rate)" />
                       </td>
