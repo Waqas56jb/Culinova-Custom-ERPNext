@@ -121,17 +121,18 @@ try {
     // Item Master list would show this — confirm via item_id from import, then eos_entry_id
     let item = null
     if (itemId) {
-      const r = await supabase.from('items').select('id, item_name, brand, model, family, eos_entry_id').eq('id', itemId).maybeSingle()
+      const r = await supabase.from('items').select('id, item_name, brand, model, eos_entry_id, category, item_group').eq('id', itemId).maybeSingle()
+      if (r.error) console.warn('item lookup error', r.error.message)
       item = r.data
     }
     if (!item) {
-      const r = await supabase.from('items').select('id, item_name, brand, model, family, eos_entry_id').eq('eos_entry_id', entryId).maybeSingle()
+      const r = await supabase.from('items').select('id, item_name, brand, model, eos_entry_id, category, item_group').eq('eos_entry_id', entryId).maybeSingle()
       item = r.data
     }
     pass(
       '1b) Item Master row exists (refresh would show)',
       Boolean(item),
-      item ? `${item.item_name} · ${item.brand || '—'} / ${item.model || '—'} · family=${item.family || '—'}` : `missing (mode=${mode} item_id=${itemId || 'n/a'})`
+      item ? `${item.item_name} · ${item.brand || '—'} / ${item.model || '—'} · cat=${item.category || item.item_group || '—'}` : `missing (mode=${mode} item_id=${itemId || 'n/a'})`
     )
 
     const st = await erpApi(adminToken, '/integrations/eos/status')
@@ -184,72 +185,106 @@ try {
 
   // ── 3) Engineering request + attachment → permanent EOS storage ──
   {
-    const { data: opp } = await supabase.from('opportunities').select('id, customer, project_name').limit(1).maybeSingle()
-    if (!opp) {
-      pass('3) eng request + attachment', false, 'no opportunity in ERP')
-    } else {
-      // minimal PDF as data URL
-      const pdfB64 = Buffer.from(`%PDF-1.1\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n${TAG}`).toString('base64')
-      const dataUrl = `data:application/pdf;base64,${pdfB64}`
-
-      const created = await erpApi(adminToken, `/engineering/requests/from-opportunity/${opp.id}`, {
-        method: 'POST',
-        body: {
-          boq_text: `[${TAG}] Block3 eyes-on attachment permanence`,
-          sales_notes: TAG,
-          attachments: [{ category: 'BOQ', name: `${TAG}.pdf`, dataUrl }],
-        },
-      })
-
-      // may 422 if open eng request exists — fall back to plain POST or existing
-      let eng = created.body
-      let engOk = created.status === 201
-      if (!engOk && created.status === 422 && created.body?.request?.id) {
-        pass('3a) from-opportunity (open exists)', true, `reuse ${created.body.request.number || created.body.request.id}`)
-        const get = await erpApi(adminToken, `/engineering/requests/${created.body.request.id}`)
-        eng = get.body
-        engOk = get.status === 200
+    // Direct push to LOCAL EOS (ERP's EOS_API_URL may still point at Vercel without Block3 code)
+    const tiny = Buffer.from(`%PDF-1.1\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n${TAG}`)
+    // Stage a fetchable source on ERP chat-uploads via engineering create when possible;
+    // for transfer proof, POST straight to local EOS with a public-ish data URL hosted via EOS upload first.
+    let sourceUrl = null
+    try {
+      // Use a tiny HTTP URL the local EOS can fetch — upload via ERP storage signed URL
+      const { data: opp } = await supabase.from('opportunities').select('id').limit(1).maybeSingle()
+      if (opp) {
+        const pdfB64 = tiny.toString('base64')
+        const created = await erpApi(adminToken, `/engineering/requests/from-opportunity/${opp.id}`, {
+          method: 'POST',
+          body: {
+            boq_text: `[${TAG}] Block3 eyes-on attachment permanence`,
+            sales_notes: TAG,
+            attachments: [{ category: 'BOQ', name: `${TAG}.pdf`, dataUrl: `data:application/pdf;base64,${pdfB64}` }],
+          },
+        })
+        let eng = created.body
+        let engOk = created.status === 201
+        if (!engOk && created.status === 422 && created.body?.request?.id) {
+          pass('3a) from-opportunity (open exists)', true, `reuse ${created.body.request.number || created.body.request.id} — will POST fresh payload to local EOS`)
+          const get = await erpApi(adminToken, `/engineering/requests/${created.body.request.id}`)
+          eng = get.body
+          engOk = get.status === 200
+        } else {
+          pass('3a) ERP eng request create', engOk, engOk ? `${eng.number}` : `${created.status} ${created.body?.error || ''}`)
+        }
+        if (eng?.id) cleanup.engIds.push(eng.id)
+        const signed = (eng.attachments || []).find((a) => a.url)
+        sourceUrl = signed?.url || null
+        // Prefer fresh signed list from GET
+        if (!sourceUrl && eng?.id) {
+          const get = await erpApi(adminToken, `/engineering/requests/${eng.id}`)
+          sourceUrl = (get.body.attachments || []).find((a) => a.url)?.url || null
+        }
       } else {
-        pass('3a) from-opportunity create', engOk, engOk ? `${eng.number} eos=${eng.eos_request_id || eng._eos_sync?.id || '?'}` : `${created.status} ${created.body?.error || ''}`)
+        pass('3a) ERP eng request create', false, 'no opportunity')
       }
+    } catch (e) {
+      pass('3a) ERP eng request create', false, e.message)
+    }
 
-      if (eng?.id) cleanup.engIds.push(eng.id)
-      const eosId = eng?.eos_request_id || eng?._eos_sync?.id
-      if (eosId) cleanup.eosReqIds.push(eosId)
-
-      // Query EOS via integration GET if we have id, else wait and check via ERP sync
-      await new Promise((r) => setTimeout(r, 1500))
-
-      if (eosId && integKey) {
-        // EOS stores under integrations route — use ERP key to GET? That's on EOS with erp key
+    if (!sourceUrl) {
+      pass('3b) EOS permanent attachment path', false, 'no signed ERP attachment URL to transfer')
+      pass('3c) permanent URL fetchable', false, 'skipped')
+    } else {
+      const fakeErpId = `eyes-${TAG}`
+      // ensure clean slate for this fake id
+      await fetch(`${EOS}/api/integrations/erp/engineering-requests`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-erp-integration-key': integKey },
+        body: JSON.stringify({
+          erp_request_id: fakeErpId,
+          erp_number: TAG,
+          customer: 'Eyes-on Test',
+          project_name: TAG,
+          attachments: [{ category: 'BOQ', name: `${TAG}.pdf`, url: sourceUrl }],
+          boq_text: TAG,
+          status: 'Pending Engineering Review',
+        }),
+      }).then(async (r) => {
+        const b = await j(r)
+        pass('3a2) local EOS ingest', r.status === 201 || (r.status === 200 && b.existing), `HTTP ${r.status} id=${b.id || '?'} existing=${!!b.existing}`)
+        if (b.id) cleanup.eosReqIds.push(b.id)
+        if (b.existing && b.id) {
+          // force re-transfer by calling transfer path: delete+reinsert not available — POST again won't transfer
+          // Instead GET and check; if not permanent, report that Vercel/old path may have created it earlier
+        }
+        const eosId = b.id
+        if (!eosId) {
+          pass('3b) EOS permanent attachment path', false, 'no eos id')
+          pass('3c) permanent URL fetchable', false, 'skipped')
+          return
+        }
+        await new Promise((r) => setTimeout(r, 500))
         const eosGet = await fetch(`${EOS}/api/integrations/erp/engineering-requests/${eosId}`, {
           headers: { 'x-erp-integration-key': integKey },
         })
         const eosBody = await j(eosGet)
-        const atts = eosBody.attachments || []
+        const atts = eosBody.attachments || b.attachments || []
         const permanent = atts.find((a) => a.path && String(a.path).startsWith('eng-requests/') && !a.transfer_failed)
         const failed = atts.find((a) => a.transfer_failed)
+        const sample = atts[0] ? `path=${atts[0].path || '∅'} failed=${!!atts[0].transfer_failed} err=${atts[0].transfer_error || ''}` : 'none'
         pass(
           '3b) EOS permanent attachment path',
-          Boolean(permanent) || atts.length === 0,
-          permanent
-            ? `path=${permanent.path} url=${(permanent.url || '').slice(0, 48)}…`
-            : failed
-              ? `transfer_failed: ${failed.transfer_error || 'yes'} (ERP signed URL may have expired mid-test)`
-              : `atts=${atts.length} status=${eosGet.status} ${eosBody.error || ''}`
+          Boolean(permanent),
+          permanent ? `path=${permanent.path}` : failed ? `transfer_failed: ${failed.transfer_error}` : sample
         )
         if (permanent?.url) {
-          const head = await fetch(permanent.url, { method: 'GET' }).catch(() => null)
+          const head = await fetch(permanent.url).catch(() => null)
           pass('3c) permanent URL fetchable', Boolean(head?.ok), head ? `HTTP ${head.status}` : 'fetch failed')
-        } else if (atts.length && !permanent) {
-          pass('3c) permanent URL fetchable', false, 'no permanent attachment to open')
         } else {
-          pass('3c) permanent URL fetchable', true, 'skipped (no new attachment on reused request)')
+          pass('3c) permanent URL fetchable', false, 'no permanent url')
         }
-      } else {
-        pass('3b) EOS permanent attachment path', false, 'no eos_request_id — check EOS ERP_API_URL / integration key')
+      }).catch((e) => {
+        pass('3a2) local EOS ingest', false, e.message)
+        pass('3b) EOS permanent attachment path', false, 'skipped')
         pass('3c) permanent URL fetchable', false, 'skipped')
-      }
+      })
     }
   }
 
@@ -270,10 +305,12 @@ try {
 } finally {
   // Soft cleanup — mark eng request notes; don't delete linked Item Master rows that were pre-existing
   for (const id of cleanup.engIds) {
-    await supabase.from('engineering_requests').update({
-      sales_notes: `[${TAG}] cleanup — eyes-on test`,
-      updated_at: new Date().toISOString(),
-    }).eq('id', id).catch(() => {})
+    try {
+      await supabase.from('engineering_requests').update({
+        sales_notes: `[${TAG}] cleanup — eyes-on test`,
+        updated_at: new Date().toISOString(),
+      }).eq('id', id)
+    } catch { /* ignore */ }
   }
   console.log(`\nCleanup note: eng requests tagged ${TAG}; Item Master rows left (EOS-linked).`)
 }
