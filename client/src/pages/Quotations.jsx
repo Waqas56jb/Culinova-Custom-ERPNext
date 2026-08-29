@@ -270,18 +270,25 @@ export default function Quotations() {
     const reason = window.prompt('Reject (approval) — reason (optional):') ?? ''
     run(q.id, 'reject', () => rejectQuotation(q.id, reason))
   }
-  // A quotation is never deleted — it is marked Lost with a mandatory reason (CEO rule #10), which the
-  // server records in the revision history.
-  const markLost = (q) => {
-    const reason = window.prompt(`Mark ${q.ref} as Lost — reason (required):`)
-    if (reason == null) return                       // cancelled
-    if (!reason.trim()) { alert('A reason is required to mark a quotation as Lost.'); return }
-    run(q.id, 'lost', () => lostQuotation(q.id, reason.trim()))
+  // A quotation is never deleted — it is marked Lost with a fixed reason (CEO rule #10/#13).
+  const markLost = (q) => setLostModal(q)
+  const reviseQuote = (q) => {
+    const note = window.prompt(`Revise ${q.ref || q.number} — note (optional):`) ?? ''
+    if (note === null) return
+    run(q.id, 'revise', async () => {
+      await api(`/quotations/${q.id}/revise`, { method: 'POST', body: { note: note.trim() || null } })
+      await loadQuotations()
+    })
   }
   const confirmSend = async (q) => {
     setBusy(`${q.id}:send`)
     try {
       const full = await api(`/quotations/${q.id}`)
+      const miss = missingMandatory(full)
+      if (miss.length) {
+        alert(`Cannot send — incomplete: ${miss.map((f) => FIELD_LABEL[f] || f).join(', ')}`)
+        return
+      }
       const zeroCount = (full.quotation_items || []).filter((l) => l.needs_rate || n0(l.rate) === 0).length
       if (zeroCount > 0 && !window.confirm(`${zeroCount} line(s) have no price. Send anyway?`)) return
       await sendQuotation(q.id)
@@ -290,8 +297,19 @@ export default function Quotations() {
 
   // ── KPIs ──
   const totalValue = quotations.reduce((s, q) => s + n0(q.amount), 0)
-  const openCount = quotations.filter((q) => ['Open', 'Draft', 'Pending Approval'].includes(q.status)).length
+  const openCount = quotations.filter((q) => ['Open', 'Sent', 'Draft', 'Pending Approval', 'Under Negotiation'].includes(q.status)).length
   const orderedCount = quotations.filter((q) => q.status === 'Ordered').length
+
+  const filteredQuotes = useMemo(() => {
+    if (statusFilter === 'All') return quotations
+    if (statusFilter === 'Sent') return quotations.filter((q) => q.status === 'Sent' || q.status === 'Open')
+    return quotations.filter((q) => q.status === statusFilter)
+  }, [quotations, statusFilter])
+
+  useEffect(() => {
+    if (tab !== 'lost') return
+    api('/sales/reports/lost-analysis').then(setLostReport).catch(() => setLostReport(null))
+  }, [tab, quotations])
 
   // ── builder state ──
   const emptyHeader = {
@@ -472,8 +490,8 @@ export default function Quotations() {
   }
 
   const actionProps = {
-    canEditRow, canSend, canApprove, isBusy, setPreview, openRevisions, openBuilder,
-    confirmSend, markLost, run, approveQuotation, reject,
+    canEditRow, canSend, canApprove, canRevise, isBusy, setPreview, openRevisions, openBuilder,
+    confirmSend, markLost, run, approveQuotation, reject, reviseQuote,
   }
 
   return (
@@ -484,11 +502,72 @@ export default function Quotations() {
         </button>
       </PageHeader>
 
+      <div className="mb-4 flex flex-wrap gap-2 border-b border-slate-200 pb-3">
+        <button type="button" onClick={() => setTab('list')}
+          className={`rounded-xl px-3 py-1.5 text-xs font-semibold ${tab === 'list' ? 'bg-brand-500 text-white' : 'bg-slate-100 text-slate-600'}`}>
+          Quotations
+        </button>
+        <button type="button" onClick={() => setTab('lost')}
+          className={`rounded-xl px-3 py-1.5 text-xs font-semibold ${tab === 'lost' ? 'bg-brand-500 text-white' : 'bg-slate-100 text-slate-600'}`}>
+          Lost Analysis
+        </button>
+      </div>
+
+      {tab === 'lost' ? (
+        <div className="card overflow-hidden p-4 animate-fade-up">
+          <h3 className="mb-3 font-display text-base font-bold text-ink">Lost Analysis</h3>
+          {!lostReport ? (
+            <p className="text-sm text-slate-400">Loading…</p>
+          ) : (
+            <>
+              <p className="mb-3 text-xs text-slate-500">
+                Quotes lost: {lostReport.totals?.quote_count || 0} · Value {sar(lostReport.totals?.quote_value || 0)}
+                {' · '}Opportunities: {lostReport.totals?.opportunity_count || 0}
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-[10px] uppercase tracking-wide text-slate-400">
+                      <th className="pb-2 pr-3">Reason</th>
+                      <th className="pb-2 pr-3">Quotes</th>
+                      <th className="pb-2 pr-3">Quote value</th>
+                      <th className="pb-2 pr-3">Opps</th>
+                      <th className="pb-2">Opp value</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(lostReport.by_reason || []).map((r) => (
+                      <tr key={r.reason} className="border-t border-slate-100">
+                        <td className="py-2 pr-3 font-medium">{r.reason}</td>
+                        <td className="py-2 pr-3 tabular-nums">{r.quote_count}</td>
+                        <td className="py-2 pr-3 tabular-nums">{sar(r.quote_value)}</td>
+                        <td className="py-2 pr-3 tabular-nums">{r.opportunity_count}</td>
+                        <td className="py-2 tabular-nums">{sar(r.opportunity_value)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      ) : (
+      <>
+
       <div className="mb-5 grid grid-cols-2 gap-2.5 sm:gap-3 lg:grid-cols-4">
         <KpiCard label="Quotations" value={quotations.length} icon={FileText} accent="brand" />
         <KpiCard label="Open / Draft" value={openCount} icon={ClipboardList} accent="violet" />
         <KpiCard label="Ordered" value={orderedCount} icon={Check} accent="emerald" />
         <KpiCard label="Pipeline Value" value={sar(totalValue)} icon={Wallet} accent="gold" />
+      </div>
+
+      <div className="mb-3 flex flex-wrap gap-1.5">
+        {STATUS_FILTERS.map((s) => (
+          <button key={s} type="button" onClick={() => setStatusFilter(s)}
+            className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusFilter === s ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+            {s}
+          </button>
+        ))}
       </div>
 
       <div className="mb-4 flex items-start gap-3 rounded-2xl border border-brand-200/70 bg-gradient-to-r from-brand-50 to-white px-3.5 py-3 text-sm text-brand-900 sm:items-center sm:px-4 animate-fade-up">
@@ -501,14 +580,14 @@ export default function Quotations() {
 
       {/* ── Mobile / tablet cards ── */}
       <div className="space-y-3 lg:hidden">
-        {quotations.length === 0 && (
+        {filteredQuotes.length === 0 && (
           <div className="card px-5 py-10 text-center text-sm text-slate-400">
             No quotations yet. Create one from an Opportunity.
           </div>
         )}
-        {quotations.map((q) => {
+        {filteredQuotes.map((q) => {
           const pending = q.approval === 'Pending'
-          const locked = ['Ordered', 'Lost'].includes(q.status)
+          const locked = ['Ordered', 'Lost', 'Rejected'].includes(q.status)
           const st = stockOf(q)
           return (
             <article key={q.id} className="card overflow-hidden animate-fade-up">
