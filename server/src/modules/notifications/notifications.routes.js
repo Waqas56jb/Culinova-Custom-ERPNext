@@ -6,6 +6,7 @@ import { asyncWrap } from '../../middleware/error.js'
 import { notifyOwnerDecision } from '../../core/notify.js'
 import { approveVrRequest, rejectVrRequest } from '../../core/vrApproval.js'
 import { isManagement } from '../../rbac/permissions.js'
+import { redactFinancials } from '../../middleware/rbac.js'
 
 const r = Router()
 
@@ -34,7 +35,8 @@ r.get('/:id/quotation', authRequired, asyncWrap(async (req, res) => {
   if (!n || n.ref_type !== 'quotation' || !n.ref_id) return res.status(404).json({ error: 'Not found' })
   const { data: q, error } = await supabase.from('quotations').select('*, quotation_items(*)').eq('id', n.ref_id).single()
   if (error) throw error
-  res.json(q)
+  // G-notif: never leak cost / margin / override internals to non-Management readers
+  res.json(redactFinancials(req.user.role, q))
 }))
 
 // ── actionable notifications: Approve / Reject (quotation discount OR VR change) ──

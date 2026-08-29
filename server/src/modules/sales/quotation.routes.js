@@ -161,6 +161,8 @@ async function recomputeTotals(qid) {
   const { data: lines } = await supabase.from('quotation_items').select('*').eq('quotation_id', qid)
   const rows = lines || []
   const net = round(rows.reduce((s, l) => s + lineAmount(l), 0))
+  // GP basis = Expected Landed Cost (VR × exchange) per Ali spec — NOT supplier price.
+  // quotation_items.cost is written from priceEngine expected_landed at line build / refresh / margin apply.
   const cost = round(rows.reduce((s, l) => s + n0(l.qty) * n0(l.cost), 0))
   const dPct = Math.max(0, n0(q.discount_pct))
   const dFixed = Math.max(0, n0(q.discount_fixed))
@@ -169,7 +171,7 @@ async function recomputeTotals(qid) {
   const vatRate = await vatRatePct()
   const vat = round((netAfter * vatRate) / 100)
   const total = round(netAfter + vat)
-  const gp = netAfter > 0 ? round(((netAfter - cost) / netAfter) * 100) : 0 // line cost = expected_landed (VR chain)
+  const gp = netAfter > 0 ? round(((netAfter - cost) / netAfter) * 100) : 0
   const patch = { net_amount: net, discount_amount: discountAmount, vat_amount: vat, total_amount: total, cost_amount: cost, gp_percent: gp, updated_at: new Date().toISOString() }
   const { data: updated } = await supabase.from('quotations').update(patch).eq('id', qid).select('*, quotation_items(*)').single()
   return updated

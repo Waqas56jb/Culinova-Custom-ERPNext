@@ -10,11 +10,12 @@ export async function notifyManagementApproval(q, senderName) {
   await supabase.from('notifications').delete().eq('ref_id', q.id).eq('type', 'approval').eq('action_status', 'pending')
   const { data: managers } = await supabase.from('users').select('id').eq('role', 'Management')
   if (!managers?.length) return
+  const overrideBit = q.override_reason ? ` · Override: ${q.override_reason}` : ''
   const rows = managers.map((u) => ({
     user_id: u.id,
     type: 'approval', ref_type: 'quotation', ref_id: q.id, action_status: 'pending',
     title: 'Discount approval needed',
-    body: `Quotation ${q.number} · ${q.customer} · ${q.discount_pct}% discount · Total ${sar(q.total_amount)}. Review the PDF and Approve or Reject.`,
+    body: `Quotation ${q.number} · ${q.customer} · ${q.discount_pct}% discount · Total ${sar(q.total_amount)}${overrideBit}. Review the PDF and Approve or Reject.`,
     sender: senderName || 'Sales',
   }))
   await supabase.from('notifications').insert(rows)

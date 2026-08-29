@@ -32,6 +32,13 @@ export function validateRequiredFields(p) {
   return missing
 }
 
+/**
+ * @deprecated Prefer quotation.routes.js recomputeTotals for live builder totals.
+ * Still called by legacy sales.routes.js:
+ *   - PATCH /sales/quotations/:id (header financials)
+ *   - POST /sales/quotations/:id/approve (GP check for override_reason)
+ * Line `cost` here must be expected_landed (VR × exchange) when items carry Block 4 snapshots — NOT supplier price.
+ */
 export function computeFinancials(items = [], discountPct = 0, discountFixed = 0) {
   const net = items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0)
   const cost = items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.cost) || 0), 0)

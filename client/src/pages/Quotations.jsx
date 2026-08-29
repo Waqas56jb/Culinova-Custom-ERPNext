@@ -214,6 +214,8 @@ export default function Quotations() {
         validity_days: full.validity_days || 30, payment_terms: full.payment_terms || '', currency: full.currency || 'SAR',
         terms_text: full.terms_text || '', notes: full.notes || '', discount_pct: n0(full.discount_pct), discount_fixed: n0(full.discount_fixed),
         override_reason: full.override_reason || '',
+        discount_source: full.discount_source || '',
+        valid_till: full.valid_till || '',
         delivery_time: full.delivery_time || emptyHeader.delivery_time,
         warranty_terms: full.warranty_terms || emptyHeader.warranty_terms,
         sales_consultant: full.sales_consultant || '', sales_consultant_phone: full.sales_consultant_phone || '',
@@ -369,7 +371,11 @@ export default function Quotations() {
                         </span>
                       ) : <span className="text-slate-300">—</span>}
                     </td>
-                    <td className="td text-slate-500">{q.valid_till || (q.validity ? `${q.validity} days` : '—')}</td>
+                    <td className="td text-slate-500">{
+                      q.valid_till
+                        ? `${q.valid_till}${q.validity_days ? ` (${q.validity_days} days)` : ''}`
+                        : (q.validity ? `${q.validity} days` : '—')
+                    }</td>
                     <td className="td text-slate-400">r{q.revision ?? 0}</td>
                     <td className="td"><Badge tone={statusTone(q.status)}>{q.status}</Badge></td>
                     <td className="td">
@@ -844,6 +850,20 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
             {canLineMargin && (
               <TextArea label="Strategic override reason" rows={2} value={builder.override_reason || ''} onChange={(e) => setH({ override_reason: e.target.value })}
                 placeholder="Required when discount > 25% or GP below 35%" />
+            )}
+            {builder.discount_source && (
+              <p className="text-[11px] text-slate-500">Discount applied by: <span className="font-semibold text-ink">{builder.discount_source}</span></p>
+            )}
+            {canLineMargin && builder.override_reason && (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-900">
+                Override reason on file: {builder.override_reason}
+              </p>
+            )}
+            {builder.validity_days > 0 && (
+              <p className="text-[11px] text-slate-500">
+                Validity: {builder.validity_days} days
+                {builder.valid_till ? ` · Valid till ${builder.valid_till} (${builder.validity_days} days)` : ''}
+              </p>
             )}
             {totals.discAmt > 0 && <div className="flex justify-between text-rose-600"><span>Discount</span><span>− {sar(totals.discAmt)}</span></div>}
             <div className="flex justify-between text-slate-600"><span>VAT ({(totals.vatRate * 100).toFixed(0)}%)</span><span>{sar(totals.vat)}</span></div>

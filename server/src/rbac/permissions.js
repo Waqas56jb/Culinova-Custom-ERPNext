@@ -65,12 +65,16 @@ export function canSeeFinancials(role) {
 }
 
 // Fields hidden from everyone outside financialRoles (Sales rules #4, #5, #20).
+// Sprint 1b: also strip line-margin / override / pricing internals from Sales + Customer.
 export const restrictedFields = [
   // item / pricing chain
   'cost', 'avg_cost', 'supplier_price', 'supplier_cost', 'factory_cost', 'freight_cost', 'insurance_cost',
   'customs_duty', 'local_transport', 'other_landed_cost', 'landed_cost', 'calculated_sale_price',
   'markup_factor', 'exchange_factor', 'price_factor', 'add_margin_pct', 'special_offer_pct',
   'valuation_rate', 'last_purchase_rate',
+  'estimated_cost', 'pricing_basis', 'needs_rate',
+  // strategic override (Management-only; Sales/Customer must not see)
+  'override_reason',
   // profit
   'gp_percent', 'gross_profit', 'net_profit', 'np_percent', 'margin', 'markup', 'opex_pct',
   // documents
@@ -78,6 +82,33 @@ export const restrictedFields = [
   // cost sheet buckets
   'material_cost', 'manufacturing_cost', 'purchase_cost', 'labor_cost', 'installation_cost', 'overhead_cost',
 ]
+
+/** Extra fields stripped for Customer portal / print — not financial but internal process labels. */
+export const customerOnlyStripFields = [
+  'discount_source',
+  'override_reason',
+  'add_margin_pct',
+  'estimated_cost',
+  'pricing_basis',
+  'needs_rate',
+  'cost',
+  'cost_amount',
+  'gp_percent',
+]
+
+export function stripCustomerQuotationFields(data) {
+  const strip = (val) => {
+    if (Array.isArray(val)) return val.map(strip)
+    if (!val || typeof val !== 'object') return val
+    const clone = {}
+    for (const [k, v] of Object.entries(val)) {
+      if (customerOnlyStripFields.includes(k) || restrictedFields.includes(k)) continue
+      clone[k] = (v && typeof v === 'object') ? strip(v) : v
+    }
+    return clone
+  }
+  return strip(data)
+}
 export function isManagement(role) {
   return role === 'Management' || role === 'System Admin'
 }
