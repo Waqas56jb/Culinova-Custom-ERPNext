@@ -39,6 +39,7 @@ const sections = [
   { title: 'Warehouse / Stock', panel: 'warehouse', items: [
     { to: '/stock/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { to: '/stock/items', label: 'Stock / Items', icon: Boxes },
+    { to: '/stock/reservations', label: 'Reservations', icon: Lock },
     { to: '/stock/receipts', label: 'Goods Receipt', icon: Truck },
     { to: '/stock/delivery', label: 'Delivery Notes', icon: ClipboardList },
     { to: '/stock/warehouses', label: 'Warehouses', icon: Building2 },

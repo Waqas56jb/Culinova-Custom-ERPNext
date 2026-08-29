@@ -23,6 +23,7 @@ import SupplierDeliveries from './pages/SupplierDeliveries.jsx'
 import StockDashboard from './pages/StockDashboard.jsx'
 import ItemMaster from './pages/ItemMaster.jsx'
 import StockItems from './pages/StockItems.jsx'
+import Reservations from './pages/Reservations.jsx'
 import GoodsReceipt from './pages/GoodsReceipt.jsx'
 import DeliveryNotes from './pages/DeliveryNotes.jsx'
 import Warehouses from './pages/Warehouses.jsx'
@@ -108,6 +109,7 @@ export default function App() {
           <Route path="/stock/dashboard" element={<StockDashboard />} />
           <Route path="/stock/item-master" element={<ItemMaster />} />
           <Route path="/stock/items" element={<StockItems />} />
+          <Route path="/stock/reservations" element={<Reservations />} />
           <Route path="/stock/receipts" element={<GoodsReceipt />} />
           <Route path="/stock/delivery" element={<DeliveryNotes />} />
           <Route path="/stock/warehouses" element={<Warehouses />} />
