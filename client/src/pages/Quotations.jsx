@@ -128,18 +128,25 @@ export default function Quotations() {
     pauseSync?.()
     return () => resumeSync?.()
   }, [builder, pauseSync, resumeSync])
-  const run = async (id, fn) => { setBusy(id); try { await fn() } catch (e) { alert(e.message) } finally { setBusy(null) } }
-  const reject = (q) => { const reason = window.prompt('Reject (approval) — reason (optional):') ?? ''; run(q.id, () => rejectQuotation(q.id, reason)) }
+  const run = async (id, action, fn) => {
+    setBusy(`${id}:${action}`)
+    try { await fn() } catch (e) { alert(e.message) } finally { setBusy(null) }
+  }
+  const isBusy = (id, action) => busy === `${id}:${action}`
+  const reject = (q) => {
+    const reason = window.prompt('Reject (approval) — reason (optional):') ?? ''
+    run(q.id, 'reject', () => rejectQuotation(q.id, reason))
+  }
   // A quotation is never deleted — it is marked Lost with a mandatory reason (CEO rule #10), which the
   // server records in the revision history.
   const markLost = (q) => {
     const reason = window.prompt(`Mark ${q.ref} as Lost — reason (required):`)
     if (reason == null) return                       // cancelled
     if (!reason.trim()) { alert('A reason is required to mark a quotation as Lost.'); return }
-    run(q.id, () => lostQuotation(q.id, reason.trim()))
+    run(q.id, 'lost', () => lostQuotation(q.id, reason.trim()))
   }
   const confirmSend = async (q) => {
-    setBusy(q.id)
+    setBusy(`${q.id}:send`)
     try {
       const full = await api(`/quotations/${q.id}`)
       const zeroCount = (full.quotation_items || []).filter((l) => l.needs_rate || n0(l.rate) === 0).length
@@ -202,7 +209,7 @@ export default function Quotations() {
   const openBuilder = async (q = null) => {
     setError('')
     if (!q) { setBuilder({ editingId: null, ...emptyHeader, lines: [], linesDirty: true }); return }
-    setBusy(q.id)
+    setBusy(`${q.id}:build`)
     try {
       const full = await api(`/quotations/${q.id}`)
       const lines = (full.quotation_items || []).sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)).map((l) => ({
@@ -318,21 +325,41 @@ export default function Quotations() {
   }
 
   const openRevisions = async (q) => {
-    setBusy(q.id)
+    setBusy(`${q.id}:revisions`)
     try { const revisions = await api(`/quotations/${q.id}/revisions`); setRevView({ quotation: q, revisions: revisions || [] }) }
     catch (e) { alert(e.message) } finally { setBusy(null) }
   }
 
-  const Act = ({ onClick, tone = 'brand', icon: Icon, children, disabled, loading }) => (
-    <button onClick={onClick} disabled={disabled || loading}
-      className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-semibold disabled:opacity-50 ${
-        tone === 'rose' ? 'border-rose-200 text-rose-600 hover:bg-rose-50'
-          : tone === 'emerald' ? 'border-emerald-200 text-emerald-600 hover:bg-emerald-50'
-            : tone === 'slate' ? 'border-slate-200 text-slate-600 hover:bg-slate-50'
-              : 'border-slate-200 text-brand-600 hover:bg-brand-50'}`}>
-      {loading ? <Loader2 size={13} className="animate-spin" /> : Icon && <Icon size={13} />} {children}
-    </button>
-  )
+  const Act = ({ onClick, tone = 'brand', icon: Icon, children, disabled, loading }) => {
+    const blocked = disabled || loading
+    const tones = {
+      rose: 'border-rose-200 text-rose-600 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700 active:bg-rose-100',
+      emerald: 'border-emerald-200 text-emerald-600 hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700 active:bg-emerald-100',
+      slate: 'border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-100 hover:text-slate-800 active:bg-slate-200/70',
+      brand: 'border-slate-200 text-brand-600 hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700 active:bg-brand-100',
+    }
+    return (
+      <button
+        type="button"
+        disabled={blocked}
+        onClick={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          if (blocked) return
+          onClick?.(e)
+        }}
+        className={`inline-flex min-h-[34px] cursor-pointer touch-manipulation select-none items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold
+          transition-[background-color,border-color,color,box-shadow,transform] duration-150 ease-out
+          hover:shadow-sm active:scale-[0.97]
+          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/25
+          disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none disabled:active:scale-100
+          ${tones[tone] || tones.brand}`}
+      >
+        {loading ? <Loader2 size={14} className="animate-spin shrink-0" /> : Icon && <Icon size={14} className="shrink-0" />}
+        {children}
+      </button>
+    )
+  }
 
   return (
     <>
@@ -394,14 +421,14 @@ export default function Quotations() {
                     <td className="td">
                       <div className="flex flex-wrap items-center gap-1.5">
                         <Act onClick={() => setPreview(q)} tone="slate" icon={FileText}>PDF</Act>
-                        <Act onClick={() => openRevisions(q)} tone="slate" icon={History} loading={busy === q.id}>Revisions</Act>
-                        {canEditRow(q) && <Act onClick={() => openBuilder(q)} icon={Pencil} loading={busy === q.id}>{q.status === 'Draft' ? 'Build' : 'Edit'}</Act>}
-                        {canSend && q.status === 'Draft' && <Act onClick={() => confirmSend(q)} tone="emerald" icon={Send} loading={busy === q.id}>Send</Act>}
-                        {canSend && !locked && q.status !== 'Lost' && <Act onClick={() => markLost(q)} tone="rose" icon={X} loading={busy === q.id}>Lost</Act>}
+                        <Act onClick={() => openRevisions(q)} tone="slate" icon={History} loading={isBusy(q.id, 'revisions')}>Revisions</Act>
+                        {canEditRow(q) && <Act onClick={() => openBuilder(q)} icon={Pencil} loading={isBusy(q.id, 'build')}>{q.status === 'Draft' ? 'Build' : 'Edit'}</Act>}
+                        {canSend && q.status === 'Draft' && <Act onClick={() => confirmSend(q)} tone="emerald" icon={Send} loading={isBusy(q.id, 'send')}>Send</Act>}
+                        {canSend && !locked && q.status !== 'Lost' && <Act onClick={() => markLost(q)} tone="rose" icon={X} loading={isBusy(q.id, 'lost')}>Lost</Act>}
                         {pending && canApprove && (
                           <>
-                            <Act onClick={() => run(q.id, () => approveQuotation(q.id))} tone="emerald" icon={ThumbsUp} loading={busy === q.id}>Approve</Act>
-                            <Act onClick={() => reject(q)} tone="rose" icon={X} loading={busy === q.id}>Reject</Act>
+                            <Act onClick={() => run(q.id, 'approve', () => approveQuotation(q.id))} tone="emerald" icon={ThumbsUp} loading={isBusy(q.id, 'approve')}>Approve</Act>
+                            <Act onClick={() => reject(q)} tone="rose" icon={X} loading={isBusy(q.id, 'reject')}>Reject</Act>
                           </>
                         )}
                         {q.status === 'Ordered' && <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600"><Check size={13} /> Ordered</span>}
