@@ -341,11 +341,16 @@ try {
 
 // ── (g) regressions ──
 function runVerify(script) {
-  const r = spawnSync('node', [path.join(__dirname, script)], { encoding: 'utf8', cwd: path.resolve(__dirname, '..'), timeout: 180000 })
-  const out = `${r.stdout || ''}${r.stderr || ''}`
-  const ok = r.status === 0 && !/FAIL|✖|failed/i.test(out.split('\n').filter((l) => /FAIL|PASS|fail|pass/i.test(l)).slice(-5).join('\n') || '')
-  // softer: exit 0 is enough
-  return { ok: r.status === 0, out: out.slice(-400) }
+  // block3 nests block4+1b1+1b2 (~100s+); allow headroom under load
+  const r = spawnSync('node', [path.join(__dirname, script)], {
+    encoding: 'utf8',
+    cwd: path.resolve(__dirname, '..'),
+    timeout: 360000,
+  })
+  const detail = r.error?.message
+    || (r.signal ? `signal ${r.signal}` : null)
+    || (r.status === 0 ? 'exit 0' : `exit ${r.status}`)
+  return { ok: r.status === 0, out: detail }
 }
 
 console.log('\n── Regressions ──')
@@ -375,15 +380,18 @@ console.log(`
 MANUAL EYES-ON CHECKLIST (Sprint 2 Block 1)
 ───────────────────────────────────────────
 Servers: API :5050 · ERP :5173 · Portal :5175
+Test numbers used by verify: physical stock=5, quote qty=8 → from_stock=5 / to_purchase=3 / reserved=5 / short on over-request=94
 
-1. Admin — create Draft quote with stock-short item (physical < qty)
-2. Customer portal login — Accept quote
-3. Stock → Reservations — Active row qty = from_stock, short_qty if any
-4. Post Delivery Note linked to project/SO — reservation qty shrinks → Consumed at 0
-5. Request release on Active → Approve / Deny as Management
-6. Item Master — Management Disable → item hidden from quote picker → Enable
+Login order:
+1. Admin (admin@gmail.com) — create Draft quote for a stock-short item (qty 8, stock 5)
+2. Customer portal (:5175) — Accept that quote → SO + BOQ 5/3
+3. Warehouse (warehouse@culinova.sa) — Stock → Reservations: Active qty=5, short_qty=0 (or short if over)
+4. Admin — post Delivery Note qty 3 linked to SO/project → reservation qty=2 Active; deliver remaining 2 → Consumed
+5. Warehouse — Request release (reason) on an Active reservation → bell for approvers
+6. Admin — Deny → Active; Request again → Approve → Released
+7. Admin — Item Master → Disable item → confirm hidden from quote picker → Enable
 
-Cleanup: remove test SO/quote/reservations; restore stock balances.
+Cleanup: delete test SO/quote/reservations; restore stock_balances qty/reserved; re-enable item if left disabled.
 `)
 
 process.exit(fails ? 1 : 0)

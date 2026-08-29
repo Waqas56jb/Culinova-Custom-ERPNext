@@ -115,9 +115,18 @@ if (fagor && Number(fagor.valuation_rate) !== 1000) {
 
 // ── (a) Header GP ≈ 45.95 on FAGOR draft ────────────────────────────────────
 {
-  // Force recompute via a no-op margin 0 patch on first line if possible
+  // Restore golden commercial state (eyes-on may leave discount_pct / margin dirty)
+  await supabase.from('quotations').update({
+    discount_pct: 0,
+    discount_amount: 0,
+    status: 'Draft',
+    approval_status: 'Not Required',
+  }).eq('id', qtn.id)
   const { data: line } = await supabase.from('quotation_items').select('id, cost, rate, qty').eq('quotation_id', qtn.id).limit(1).maybeSingle()
   if (line) {
+    if (Number(line.rate) !== 9990 || Number(line.cost) !== 5400) {
+      await supabase.from('quotation_items').update({ rate: 9990, cost: 5400 }).eq('id', line.id)
+    }
     await api(adminToken, `/quotations/${qtn.id}/items/${line.id}`, { method: 'PATCH', body: { add_margin_pct: 0 } })
   }
   const get = await api(adminToken, `/quotations/${qtn.id}`)
