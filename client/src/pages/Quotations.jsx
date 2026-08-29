@@ -89,6 +89,89 @@ const stockOf = (q) => {
   return { total_qty, from_stock, to_purchase, pct: Math.round((from_stock / total_qty) * 100) }
 }
 
+/** Action chip — fires on pointerdown so a mid-click DataContext re-render cannot swallow the click. */
+function QuoteAct({ onClick, tone = 'brand', icon: Icon, children, disabled, loading, compact }) {
+  const blocked = !!(disabled || loading)
+  const firedRef = useRef(false)
+  const tones = {
+    rose: 'border-rose-200/80 text-rose-600 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700 active:bg-rose-100',
+    emerald: 'border-emerald-200/80 text-emerald-700 hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-800 active:bg-emerald-100',
+    slate: 'border-slate-200/80 text-slate-600 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-800 active:bg-slate-100',
+    brand: 'border-brand-200/80 text-brand-700 hover:border-brand-300 hover:bg-brand-50 hover:text-brand-800 active:bg-brand-100',
+  }
+  const run = (e) => {
+    if (blocked) return
+    onClick?.(e)
+  }
+  return (
+    <button
+      type="button"
+      disabled={blocked}
+      onPointerDown={(e) => {
+        if (e.button != null && e.button !== 0) return
+        if (blocked) return
+        firedRef.current = true
+        e.preventDefault()
+        e.stopPropagation()
+        run(e)
+      }}
+      onClick={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        if (firedRef.current) { firedRef.current = false; return }
+        run(e)
+      }}
+      className={`inline-flex cursor-pointer touch-manipulation select-none items-center justify-center gap-1.5 rounded-xl border bg-white font-semibold
+        transition-[background-color,border-color,color,box-shadow,transform] duration-150 ease-out
+        hover:shadow-sm active:scale-[0.97]
+        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/25
+        disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none disabled:active:scale-100
+        ${compact ? 'min-h-[36px] px-2.5 py-1.5 text-[11px]' : 'min-h-[40px] px-3.5 py-2 text-xs sm:min-h-[36px] sm:px-3 sm:py-1.5'}
+        ${tones[tone] || tones.brand}`}
+    >
+      {loading ? <Loader2 size={14} className="animate-spin shrink-0" /> : Icon && <Icon size={14} className="shrink-0 opacity-80" />}
+      <span className="whitespace-nowrap">{children}</span>
+    </button>
+  )
+}
+
+function QuoteActions({
+  q, canEditRow, canSend, canApprove, locked, pending,
+  isBusy, setPreview, openRevisions, openBuilder, confirmSend, markLost, run, approveQuotation, reject,
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+      <QuoteAct onClick={() => setPreview(q)} tone="slate" icon={FileText}>PDF</QuoteAct>
+      <QuoteAct onClick={() => openRevisions(q)} tone="slate" icon={History} loading={isBusy(q.id, 'revisions')}>Revisions</QuoteAct>
+      {canEditRow(q) && (
+        <QuoteAct onClick={() => openBuilder(q)} icon={Pencil} loading={isBusy(q.id, 'build')}>
+          {q.status === 'Draft' ? 'Build' : 'Edit'}
+        </QuoteAct>
+      )}
+      {canSend && q.status === 'Draft' && (
+        <QuoteAct onClick={() => confirmSend(q)} tone="emerald" icon={Send} loading={isBusy(q.id, 'send')}>Send</QuoteAct>
+      )}
+      {canSend && !locked && q.status !== 'Lost' && (
+        <QuoteAct onClick={() => markLost(q)} tone="rose" icon={X} loading={isBusy(q.id, 'lost')}>Lost</QuoteAct>
+      )}
+      {pending && canApprove && (
+        <>
+          <QuoteAct onClick={() => run(q.id, 'approve', () => approveQuotation(q.id))} tone="emerald" icon={ThumbsUp} loading={isBusy(q.id, 'approve')}>Approve</QuoteAct>
+          <QuoteAct onClick={() => reject(q)} tone="rose" icon={X} loading={isBusy(q.id, 'reject')}>Reject</QuoteAct>
+        </>
+      )}
+      {q.status === 'Ordered' && (
+        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
+          <Check size={12} /> Ordered
+        </span>
+      )}
+      {q.status === 'Open' && (
+        <span className="text-[11px] font-medium text-slate-400">Sent · awaiting customer</span>
+      )}
+    </div>
+  )
+}
+
 export default function Quotations() {
   const d = useData()
   const location = useLocation()
@@ -106,8 +189,12 @@ export default function Quotations() {
   // permanently empty here. Use the shared read-only lookup instead, which every internal role may read.
   const [projectOpts, setProjectOpts] = useState([])
   useEffect(() => {
-    d.lookupProjects().then((r) => setProjectOpts(Array.isArray(r) ? r : [])).catch(() => setProjectOpts([]))
-  }, [d])
+    let alive = true
+    d.lookupProjects().then((r) => { if (alive) setProjectOpts(Array.isArray(r) ? r : []) }).catch(() => { if (alive) setProjectOpts([]) })
+    return () => { alive = false }
+    // Mount-once: depending on `d` re-fired on every DataContext tick and ate clicks.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const vatRate = useMemo(() => {
     const vs = settings?.vatSettings || []
@@ -122,12 +209,14 @@ export default function Quotations() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
-  // Keep background loadAll off while the builder is open (avoids starving Save PATCH).
+  // Keep background loadAll off while the builder is open OR an action is in flight
+  // (avoids starving Save PATCH and swallowing button clicks mid-press).
   useEffect(() => {
-    if (!builder) { resumeSync?.(); return }
+    if (!builder && !busy) { resumeSync?.(); return }
     pauseSync?.()
     return () => resumeSync?.()
-  }, [builder, pauseSync, resumeSync])
+  }, [builder, busy, pauseSync, resumeSync])
+
   const run = async (id, action, fn) => {
     setBusy(`${id}:${action}`)
     try { await fn() } catch (e) { alert(e.message) } finally { setBusy(null) }
@@ -330,37 +419,6 @@ export default function Quotations() {
     catch (e) { alert(e.message) } finally { setBusy(null) }
   }
 
-  const Act = ({ onClick, tone = 'brand', icon: Icon, children, disabled, loading }) => {
-    const blocked = disabled || loading
-    const tones = {
-      rose: 'border-rose-200 text-rose-600 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700 active:bg-rose-100',
-      emerald: 'border-emerald-200 text-emerald-600 hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700 active:bg-emerald-100',
-      slate: 'border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-100 hover:text-slate-800 active:bg-slate-200/70',
-      brand: 'border-slate-200 text-brand-600 hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700 active:bg-brand-100',
-    }
-    return (
-      <button
-        type="button"
-        disabled={blocked}
-        onClick={(e) => {
-          e.preventDefault()
-          e.stopPropagation()
-          if (blocked) return
-          onClick?.(e)
-        }}
-        className={`inline-flex min-h-[34px] cursor-pointer touch-manipulation select-none items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold
-          transition-[background-color,border-color,color,box-shadow,transform] duration-150 ease-out
-          hover:shadow-sm active:scale-[0.97]
-          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/25
-          disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none disabled:active:scale-100
-          ${tones[tone] || tones.brand}`}
-      >
-        {loading ? <Loader2 size={14} className="animate-spin shrink-0" /> : Icon && <Icon size={14} className="shrink-0" />}
-        {children}
-      </button>
-    )
-  }
-
   return (
     <>
       <PageHeader title="Quotations / Estimation" subtitle="Create from Opportunity — EOS specs, images & fixed pricing from Item Master">
@@ -420,15 +478,15 @@ export default function Quotations() {
                     <td className="td"><Badge tone={statusTone(q.status)}>{q.status}</Badge></td>
                     <td className="td">
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <Act onClick={() => setPreview(q)} tone="slate" icon={FileText}>PDF</Act>
-                        <Act onClick={() => openRevisions(q)} tone="slate" icon={History} loading={isBusy(q.id, 'revisions')}>Revisions</Act>
-                        {canEditRow(q) && <Act onClick={() => openBuilder(q)} icon={Pencil} loading={isBusy(q.id, 'build')}>{q.status === 'Draft' ? 'Build' : 'Edit'}</Act>}
-                        {canSend && q.status === 'Draft' && <Act onClick={() => confirmSend(q)} tone="emerald" icon={Send} loading={isBusy(q.id, 'send')}>Send</Act>}
-                        {canSend && !locked && q.status !== 'Lost' && <Act onClick={() => markLost(q)} tone="rose" icon={X} loading={isBusy(q.id, 'lost')}>Lost</Act>}
+                        <QuoteAct onClick={() => setPreview(q)} tone="slate" icon={FileText}>PDF</QuoteAct>
+                        <QuoteAct onClick={() => openRevisions(q)} tone="slate" icon={History} loading={isBusy(q.id, 'revisions')}>Revisions</QuoteAct>
+                        {canEditRow(q) && <QuoteAct onClick={() => openBuilder(q)} icon={Pencil} loading={isBusy(q.id, 'build')}>{q.status === 'Draft' ? 'Build' : 'Edit'}</QuoteAct>}
+                        {canSend && q.status === 'Draft' && <QuoteAct onClick={() => confirmSend(q)} tone="emerald" icon={Send} loading={isBusy(q.id, 'send')}>Send</QuoteAct>}
+                        {canSend && !locked && q.status !== 'Lost' && <QuoteAct onClick={() => markLost(q)} tone="rose" icon={X} loading={isBusy(q.id, 'lost')}>Lost</QuoteAct>}
                         {pending && canApprove && (
                           <>
-                            <Act onClick={() => run(q.id, 'approve', () => approveQuotation(q.id))} tone="emerald" icon={ThumbsUp} loading={isBusy(q.id, 'approve')}>Approve</Act>
-                            <Act onClick={() => reject(q)} tone="rose" icon={X} loading={isBusy(q.id, 'reject')}>Reject</Act>
+                            <QuoteAct onClick={() => run(q.id, 'approve', () => approveQuotation(q.id))} tone="emerald" icon={ThumbsUp} loading={isBusy(q.id, 'approve')}>Approve</QuoteAct>
+                            <QuoteAct onClick={() => reject(q)} tone="rose" icon={X} loading={isBusy(q.id, 'reject')}>Reject</QuoteAct>
                           </>
                         )}
                         {q.status === 'Ordered' && <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600"><Check size={13} /> Ordered</span>}
@@ -580,7 +638,12 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
   }
 
   useEffect(() => { api('/quotations/terms').then(setTerms).catch(() => setTerms([])) }, [])
-  useEffect(() => { d.getPaymentTemplates().then(setPaymentTemplates).catch(() => setPaymentTemplates([])) }, [d])
+  useEffect(() => {
+    let alive = true
+    d.getPaymentTemplates().then((r) => { if (alive) setPaymentTemplates(r || []) }).catch(() => { if (alive) setPaymentTemplates([]) })
+    return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // ── STOCK FIRST (CEO rule) ────────────────────────────────────────────────
   // As the quote is composed, ask the server for the live stock-first split. This is a what-if: it
