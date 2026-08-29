@@ -13,6 +13,25 @@ import { api } from '../api.js'
 import { useData } from '../store/DataContext.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
 import QuotationPreview from '../components/QuotationPreview.jsx'
+import LostReasonModal from '../components/LostReasonModal.jsx'
+
+const MANDATORY_FIELDS = ['customer', 'contact_person', 'project_name', 'project_location', 'validity_days', 'payment_terms']
+const FIELD_LABEL = {
+  customer: 'Customer', contact_person: 'Contact', project_name: 'Project name',
+  project_location: 'Project location', validity_days: 'Validity days', payment_terms: 'Payment terms',
+}
+function missingMandatory(h) {
+  const miss = []
+  for (const f of MANDATORY_FIELDS) {
+    if (f === 'validity_days') {
+      const n = Number(h?.validity_days)
+      if (!Number.isFinite(n) || n <= 0 || n > 365) miss.push(f)
+    } else if (!h?.[f] && h?.[f] !== 0) miss.push(f)
+  }
+  return miss
+}
+
+const STATUS_FILTERS = ['All', 'Draft', 'Pending Approval', 'Sent', 'Under Negotiation', 'Rejected', 'Ordered', 'Lost', 'Expired']
 
 // mirrors server rbac/permissions.financialRoles — decides whether cost/GP UI renders at all
 const FINANCIAL_ROLES = ['Management', 'System Admin', 'Accounts User', 'Purchase User', 'Stock User', 'Project Manager']
@@ -20,7 +39,7 @@ const FINANCIAL_ROLES = ['Management', 'System Admin', 'Accounts User', 'Purchas
 const EDITORS = ['Management', 'System Admin', 'Sales Manager']
 // Sales User (Create) may reopen their own Draft to finish building before Send — server allows PATCH on own Draft only.
 const canEditQuote = (q, user) => {
-  if (['Ordered', 'Lost'].includes(q?.status)) return false
+  if (['Ordered', 'Lost', 'Rejected'].includes(q?.status)) return false
   if (EDITORS.includes(user?.role)) return true
   return user?.role === 'Sales User' && q?.status === 'Draft' && q?.owner_id === user?.id
 }
@@ -136,9 +155,12 @@ function QuoteAct({ onClick, tone = 'brand', icon: Icon, children, disabled, loa
 }
 
 function QuoteActions({
-  q, canEditRow, canSend, canApprove, locked, pending,
-  isBusy, setPreview, openRevisions, openBuilder, confirmSend, markLost, run, approveQuotation, reject,
+  q, canEditRow, canSend, canApprove, canRevise, locked, pending,
+  isBusy, setPreview, openRevisions, openBuilder, confirmSend, markLost, run, approveQuotation, reject, reviseQuote,
 }) {
+  const miss = q.missing_fields?.length ? q.missing_fields : missingMandatory(q)
+  const incomplete = q.status === 'Draft' && miss.length > 0
+  const missList = miss.map((f) => FIELD_LABEL[f] || f).join(', ')
   return (
     <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
       <QuoteAct onClick={() => setPreview(q)} tone="slate" icon={FileText}>PDF</QuoteAct>
@@ -148,10 +170,23 @@ function QuoteActions({
           {q.status === 'Draft' ? 'Build' : 'Edit'}
         </QuoteAct>
       )}
-      {canSend && q.status === 'Draft' && (
-        <QuoteAct onClick={() => confirmSend(q)} tone="emerald" icon={Send} loading={isBusy(q.id, 'send')}>Send</QuoteAct>
+      {canRevise && ['Rejected', 'Sent', 'Under Negotiation', 'Expired'].includes(q.status) && (
+        <QuoteAct onClick={() => reviseQuote(q)} tone="violet" icon={History} loading={isBusy(q.id, 'revise')}>Revise</QuoteAct>
       )}
-      {canSend && !locked && q.status !== 'Lost' && (
+      {canSend && q.status === 'Draft' && (
+        <span title={incomplete ? `Incomplete: ${missList}` : undefined} className="inline-flex">
+          <QuoteAct
+            onClick={() => !incomplete && confirmSend(q)}
+            tone="emerald"
+            icon={Send}
+            loading={isBusy(q.id, 'send')}
+            disabled={incomplete}
+          >
+            Send
+          </QuoteAct>
+        </span>
+      )}
+      {canSend && !locked && q.status !== 'Lost' && q.status !== 'Rejected' && (
         <QuoteAct onClick={() => markLost(q)} tone="rose" icon={X} loading={isBusy(q.id, 'lost')}>Lost</QuoteAct>
       )}
       {pending && canApprove && (
@@ -165,8 +200,11 @@ function QuoteActions({
           <Check size={12} /> Ordered
         </span>
       )}
-      {q.status === 'Open' && (
+      {(q.status === 'Sent' || q.status === 'Open') && (
         <span className="text-[11px] font-medium text-slate-400">Sent · awaiting customer</span>
+      )}
+      {q.status === 'Under Negotiation' && (
+        <span className="text-[11px] font-medium text-amber-600">Under negotiation</span>
       )}
     </div>
   )
@@ -184,6 +222,12 @@ export default function Quotations() {
   const canEditRow = (q) => canEditQuote(q, user)
   const canApprove = APPROVERS.includes(user?.role)
   const canSend = SENDERS.includes(user?.role)
+  const canRevise = EDITORS.includes(user?.role) || user?.role === 'Sales User'
+
+  const [tab, setTab] = useState('list') // list | lost
+  const [statusFilter, setStatusFilter] = useState('All')
+  const [lostModal, setLostModal] = useState(null) // quotation row
+  const [lostReport, setLostReport] = useState(null)
 
   // Projects live in the projects panel, which Sales cannot read — so the store's `projects` array is
   // permanently empty here. Use the shared read-only lookup instead, which every internal role may read.

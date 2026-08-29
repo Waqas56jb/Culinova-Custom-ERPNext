@@ -25,10 +25,13 @@ export const ROLE_DISCOUNT = {
 export const roleDirectLimit = (role) => ROLE_DISCOUNT[role] ?? 5
 export const isApprover = (role) => role === 'Management' || role === 'System Admin'
 
+/** Mandatory 6 fields (Sales Rules §16). Returns field names still missing/invalid. */
 export function validateRequiredFields(p) {
-  const need = ['customer', 'contact_person', 'project_name', 'project_location', 'validity_days', 'payment_terms']
-  const missing = need.filter((f) => !p[f] && p[f] !== 0)
-  if (!isValidValidityDays(p.validity_days)) missing.push('validity_days (1–365 days)')
+  const missing = []
+  for (const f of ['customer', 'contact_person', 'project_name', 'project_location', 'payment_terms']) {
+    if (!p[f] && p[f] !== 0) missing.push(f)
+  }
+  if (!isValidValidityDays(p.validity_days)) missing.push('validity_days')
   return missing
 }
 

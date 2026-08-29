@@ -16,6 +16,8 @@ import { enrichQuotationList, enrichQuotationRecord } from '../../core/quotation
 import { validateRequiredFields, computeFinancials, evaluateApproval, discountSource, RULES } from './quotation.rules.js'
 import { nextNumber } from '../../core/numbering.js'
 import { acceptQuotation } from '../../core/acceptQuotation.js'
+import { assertTransition, LIVE_QUOTE_STATUSES } from '../../core/quotationStatus.js'
+import { validateLostReason, LOST_REASONS } from '../../core/lostReasons.js'
 
 const r = Router()
 // Document numbers come from the editable numbering_series (Company Settings), NOT from Date.now();
@@ -196,7 +198,9 @@ r.patch('/quotations/:id', authRequired, authorize('sales', 'update'), asyncWrap
     decision = evaluateApproval(fin, req.user.role)
     if (decision.blocked) return res.status(422).json({ error: decision.reason })
     Object.assign(patch, fin)
-    patch.status = decision.needsApproval ? 'Pending Approval' : 'Open'
+    patch.status = decision.needsApproval
+      ? 'Pending Approval'
+      : (['Sent', 'Open', 'Under Negotiation'].includes(existing.status) ? 'Sent' : 'Draft')
     patch.approval_status = decision.needsApproval ? 'Pending' : 'Not Required'
     patch.discount_source = discountSource(req.user.role)
     // replace line items
@@ -217,17 +221,20 @@ r.patch('/quotations/:id', authRequired, authorize('sales', 'update'), asyncWrap
   res.json({ ...redactFinancials(req.user.role, updated), _approval: safeApproval(req.user.role, decision) })
 }))
 
-// ── APPROVE (Approval/Full Admin only) — #11 ──
+// ── APPROVE (Approval/Full Admin only) — #11 → Sent ──
 r.post('/quotations/:id/approve', authRequired, authorize('sales', 'approve'), asyncWrap(async (req, res) => {
   const { data: q } = await supabase.from('quotations').select('*, quotation_items(*)').eq('id', req.params.id).single()
   if (!q) return res.status(404).json({ error: 'Not found' })
+  try { assertTransition(q.status, 'Sent') } catch (e) {
+    return res.status(e.status || 422).json({ error: e.message, code: e.code })
+  }
   const fin = computeFinancials(q.quotation_items || [], q.discount_pct, q.discount_fixed)
   const overrideReason = (req.body?.override_reason || '').trim()
   if (Number(fin.gp_percent) < RULES.MIN_GP && !overrideReason) {
     return res.status(422).json({ error: `GP ${fin.gp_percent}% is below ${RULES.MIN_GP}% — override reason required to approve`, requiresOverrideReason: true })
   }
   const { data, error } = await supabase.from('quotations').update({
-    approval_status: 'Approved', status: 'Open', approved_by: req.user.id,
+    approval_status: 'Approved', status: 'Sent', approved_by: req.user.id,
     override_reason: overrideReason || q.override_reason || null,
   }).eq('id', req.params.id).select().single()
   if (error) throw error
@@ -235,23 +242,46 @@ r.post('/quotations/:id/approve', authRequired, authorize('sales', 'approve'), a
   res.json(redactFinancials(req.user.role, data))
 }))
 
-// ── REJECT (Approval/Full Admin) — sends back to the salesperson ──
+// ── REJECT (Approval/Full Admin) — terminal Rejected for this revision; Revise → Draft ──
 r.post('/quotations/:id/reject', authRequired, authorize('sales', 'approve'), asyncWrap(async (req, res) => {
   const reason = (req.body.reason || '').trim()
-  const { data, error } = await supabase.from('quotations').update({ approval_status: 'Rejected', status: 'Draft' }).eq('id', req.params.id).select().single()
+  const { data: q } = await supabase.from('quotations').select('id, status').eq('id', req.params.id).single()
+  if (!q) return res.status(404).json({ error: 'Not found' })
+  try { assertTransition(q.status, 'Rejected') } catch (e) {
+    return res.status(e.status || 422).json({ error: e.message, code: e.code })
+  }
+  const { data, error } = await supabase.from('quotations').update({
+    approval_status: 'Rejected', status: 'Rejected',
+  }).eq('id', req.params.id).select().single()
   if (error) throw error
+  await supabase.from('quotation_revisions').insert({
+    quotation_id: req.params.id, revision: 9998, changed_by: req.user.id,
+    changes: { action: 'approval-rejected', reason: reason || null },
+  })
   await logAudit(req.user, 'quotation', req.params.id, 'rejected', { reason })
   res.json(redactFinancials(req.user.role, data))
 }))
 
-// ── SEND — blocked while approval pending ── (part of the salesperson's normal flow → 'create')
+// ── SEND — blocked while approval pending; hard-require §16 fields → Sent ──
 r.post('/quotations/:id/send', authRequired, authorize('sales', 'create'), asyncWrap(async (req, res) => {
   const { data: q } = await supabase.from('quotations').select('*').eq('id', req.params.id).single()
   if (!q) return res.status(404).json({ error: 'Not found' })
-  if (q.approval_status === 'Pending') return res.status(403).json({ error: 'Quotation needs approval before it can be sent' })
-  await supabase.from('quotations').update({ status: 'Open' }).eq('id', req.params.id)
+  if (q.approval_status === 'Pending' || q.status === 'Pending Approval') {
+    return res.status(403).json({ error: 'Quotation needs approval before it can be sent' })
+  }
+  const missing = validateRequiredFields(q)
+  if (missing.length) {
+    return res.status(422).json({
+      error: 'Quotation is incomplete and cannot be sent to the customer',
+      missing_fields: missing,
+    })
+  }
+  try { assertTransition(q.status, 'Sent') } catch (e) {
+    return res.status(e.status || 422).json({ error: e.message, code: e.code })
+  }
+  await supabase.from('quotations').update({ status: 'Sent' }).eq('id', req.params.id)
   await logAudit(req.user, 'quotation', req.params.id, 'sent', { to: q.customer_email })
-  res.json({ ok: true, sent_to: q.customer_email })
+  res.json({ ok: true, sent_to: q.customer_email, status: 'Sent' })
 }))
 
 // ── ACCEPT → auto Sales Order + Project + BOQ (full chain, #17) ── (salesperson records customer's yes → 'create')
@@ -275,24 +305,36 @@ r.post('/quotations/:id/accept', authRequired, authorize('sales', 'create'), asy
   }
 }))
 
-// ── LOST — reason mandatory (#13), kept in revision history ── (salesperson records outcome → 'create')
+// ── LOST — fixed reason list (#13), kept in revision history ──
 r.post('/quotations/:id/lost', authRequired, authorize('sales', 'create'), asyncWrap(async (req, res) => {
-  const reason = (req.body.reason || '').trim()
-  if (!reason) return res.status(422).json({ error: 'A reason is required to mark a quotation as Lost' })
-  const { data, error } = await supabase.from('quotations').update({ status: 'Lost' }).eq('id', req.params.id).select().single()
+  const parsed = validateLostReason(req.body || {})
+  if (!parsed.ok) return res.status(422).json({ error: parsed.error })
+  const { data: existing } = await supabase.from('quotations').select('id, status').eq('id', req.params.id).single()
+  if (!existing) return res.status(404).json({ error: 'Not found' })
+  try { assertTransition(existing.status, 'Lost') } catch (e) {
+    return res.status(e.status || 422).json({ error: e.message, code: e.code })
+  }
+  const { data, error } = await supabase.from('quotations').update({
+    status: 'Lost',
+    lost_reason: parsed.reason,
+    lost_reason_note: parsed.note,
+  }).eq('id', req.params.id).select().single()
   if (error) throw error
-  await supabase.from('quotation_revisions').insert({ quotation_id: req.params.id, revision: 9999, changed_by: req.user.id, changes: { action: 'lost', reason } })
-  // Flow: "Customer Approved? → No → Close the Opportunity". A rejected quotation must close its
-  // opportunity, exactly like the customer-portal reject already does — otherwise a lost quote left the
-  // opportunity dangling open. Guard against multi-quote opportunities: only close when no OTHER
-  // quotation on the same opportunity is still live (Draft / Open / Pending Approval / Ordered).
+  await supabase.from('quotation_revisions').insert({
+    quotation_id: req.params.id, revision: 9999, changed_by: req.user.id,
+    changes: { action: 'lost', reason: parsed.reason, note: parsed.note },
+  })
   if (data?.opportunity_id) {
     const { data: siblings } = await supabase.from('quotations')
       .select('id, status').eq('opportunity_id', data.opportunity_id).neq('id', data.id)
-    const stillLive = (siblings || []).some((s) => ['Draft', 'Open', 'Pending Approval', 'Ordered'].includes(s.status))
-    if (!stillLive) { try { await loseOpportunityForCustomer(data.customer, reason) } catch { /* CRM close is best-effort */ } }
+    const stillLive = (siblings || []).some((s) => LIVE_QUOTE_STATUSES.includes(s.status))
+    if (!stillLive) {
+      try {
+        await loseOpportunityForCustomer(data.customer, parsed.note ? `${parsed.reason}: ${parsed.note}` : parsed.reason)
+      } catch { /* CRM close is best-effort */ }
+    }
   }
-  await logAudit(req.user, 'quotation', req.params.id, 'lost', { reason })
+  await logAudit(req.user, 'quotation', req.params.id, 'lost', { reason: parsed.reason, note: parsed.note })
   res.json(redactFinancials(req.user.role, data))
 }))
 
@@ -391,11 +433,15 @@ r.post('/opportunities', authRequired, authorize('sales', 'create'), asyncWrap(a
 }))
 
 r.post('/opportunities/:id/lost', authRequired, authorize('sales', 'create'), asyncWrap(async (req, res) => {
-  const reason = (req.body.reason || '').trim()
-  if (!reason) return res.status(422).json({ error: 'A reason is required to mark an opportunity as Lost (rule #13)' })
-  const { data, error } = await supabase.from('opportunities').update({ stage: 'Lost', lost_reason: reason }).eq('id', req.params.id).select().single()
+  const parsed = validateLostReason(req.body || {})
+  if (!parsed.ok) return res.status(422).json({ error: parsed.error })
+  const { data, error } = await supabase.from('opportunities').update({
+    stage: 'Lost',
+    lost_reason: parsed.reason,
+    lost_reason_note: parsed.note,
+  }).eq('id', req.params.id).select().single()
   if (error) throw error
-  await logAudit(req.user, 'opportunity', req.params.id, 'lost', { reason })
+  await logAudit(req.user, 'opportunity', req.params.id, 'lost', { reason: parsed.reason, note: parsed.note })
   res.json(data)
 }))
 
@@ -429,6 +475,64 @@ r.get('/payment-templates', authRequired, authorize('sales', 'read'), asyncWrap(
     .eq('is_active', true).eq('category', 'Payment').order('is_default', { ascending: false }).order('name')
   if (error) throw error
   res.json(data || [])
+}))
+
+// Fixed lost-reason list for UI dropdowns
+r.get('/lost-reasons', authRequired, authorize('sales', 'read'), asyncWrap(async (_req, res) => {
+  res.json(LOST_REASONS)
+}))
+
+// Lost analysis — counts + value by reason (+ optional period)
+r.get('/reports/lost-analysis', authRequired, authorize('sales', 'read'), asyncWrap(async (req, res) => {
+  const from = req.query.from ? String(req.query.from) : null
+  const to = req.query.to ? String(req.query.to) : null
+
+  let qQuotes = supabase.from('quotations')
+    .select('id, number, customer, status, total_amount, lost_reason, lost_reason_note, created_at, updated_at')
+    .eq('status', 'Lost')
+  let qOpps = supabase.from('opportunities')
+    .select('id, number, customer, stage, value, lost_reason, lost_reason_note, created_at, updated_at')
+    .eq('stage', 'Lost')
+
+  if (from) {
+    qQuotes = qQuotes.gte('updated_at', from)
+    qOpps = qOpps.gte('updated_at', from)
+  }
+  if (to) {
+    const end = to.length <= 10 ? `${to}T23:59:59.999Z` : to
+    qQuotes = qQuotes.lte('updated_at', end)
+    qOpps = qOpps.lte('updated_at', end)
+  }
+
+  const [{ data: quotes, error: qe }, { data: opps, error: oe }] = await Promise.all([qQuotes, qOpps])
+  if (qe) throw qe
+  if (oe) throw oe
+
+  const byReason = {}
+  for (const r of LOST_REASONS) {
+    byReason[r] = { reason: r, quote_count: 0, quote_value: 0, opportunity_count: 0, opportunity_value: 0 }
+  }
+  const bump = (reason, bucket, value) => {
+    const key = LOST_REASONS.includes(reason) ? reason : 'Other'
+    if (!byReason[key]) byReason[key] = { reason: key, quote_count: 0, quote_value: 0, opportunity_count: 0, opportunity_value: 0 }
+    byReason[key][`${bucket}_count`] += 1
+    byReason[key][`${bucket}_value`] += Number(value) || 0
+  }
+  for (const q of quotes || []) bump(q.lost_reason || 'Other', 'quote', q.total_amount)
+  for (const o of opps || []) bump(o.lost_reason || 'Other', 'opportunity', o.value)
+
+  res.json({
+    period: { from, to },
+    by_reason: Object.values(byReason),
+    quotations: quotes || [],
+    opportunities: opps || [],
+    totals: {
+      quote_count: (quotes || []).length,
+      quote_value: (quotes || []).reduce((s, x) => s + (Number(x.total_amount) || 0), 0),
+      opportunity_count: (opps || []).length,
+      opportunity_value: (opps || []).reduce((s, x) => s + (Number(x.value) || 0), 0),
+    },
+  })
 }))
 
 // ============================================================

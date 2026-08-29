@@ -10,6 +10,7 @@ import { recomputeProject } from './projectcost.js'
 import { reserveForSalesOrder } from './inventory.js'
 import { allocateLines } from './availability.js'
 import { winOpportunityForCustomer } from './crmflow.js'
+import { ACCEPT_FROM_STATUSES } from './quotationStatus.js'
 
 const num = (p) => `${p}-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`
 
@@ -45,6 +46,14 @@ export async function acceptQuotation({ quotationId, actor, channel }) {
       ? 'This quotation is pending internal approval and cannot be accepted yet.'
       : 'Quotation needs approval before it can be accepted')
     err.status = channel === 'portal' ? 422 : 403
+    throw err
+  }
+
+  // Sprint 3 Block 1 — status precondition only (Sent / Under Negotiation; Open = legacy Sent)
+  if (!ACCEPT_FROM_STATUSES.includes(q.status)) {
+    const err = new Error(`Quotation can only be accepted from Sent or Under Negotiation (current: ${q.status})`)
+    err.status = 422
+    err.code = 'ILLEGAL_STATUS_TRANSITION'
     throw err
   }
 

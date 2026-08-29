@@ -10,6 +10,8 @@ import { customerCommercialGate } from '../../core/customerGate.js'
 import { enrichQuotationList } from '../../core/quotationLines.js'
 import { stripCustomerQuotationFields } from '../../rbac/permissions.js'
 import { acceptQuotation } from '../../core/acceptQuotation.js'
+import { assertTransition } from '../../core/quotationStatus.js'
+import { validateLostReason } from '../../core/lostReasons.js'
 
 const r = Router()
 const num = (p) => `${p}-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`
@@ -137,33 +139,53 @@ r.get('/customer/commercial-profile', authRequired, asyncWrap(async (req, res) =
 }))
 
 r.post('/customer/quotations/:id/reject', authRequired, asyncWrap(async (req, res) => {
-  const reason = (req.body.reason || '').trim()
-  if (!reason) return res.status(422).json({ error: 'Please tell us why (reason is required)' })
+  const parsed = validateLostReason(req.body || {})
+  if (!parsed.ok) return res.status(422).json({ error: parsed.error })
   const { data: q } = await supabase.from('quotations').select('*').eq('id', req.params.id).single()
   if (!ownsQuote(q, req.user)) return res.status(403).json({ error: 'Not your quotation' })
-  await supabase.from('quotations').update({ status: 'Lost' }).eq('id', q.id)
-  await supabase.from('quotation_revisions').insert({ quotation_id: q.id, revision: 9999, changed_by: req.user.id, changes: { action: 'customer-rejected', reason } })
-  await loseOpportunityForCustomer(q.customer, reason) // opportunity → Lost
-  await supabase.from('messages').insert({ customer_name: req.user.name, customer_email: req.user.email, sender: 'customer', body: `❌ I have REJECTED quotation ${q.number}. Reason: ${reason}` })
+  try { assertTransition(q.status, 'Lost') } catch (e) {
+    return res.status(e.status || 422).json({ error: e.message, code: e.code })
+  }
+  await supabase.from('quotations').update({
+    status: 'Lost',
+    lost_reason: parsed.reason,
+    lost_reason_note: parsed.note,
+  }).eq('id', q.id)
+  await supabase.from('quotation_revisions').insert({
+    quotation_id: q.id, revision: 9999, changed_by: req.user.id,
+    changes: { action: 'customer-rejected', reason: parsed.reason, note: parsed.note },
+  })
+  const reasonText = parsed.note ? `${parsed.reason}: ${parsed.note}` : parsed.reason
+  await loseOpportunityForCustomer(q.customer, reasonText)
+  await supabase.from('messages').insert({
+    customer_name: req.user.name, customer_email: req.user.email, sender: 'customer',
+    body: `❌ I have REJECTED quotation ${q.number}. Reason: ${reasonText}`,
+  })
   res.json({ ok: true })
 }))
 
-r.delete('/customer/quotations/:id', authRequired, asyncWrap(async (req, res) => {
-  const { data: q } = await supabase.from('quotations').select('*').eq('id', req.params.id).single()
-  if (!ownsQuote(q, req.user)) return res.status(403).json({ error: 'Not your quotation' })
-  if (q.status === 'Ordered') return res.status(422).json({ error: 'An ordered quotation cannot be deleted' })
-  await supabase.from('quotations').delete().eq('id', q.id) // cascades items + revisions
-  await supabase.from('messages').insert({ customer_name: req.user.name, customer_email: req.user.email, sender: 'customer', body: `🗑️ I removed quotation ${q.number}.` })
-  res.json({ ok: true })
+// History must never be deleted (Sales Rules §10/§18) — decline via reject-with-reason only.
+r.delete('/customer/quotations/:id', authRequired, asyncWrap(async (_req, res) => {
+  res.status(410).json({
+    error: 'Quotations cannot be deleted. Please reject with a reason instead.',
+    code: 'QUOTATION_DELETE_FORBIDDEN',
+  })
 }))
 
 r.post('/customer/quotations/:id/concession', authRequired, asyncWrap(async (req, res) => {
   const note = (req.body.note || '').trim()
   const { data: q } = await supabase.from('quotations').select('*').eq('id', req.params.id).single()
   if (!ownsQuote(q, req.user)) return res.status(403).json({ error: 'Not your quotation' })
-  await advanceOpportunity(q.customer, 'Negotiation') // concession → Negotiation
-  await supabase.from('messages').insert({ customer_name: req.user.name, customer_email: req.user.email, sender: 'customer', body: `💬 Concession request on quotation ${q.number}: ${note || 'Could you please offer a better price?'}` })
-  res.json({ ok: true })
+  try { assertTransition(q.status, 'Under Negotiation') } catch (e) {
+    return res.status(e.status || 422).json({ error: e.message, code: e.code })
+  }
+  await supabase.from('quotations').update({ status: 'Under Negotiation' }).eq('id', q.id)
+  await advanceOpportunity(q.customer, 'Negotiation')
+  await supabase.from('messages').insert({
+    customer_name: req.user.name, customer_email: req.user.email, sender: 'customer',
+    body: `💬 Concession request on quotation ${q.number}: ${note || 'Could you please offer a better price?'}`,
+  })
+  res.json({ ok: true, status: 'Under Negotiation' })
 }))
 
 // ── CUSTOMER DELIVERIES — view + Accept / Reject / request Return (DEL-003/004/005) ──

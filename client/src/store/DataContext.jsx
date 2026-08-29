@@ -426,7 +426,10 @@ export function DataProvider({ children }) {
     })
     await reload('opportunities')
   }
-  const lostOpportunity = async (id, reason) => { await post(`sales/opportunities/${id}/lost`, { reason }); await reload('opportunities') }
+  const lostOpportunity = async (id, reason, note = null) => {
+    await post(`sales/opportunities/${id}/lost`, { reason, note })
+    await reload('opportunities')
+  }
   // No wonOpportunity handler: an opportunity is Won only when the customer approves a quotation and a
   // Sales Order is created (acceptQuotation → server winOpportunityForCustomer). There is no off-flow
   // manual Won shortcut.
@@ -462,7 +465,10 @@ export function DataProvider({ children }) {
   const rejectQuotation = async (id, reason) => { await post(`sales/quotations/${id}/reject`, { reason }); await loadQuotations() }
   const sendQuotation = async (id) => { await post(`sales/quotations/${id}/send`, {}); await loadQuotations() }
   const acceptQuotation = async (id) => { const r = await post(`sales/quotations/${id}/accept`, {}); await Promise.all([loadQuotations(), reload('salesOrders'), loadProjects()]); return r }
-  const lostQuotation = async (id, reason) => { await post(`sales/quotations/${id}/lost`, { reason }); await loadQuotations() }
+  const lostQuotation = async (id, reason, note = null) => {
+    await post(`sales/quotations/${id}/lost`, { reason, note })
+    await loadQuotations()
+  }
   const addOrder = async (d) => {
     // ONE call creates the sales order + its linked project (+ BOQ from the items) — the server owns
     // project creation now, so no separate projects insert (which would duplicate the project).

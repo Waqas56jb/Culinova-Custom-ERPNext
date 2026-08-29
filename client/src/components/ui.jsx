@@ -106,7 +106,8 @@ export function Badge({ tone = 'gray', children }) {
 // map common statuses → tone
 export function statusTone(s) {
   const map = {
-    Open: 'blue', Replied: 'violet', Opportunity: 'amber', Converted: 'green',
+    Open: 'blue', Sent: 'blue', 'Under Negotiation': 'amber', Rejected: 'red',
+    Replied: 'violet', Opportunity: 'amber', Converted: 'green',
     'Do Not Contact': 'gray', Ordered: 'green', Lost: 'red', Expired: 'amber',
     Won: 'green', Prospecting: 'gray', Quotation: 'blue', Negotiation: 'amber',
     Active: 'green', 'To Deliver': 'amber', 'To Bill': 'amber', 'Not Billed': 'gray',
@@ -115,6 +116,7 @@ export function statusTone(s) {
     // project & task statuses
     'On Track': 'green', 'At Risk': 'amber', Delayed: 'red', Completed: 'green',
     Working: 'blue', Review: 'violet', Done: 'green', Overdue: 'red', Pending: 'amber', Approved: 'green',
+    'Pending Approval': 'violet',
     // BOQ / required-item fulfilment + assignment
     'To Procure': 'gray', Procured: 'blue', Delivered: 'amber', Installed: 'green',
     Waiting: 'gray', Assigned: 'violet', 'In Progress': 'blue',

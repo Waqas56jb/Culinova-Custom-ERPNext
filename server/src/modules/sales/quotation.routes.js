@@ -29,12 +29,13 @@ import { nextNumber } from '../../core/numbering.js'
 import { discountFor, baseCurrency } from '../../core/pricing.js'
 import { getBrand } from '../../core/itempricing.js'
 import { priceItem as enginePrice, priceItems, redactPricing } from '../../core/priceEngine.js'
-import { discountSource, evaluateApproval, effectiveDiscountPct, RULES, isValidValidityDays } from './quotation.rules.js'
+import { discountSource, evaluateApproval, effectiveDiscountPct, RULES, isValidValidityDays, validateRequiredFields } from './quotation.rules.js'
 import { ensureLeadAndOpportunity, advanceOpportunity } from '../../core/crmflow.js'
 import { notifyManagementApproval } from '../../core/notify.js'
 import { allocateLines, allocationSummary, allocationColumns } from '../../core/availability.js'
 import { canSeeFinancials } from '../../rbac/permissions.js'
 import { enrichQuotationRecord, enrichQuotationList } from '../../core/quotationLines.js'
+import { assertTransition } from '../../core/quotationStatus.js'
 
 // CEO rule R1 — STOCK FIRST. Every quotation is allocated against live stock BEFORE it is saved:
 // each line records how much is served from stock we already own and how much is a shortfall that
@@ -351,6 +352,7 @@ export function quotationRouter() {
       ...redactFinancials(req.user.role, full),
       _approval: { needsApproval: !!decision.needsApproval },
       stock,
+      missing_fields: validateRequiredFields(full),
     })
   }))
 
@@ -633,14 +635,31 @@ export function quotationRouter() {
     res.json(redactFinancials(req.user.role, full))
   }))
 
-  // ── delete ONE line → recompute ──
+  // ── delete ONE line → Draft only; snapshot revision then remove; non-Draft → 409 ──
   r.delete('/:id/items/:lineId', authRequired, authorizeQuotationEdit, asyncWrap(async (req, res) => {
-    const { data: q } = await supabase.from('quotations').select('id, status, owner_id').eq('id', req.params.id).single()
+    const { data: q } = await supabase.from('quotations').select('*, quotation_items(*)').eq('id', req.params.id).single()
     if (!q) return res.status(404).json({ error: 'Not found' })
+    if (q.status !== 'Draft') {
+      return res.status(409).json({ error: 'Line items can only be deleted on Draft quotations' })
+    }
     const draftBlock = assertDraftEditOr403(req, res, q)
     if (draftBlock) return draftBlock
     const blocked = notEditable(q)
     if (blocked) return res.status(422).json({ error: blocked })
+
+    // Cheap revision snapshot before removal (same shape as /revise)
+    const curSnap = snapshotOf(q, q.quotation_items)
+    const rev = (Number(q.revision) || 0)
+    await supabase.from('quotation_revisions').insert({
+      quotation_id: q.id, revision: rev, changed_by: req.user.id,
+      changes: {
+        action: 'line-deleted',
+        by: req.user.name,
+        line_id: req.params.lineId,
+        snapshot: curSnap,
+      },
+    })
+
     const { error } = await supabase.from('quotation_items').delete().eq('id', req.params.lineId).eq('quotation_id', req.params.id)
     if (error) return res.status(422).json({ error: error.message })
     const full = await recomputeTotals(req.params.id)
@@ -696,11 +715,15 @@ export function quotationRouter() {
     res.json({ ...redactFinancials(req.user.role, full), _approval: { needsApproval: !!decision.needsApproval } })
   }))
 
-  // ── bump the revision, capture the diff, keep the quotation editable ──
+  // ── bump the revision, capture the diff, return to Draft as NEW revision ──
   r.post('/:id/revise', authRequired, authorize('sales', 'update'), asyncWrap(async (req, res) => {
     const { data: q } = await supabase.from('quotations').select('*, quotation_items(*)').eq('id', req.params.id).single()
     if (!q) return res.status(404).json({ error: 'Not found' })
     if (q.status === 'Ordered') return res.status(422).json({ error: 'An ordered quotation cannot be revised' })
+    if (q.status === 'Lost') return res.status(422).json({ error: 'A lost quotation cannot be revised' })
+    try { assertTransition(q.status, 'Draft') } catch (e) {
+      return res.status(e.status || 422).json({ error: e.message, code: e.code })
+    }
     const note = (req.body?.note || '').trim() || null
 
     // find the previous stored snapshot to diff against
@@ -710,12 +733,17 @@ export function quotationRouter() {
     const diff = diffSnap(prevSnap, curSnap)
 
     const newRev = (Number(q.revision) || 0) + 1
-    await supabase.from('quotations').update({ revision: newRev, updated_at: new Date().toISOString() }).eq('id', q.id)
+    await supabase.from('quotations').update({
+      revision: newRev,
+      status: 'Draft',
+      approval_status: 'Not Required',
+      updated_at: new Date().toISOString(),
+    }).eq('id', q.id)
     await supabase.from('quotation_revisions').insert({
       quotation_id: q.id, revision: newRev, changed_by: req.user.id,
-      changes: { action: 'revised', by: req.user.name, note, diff, snapshot: curSnap },
+      changes: { action: 'revised', by: req.user.name, note, diff, snapshot: curSnap, from_status: q.status },
     })
-    await logAudit(req.user, 'quotation', q.id, 'revised', { revision: newRev, changed: diff.length })
+    await logAudit(req.user, 'quotation', q.id, 'revised', { revision: newRev, changed: diff.length, from_status: q.status })
     const { data: full } = await supabase.from('quotations').select('*, quotation_items(*)').eq('id', q.id).single()
     res.json(redactFinancials(req.user.role, { ...full, revision: newRev }))
   }))
