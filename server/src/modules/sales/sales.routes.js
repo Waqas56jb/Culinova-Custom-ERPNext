@@ -177,25 +177,45 @@ r.patch('/quotations/:id', authRequired, authorize('sales', 'update'), asyncWrap
   res.status(410).json({ error: 'Use the quotation builder to edit', code: 'LEGACY_QUOTE_EDIT_GONE' })
 }))
 
-// ── APPROVE (Approval/Full Admin only) — #11 → Sent ──
+// ── APPROVE (Approval/Full Admin only) — approve then real Send (email + portal + sent_at)
 r.post('/quotations/:id/approve', authRequired, authorize('sales', 'approve'), asyncWrap(async (req, res) => {
   const { data: q } = await supabase.from('quotations').select('*, quotation_items(*)').eq('id', req.params.id).single()
   if (!q) return res.status(404).json({ error: 'Not found' })
-  try { assertTransition(q.status, 'Sent') } catch (e) {
-    return res.status(e.status || 422).json({ error: e.message, code: e.code })
+  if (q.status !== 'Pending Approval' && q.approval_status !== 'Pending') {
+    return res.status(422).json({ error: `Quotation is ${q.status} — nothing to approve` })
   }
   const fin = computeFinancials(q.quotation_items || [], q.discount_pct, q.discount_fixed)
   const overrideReason = (req.body?.override_reason || '').trim()
   if (Number(fin.gp_percent) < RULES.MIN_GP && !overrideReason) {
     return res.status(422).json({ error: `GP ${fin.gp_percent}% is below ${RULES.MIN_GP}% — override reason required to approve`, requiresOverrideReason: true })
   }
-  const { data, error } = await supabase.from('quotations').update({
-    approval_status: 'Approved', status: 'Sent', approved_by: req.user.id,
+  // Approve first (Pending Approval → Draft), then full send path (email + portal + sent_at).
+  // Old bug: jumped straight to status=Sent with no email — customers saw "Sent" but inbox empty.
+  try { assertTransition(q.status, 'Draft') } catch (e) {
+    return res.status(e.status || 422).json({ error: e.message, code: e.code })
+  }
+  const { error: apprErr } = await supabase.from('quotations').update({
+    approval_status: 'Approved',
+    status: 'Draft',
+    approved_by: req.user.id,
     override_reason: overrideReason || q.override_reason || null,
-  }).eq('id', req.params.id).select().single()
-  if (error) throw error
+  }).eq('id', req.params.id)
+  if (apprErr) throw apprErr
   await logAudit(req.user, 'quotation', req.params.id, 'approved', { by: req.user.name, override_reason: overrideReason || null })
-  res.json(redactFinancials(req.user.role, data))
+
+  try {
+    const result = await sendQuotationToCustomer({
+      quotationId: req.params.id,
+      actor: req.user,
+      confirmOverdue: !!(req.body?.confirm_overdue || req.body?.confirmOverdue),
+    })
+    return res.json(redactFinancials(req.user.role, { ...result, approval_status: 'Approved' }))
+  } catch (e) {
+    const payload = { error: e.message, code: e.code, approved: true, status: 'Draft' }
+    if (e.missing_fields) payload.missing_fields = e.missing_fields
+    if (e.credit_warning) payload.credit_warning = e.credit_warning
+    return res.status(e.status || 500).json(payload)
+  }
 }))
 
 // ── REJECT (Approval/Full Admin) — terminal Rejected for this revision; Revise → Draft ──
