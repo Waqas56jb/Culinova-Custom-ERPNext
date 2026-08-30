@@ -33,10 +33,16 @@ import { resources } from '../core/resources.js'
 import { crudRouter } from '../core/crud.js'
 import { rolePanels } from '../rbac/permissions.js'
 import { authRequired } from '../middleware/auth.js'
+import { customerPortalUrl, eosApiUrl } from '../config/deploy.js'
 
 const api = Router()
 
-api.get('/health', (req, res) => res.json({ ok: true, service: 'culinova-erp-server' }))
+api.get('/health', (req, res) => res.json({
+  ok: true,
+  service: 'culinova-erp-server',
+  customer_portal_url: customerPortalUrl(),
+  eos_api_url: eosApiUrl(),
+}))
 api.use('/auth', authRoutes)
 
 // what panels can the logged-in user see (drives frontend UI hiding)

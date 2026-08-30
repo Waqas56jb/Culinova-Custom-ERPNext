@@ -34,7 +34,7 @@
 | `EOS_API_URL` | `http://localhost:4400` ⚠️ LOCAL | `https://culinova-rag-knowledgebase-server.vercel.app` (or unset — code defaults prod on Vercel) | **MUST NOT be localhost on Vercel** |
 | `ERP_EOS_INTEGRATION_KEY` | *(secret)* | **must match** EOS `ERP_INTEGRATION_KEY` | confirm |
 | `ERP_INTEGRATION_KEY` | same as above | same | confirm |
-| `CUSTOMER_PORTAL_URL` | `http://localhost:5175` ⚠️ LOCAL | `https://culinova-customer.vercel.app` | **MUST update on Vercel** |
+| `CUSTOMER_PORTAL_URL` | `http://localhost:5175` (local OK) | `https://culinova-customer.vercel.app` — **code ignores localhost on Vercel** (S5B1 fix) | set prod URL; safe if stale localhost |
 | `SMTP_HOST` | `smtp.gmail.com` | `smtp.gmail.com` | set for demo |
 | `SMTP_PORT` | `587` | `587` | set |
 | `SMTP_USER` | Gmail address | same demo Gmail | user pastes on Vercel |

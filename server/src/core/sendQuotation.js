@@ -13,9 +13,9 @@ import { logAudit } from './audit.js'
 import { assertTransition } from './quotationStatus.js'
 import { validateRequiredFields } from '../modules/sales/quotation.rules.js'
 import { creditStatus } from './customerCredit.js'
+import { customerPortalUrl } from '../config/deploy.js'
 
-const portalBase = () =>
-  (process.env.CUSTOMER_PORTAL_URL || process.env.PORTAL_URL || 'http://localhost:5175').replace(/\/$/, '')
+const portalBase = () => customerPortalUrl()
 
 function smtpConfigured() {
   return !!(process.env.SMTP_HOST && process.env.SMTP_FROM)
