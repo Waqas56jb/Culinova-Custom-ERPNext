@@ -50,25 +50,57 @@ const cleanup = { brandId: null, itemIds: [], quoteId: null, oppId: null }
 console.log('\n######## SPRINT 1a BLOCK 4 — PRICING FORMULA UNIFICATION ########\n')
 
 // ── Setup: brand + test items ───────────────────────────────────────────────
+// Brand POST is not idempotent (409 if ZZ-BLK4-HERO left from prior runs / eyes-on).
+// Root-cause of historical 16/21 flake: setup treated 409 as fail → brand=error body →
+// priceItem fell back to exch=1/pf=1 → selling=1000. Fix: reuse + PATCH factors.
 let brand = null
 let heroItem = null
 let zeroItem = null
+let brandCreatedThisRun = false
 
 try {
-  const { status, body } = await api('/masters/brands', {
-    method: 'POST',
-    body: JSON.stringify({
-      brand: `${MARK}-HERO`,
-      currency: 'EUR',
-      exchange_factor: 5.4,
-      price_factor: 1.85,
-      add_margin_pct: 0,
-      special_offer_pct: 0,
-    }),
-  })
-  brand = body
-  if (body?.id) cleanup.brandId = body.id
-  pass('setup: brand 5.4×1.85', status === 201 && body?.id, `${body?.brand || 'fail'}`)
+  const payload = {
+    brand: `${MARK}-HERO`,
+    currency: 'EUR',
+    exchange_factor: 5.4,
+    price_factor: 1.85,
+    add_margin_pct: 0,
+    special_offer_pct: 0,
+  }
+  const created = await api('/masters/brands', { method: 'POST', body: JSON.stringify(payload) })
+  if (created.status === 201 && created.body?.id) {
+    brand = created.body
+    brandCreatedThisRun = true
+    cleanup.brandId = brand.id
+    pass('setup: brand 5.4×1.85', true, `created ${brand.brand}`)
+  } else {
+    const list = await api('/masters/brands')
+    const rows = Array.isArray(list.body) ? list.body : (list.body?.data || [])
+    const existing = rows.find((b) => String(b.brand || '').toLowerCase() === `${MARK}-HERO`.toLowerCase())
+    if (!existing?.id) {
+      pass('setup: brand 5.4×1.85', false, created.body?.error || `status=${created.status}`)
+    } else {
+      const patched = await api(`/masters/brands/${existing.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          currency: 'EUR',
+          exchange_factor: 5.4,
+          price_factor: 1.85,
+          add_margin_pct: 0,
+          special_offer_pct: 0,
+        }),
+      })
+      brand = patched.body?.id
+        ? patched.body
+        : { ...existing, currency: 'EUR', exchange_factor: 5.4, price_factor: 1.85, add_margin_pct: 0, special_offer_pct: 0 }
+      // Do not delete shared leftover brand on cleanup (may still be referenced by orphan items).
+      pass(
+        'setup: brand 5.4×1.85',
+        n0(brand.exchange_factor) === 5.4 && n0(brand.price_factor) === 1.85,
+        `reused+patched ${brand.brand} (prior ${created.status})`,
+      )
+    }
+  }
 } catch (e) {
   pass('setup: brand 5.4×1.85', false, e.message)
 }
