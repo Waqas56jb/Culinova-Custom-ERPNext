@@ -161,7 +161,10 @@ export async function sendQuotationToCustomer({ quotationId, actor, confirmOverd
     throw err
   }
 
-  await supabase.from('quotations').update({ status: 'Sent' }).eq('id', q.id)
+  await supabase.from('quotations').update({
+    status: 'Sent',
+    sent_at: new Date().toISOString(),
+  }).eq('id', q.id)
 
   const portal = await notifyCustomerPortal(q, actor?.name)
   const mail = emailBodies(q)

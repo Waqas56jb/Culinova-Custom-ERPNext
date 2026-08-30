@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import * as XLSX from 'xlsx'
-import { Search, Plus, Package, Layers, Tag, Sparkles, Settings2, Database, SlidersHorizontal, Trash2, RefreshCw, Loader2, Download, CheckCircle2, AlertTriangle, Link2, Inbox, Lock } from 'lucide-react'
+import { Search, Plus, Package, Layers, Tag, Sparkles, Settings2, Database, SlidersHorizontal, Trash2, RefreshCw, Loader2, Download, CheckCircle2, AlertTriangle, Link2, Inbox, Lock, Hammer } from 'lucide-react'
 import { PageHeader, Badge, Menu, MenuItem } from '../components/ui.jsx'
 import { Modal, Field, Select } from '../components/Modal.jsx'
 import { sar } from '../data/mockData.js'
@@ -9,12 +8,15 @@ import { useData } from '../store/DataContext.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
 import ItemForm from '../components/ItemForm.jsx'
 import QuickItemForm from '../components/QuickItemForm.jsx'
+import { resizeImage } from '../components/QuickItemForm.jsx'
 import ItemImportExport from '../components/ItemImportExport.jsx'
 import EosImportModal from '../components/EosImportModal.jsx'
 import ItemView from '../components/ItemView.jsx'
 import ImageLightbox from '../components/ImageLightbox.jsx'
-import { api } from '../api.js'
+import { api, getToken } from '../api.js'
+import { erpApiBase } from '@deploy'
 
+const BASE_API = erpApiBase()
 const PAGE_SIZE = 50
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -78,6 +80,8 @@ export default function ItemMaster() {
   const [familyFilter, setFamilyFilter] = useState('')
   const [brandFilter, setBrandFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
+  const [fabOpen, setFabOpen] = useState(false)
+  const [exportBusy, setExportBusy] = useState(false)
   const [form, setForm] = useState({ open: false, id: null })
   const [view, setView] = useState(null)
   const [quick, setQuick] = useState(false)
@@ -207,36 +211,40 @@ export default function ItemMaster() {
     }
   }
 
-  // Export stays available to everyone — it reads, it never creates. (Cost columns are server-redacted
-  // per role, so whatever the user cannot see on screen is not in their file either.)
+  // S4B3 — server Excel export (xlsx dep on server). Honors current Family/Brand/Status/search filters.
   const exportItems = async () => {
+    setExportBusy(true)
     try {
-      let all = []
-      let offset = 0
-      let total = Infinity
-      while (offset < total) {
-        const r = await api(`/items?include_disabled=1&limit=200&offset=${offset}`)
-        const batch = r.items || []
-        total = Number(r.total) || batch.length
-        all = all.concat(batch)
-        if (!batch.length) break
-        offset += batch.length
+      const params = new URLSearchParams({ include_disabled: '1' })
+      if (q.trim()) params.set('search', q.trim())
+      if (familyFilter) params.set('family', familyFilter)
+      if (brandFilter) params.set('brand', brandFilter)
+      if (statusFilter === 'active') params.set('status', 'active')
+      else if (statusFilter === 'disabled') params.set('status', 'disabled')
+      else params.set('status', 'all')
+      const token = getToken()
+      const res = await fetch(`${BASE_API}/items/export.xlsx?${params}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.error || `Export failed (${res.status})`)
       }
-      const data = all.map((i) => ({
-        'Item Code': i.item_code, 'Item Name': i.item_name, 'Item Group': i.category || i.item_group, 'Sub Item Group': i.sub_category,
-        'Product Family': i.product_family, 'Brand': i.brand, 'Model No.': i.model, 'Default Unit of Measure': i.stock_uom,
-        'Dimensions': i.dimensions || '', 'Power Type': i.power_type || '', 'Country of Origin': i.country_of_origin || '',
-        'Currency': i.currency || '', 'Supplier Net Price': i.supplier_price ?? '', 'Landed Cost': i.cost ?? '',
-        'Add Margin %': i.add_margin_pct ?? '', 'Selling Price': i.standard_rate ?? '', 'GP %': i.gp_percent ?? '',
-        'EOS Linked': i.eos_entry_id ? 'Yes' : 'No', 'Status': i.disabled ? 'Disabled' : 'Active',
-      }))
-      const wb = XLSX.utils.book_new()
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.length ? data : [{ 'Item Code': '' }]), 'Item Master')
-      XLSX.writeFile(wb, `Culinova-Item-Master-${new Date().toISOString().slice(0, 10)}.xlsx`)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `Culinova-Item-Master-${new Date().toISOString().slice(0, 10)}.xlsx`
+      a.click()
+      URL.revokeObjectURL(url)
     } catch (e) {
       setEosErr(`Export failed — ${e?.message || 'unknown error'}`)
+    } finally {
+      setExportBusy(false)
     }
   }
+
+  const fabAllowed = isMgmt && (policy?.fabrication_creation || 'erp') !== 'eos'
 
   const familyOptions = useMemo(() => ['', ...new Set((d.productFamilies || []).map((f) => f.name || f).filter(Boolean))], [d.productFamilies])
   const brandOptions = useMemo(() => ['', ...new Set((d.brands || []).map((b) => b.brand).filter(Boolean))], [d.brands])
@@ -263,17 +271,21 @@ export default function ItemMaster() {
       <PageHeader title="Item Master" subtitle={eosOnly ? 'View only — synchronised from CULINOVA EOS, the single source of truth for item data' : 'Central catalogue — used by every panel'}>
         {/* The bulk Import/Export menu carries an IMPORT entry — it only exists while the ERP may create items. */}
         {erpOwnsItems && <ItemImportExport />}
-        {/* Export always stays: it reads, it never writes. */}
-        {!erpOwnsItems && (
-          <button className="btn-ghost whitespace-nowrap" onClick={exportItems}><Download size={16} /> Export</button>
-        )}
+        <button className="btn-ghost whitespace-nowrap" disabled={exportBusy} onClick={exportItems}>
+          {exportBusy ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />} Export Excel
+        </button>
         {canEdit && (
           <Menu label="More" icon={Settings2}>
             <MenuItem icon={Settings2} onClick={() => setMasters(true)}>
-              {eosOnly ? 'Masters (brand factors · price lists)' : 'Masters (brands · families · price lists)'}
+              {eosOnly ? 'Masters (brand factors · price lists · family datasheets)' : 'Masters (brands · families · price lists)'}
             </MenuItem>
             {erpOwnsItems && <MenuItem icon={SlidersHorizontal} onClick={() => setForm({ open: true, id: null })}>Advanced item form</MenuItem>}
           </Menu>
+        )}
+        {fabAllowed && (
+          <button className="btn-ghost whitespace-nowrap" onClick={() => setFabOpen(true)}>
+            <Hammer size={16} /> New Fabrication Item
+          </button>
         )}
         {erpOwnsItems && <button className="btn-primary whitespace-nowrap" onClick={() => setQuick(true)}><Plus size={16} /> New Item</button>}
       </PageHeader>
@@ -344,10 +356,10 @@ export default function ItemMaster() {
       </div>
 
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat label="Items" value={items.filter((i) => !i.has_variants).length} icon={Package} tone="text-brand-600" />
-        <Stat label="Templates" value={items.filter((i) => i.has_variants).length} icon={Layers} tone="text-violet-600" />
+        <Stat label="Matching items" value={masterTotal} icon={Package} tone="text-brand-600" />
+        <Stat label="On this page" value={rows.filter((i) => !i.has_variants).length} icon={Layers} tone="text-violet-600" />
         <Stat label="Product Families" value={(d.productFamilies || []).length} icon={Tag} tone="text-gold-600" />
-        <Stat label="Disabled" value={disabledCount} icon={Sparkles} tone="text-rose-600" />
+        <Stat label="Disabled (all)" value={disabledCount} icon={Sparkles} tone="text-rose-600" />
       </div>
 
       <div className="card overflow-hidden">
@@ -477,10 +489,106 @@ export default function ItemMaster() {
       {erpOwnsItems && <ItemForm open={form.open} itemId={form.id} onClose={() => setForm({ open: false, id: null })} />}
       {erpOwnsItems && <QuickItemForm open={quick} onClose={() => setQuick(false)} />}
 
+      {fabOpen && (
+        <FabricationForm
+          open={fabOpen}
+          families={familyOptions.filter(Boolean)}
+          onClose={() => setFabOpen(false)}
+          onCreated={async () => { setFabOpen(false); await loadMaster(); await d.loadItems?.() }}
+        />
+      )}
+
       <EosImportModal open={eos} onClose={() => setEos(false)} onImported={loadEos} />
-      <MastersModal open={masters} onClose={() => setMasters(false)} eosOwned={eosOnly} />
+      <MastersModal open={masters} onClose={() => setMasters(false)} eosOwned={eosOnly} canEditFamilies={canEdit || isMgmt} />
       <ImageLightbox src={lightbox} onClose={() => setLightbox(null)} />
     </>
+  )
+}
+
+function FabricationForm({ open, onClose, onCreated, families = [] }) {
+  const [v, setV] = useState({
+    product_family: families[0] || 'Hood',
+    item_name: '',
+    brand: '',
+    model: '',
+    dimensions: '',
+    description: '',
+    valuation_rate: '500',
+    exchange_factor: '1',
+    price_factor: '1.75',
+    image_url: '',
+    datasheet_url: '',
+  })
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const set = (k) => (e) => setV((s) => ({ ...s, [k]: e.target.value }))
+  const submit = async () => {
+    setErr('')
+    if (!v.product_family.trim() || !v.item_name.trim()) { setErr('Family and name are required'); return }
+    setBusy(true)
+    try {
+      await api('/items/fabrication', {
+        method: 'POST',
+        body: {
+          product_family: v.product_family.trim(),
+          item_name: v.item_name.trim(),
+          brand: v.brand || null,
+          model: v.model || null,
+          dimensions: v.dimensions || null,
+          description: v.description || null,
+          valuation_rate: Number(v.valuation_rate),
+          exchange_factor: Number(v.exchange_factor) || 1,
+          price_factor: Number(v.price_factor) || 1.75,
+          image_url: v.image_url || null,
+          datasheet_url: v.datasheet_url || null,
+        },
+      })
+      await onCreated?.()
+    } catch (e) { setErr(e.message) }
+    finally { setBusy(false) }
+  }
+  return (
+    <Modal open={open} onClose={onClose} size="lg" title="New Fabrication Item" subtitle="Custom Fabrication — Management only · priced via VR chain"
+      footer={<>
+        <button className="btn-ghost" onClick={onClose}>Cancel</button>
+        <button className="btn-primary" disabled={busy} onClick={submit}>{busy ? <Loader2 size={15} className="animate-spin" /> : <Hammer size={15} />} Create</button>
+      </>}>
+      {err && <p className="mb-2 text-xs font-semibold text-rose-600">{err}</p>}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="block">
+          <span className="mb-1.5 block text-xs font-semibold text-slate-600">Product Family *</span>
+          <input list="fab-families" value={v.product_family} onChange={set('product_family')}
+            className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm" placeholder="Hood" />
+          <datalist id="fab-families">{families.map((f) => <option key={f} value={f} />)}</datalist>
+        </label>
+        <Field label="Item Name *" value={v.item_name} onChange={set('item_name')} placeholder="SS Exhaust Hood 2400mm" />
+        <Field label="Brand (optional)" value={v.brand} onChange={set('brand')} />
+        <Field label="Model (optional)" value={v.model} onChange={set('model')} />
+        <Field label="Category" value="Custom Fabrication" onChange={() => {}} />
+        <p className="-mt-2 text-[10px] text-slate-400 sm:col-span-2">Category is locked to Custom Fabrication (ERP fabrication path).</p>
+        <Field label="Dimensions / specs" value={v.dimensions} onChange={set('dimensions')} placeholder="L×W×H mm" />
+        <Field label="Valuation Rate" type="number" value={v.valuation_rate} onChange={set('valuation_rate')} />
+        <Field label="Exchange Factor" type="number" value={v.exchange_factor} onChange={set('exchange_factor')} />
+        <Field label="Price Factor" type="number" value={v.price_factor} onChange={set('price_factor')} hint="VR × exch × pf → selling" />
+        <Field label="Item datasheet URL (optional)" value={v.datasheet_url} onChange={set('datasheet_url')} placeholder="https://…" />
+      </div>
+      <div className="mt-3 flex items-center gap-3">
+        {v.image_url
+          ? <img src={v.image_url} alt="" className="h-16 w-16 rounded-lg border object-cover" />
+          : <div className="grid h-16 w-16 place-items-center rounded-lg border border-dashed text-[10px] text-slate-400">No image</div>}
+        <label className="btn-ghost cursor-pointer text-xs">
+          Upload image
+          <input type="file" accept="image/*" hidden onChange={async (e) => {
+            const f = e.target.files?.[0]; e.target.value = ''
+            if (!f) return
+            try {
+              const url = await resizeImage(f)
+              setV((s) => ({ ...s, image_url: url }))
+            } catch { setErr('Could not read image') }
+          }} />
+        </label>
+      </div>
+    </Modal>
   )
 }
 
@@ -516,7 +624,7 @@ function Stat({ label, value, icon: Icon, tone }) {
 const EOS_NOTE = 'Created in CULINOVA EOS and synced here. To add or change one, do it in EOS.'
 const MTABS = ['Brands', 'Product Families', 'Units', 'Price Lists']
 
-function MastersModal({ open, onClose, eosOwned = true }) {
+function MastersModal({ open, onClose, eosOwned = true, canEditFamilies = false }) {
   const d = useData()
   const [tab, setTab] = useState('Brands')
   const [msg, setMsg] = useState('')
@@ -526,6 +634,7 @@ function MastersModal({ open, onClose, eosOwned = true }) {
 
   const [br, setBr] = useState({ brand: '', currency: 'SAR', exchange_factor: 1, price_factor: 1, country_of_origin: '', country_of_purchase: '' })
   const [fam, setFam] = useState({ name: '', category: 'Equipment', sub_category: '', datasheet_url: '' })
+  const [famDs, setFamDs] = useState({}) // id → datasheet draft
   const [pl, setPl] = useState({ name: '', brand: '', currency: '', year: '', rows: '' })
   const [uoms, setUoms] = useState([])
   const [uom, setUom] = useState({ name: '', symbol: '' })
@@ -647,7 +756,7 @@ function MastersModal({ open, onClose, eosOwned = true }) {
         <div className="space-y-3">
           {eosOwned ? (
             <p className="flex items-start gap-1.5 rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-muted">
-              <Lock size={12} className="mt-0.5 shrink-0 text-slate-400" /> <span>{EOS_NOTE}</span>
+              <Lock size={12} className="mt-0.5 shrink-0 text-slate-400" /> <span>{EOS_NOTE} Family <b>datasheet URL</b> can still be set here (fabrication §12).</span>
             </p>
           ) : (
             <>
@@ -655,13 +764,44 @@ function MastersModal({ open, onClose, eosOwned = true }) {
                 <Field label="Family Name" value={fam.name} onChange={(e) => setFam((s) => ({ ...s, name: e.target.value }))} placeholder="4 Burner Gas Range" />
                 <Select label="Category" value={fam.category} onChange={(e) => setFam((s) => ({ ...s, category: e.target.value }))} options={['Equipment', 'Custom Fabrication']} />
                 <Field label="Sub Category" value={fam.sub_category} onChange={(e) => setFam((s) => ({ ...s, sub_category: e.target.value }))} placeholder="Cooking Equipment" />
-                <Field label="Datasheet URL (custom fab)" value={fam.datasheet_url} onChange={(e) => setFam((s) => ({ ...s, datasheet_url: e.target.value }))} placeholder="https://…" />
+                <Field label="Datasheet URL (family)" value={fam.datasheet_url} onChange={(e) => setFam((s) => ({ ...s, datasheet_url: e.target.value }))} placeholder="https://…" />
               </div>
               <button className="btn-primary !py-2" onClick={addFam}>Add Product Family</button>
             </>
           )}
-          <div className="flex flex-wrap gap-1.5">
-            {(d.productFamilies || []).map((f) => <span key={f.id} className="rounded-lg bg-slate-100 px-2 py-1 text-[11px]">{f.name} <span className="text-slate-400">· {f.category}</span></span>)}
+          <div className="space-y-2">
+            {(d.productFamilies || []).map((f) => (
+              <div key={f.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-100 bg-slate-50/60 px-2 py-1.5 text-[11px]">
+                <span className="font-semibold text-ink">{f.name}</span>
+                <span className="text-slate-400">· {f.category || '—'}</span>
+                {f.datasheet_url && <a href={f.datasheet_url} target="_blank" rel="noreferrer" className="font-semibold text-brand-600">datasheet</a>}
+                {canEditFamilies && (
+                  <>
+                    <input
+                      className="min-w-[12rem] flex-1 rounded border border-slate-200 px-2 py-1 text-[11px]"
+                      placeholder="Family datasheet URL"
+                      value={famDs[f.id] ?? f.datasheet_url ?? ''}
+                      onChange={(e) => setFamDs((s) => ({ ...s, [f.id]: e.target.value }))}
+                    />
+                    <button
+                      type="button"
+                      className="text-[11px] font-bold text-brand-600"
+                      onClick={async () => {
+                        try {
+                          await api(`/masters/product-families/${f.id}`, {
+                            method: 'PATCH',
+                            body: { datasheet_url: (famDs[f.id] ?? f.datasheet_url ?? '').trim() || null },
+                          })
+                          await d.reload?.('productFamilies')
+                          await d.loadItems?.()
+                          ok(`Datasheet saved for ${f.name}`)
+                        } catch (e) { fail(e) }
+                      }}
+                    >Save</button>
+                  </>
+                )}
+              </div>
+            ))}
             {(d.productFamilies || []).length === 0 && <span className="text-xs text-slate-400">{eosOwned ? 'No product families yet — they arrive with the first approved EOS item.' : 'No product families yet.'}</span>}
           </div>
         </div>

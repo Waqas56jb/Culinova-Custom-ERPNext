@@ -8,8 +8,11 @@ import { logAudit } from '../../core/audit.js'
 import { resolveItemAuto, getBrand, supplierPriceFor } from '../../core/itempricing.js'
 import { priceItem, persistable } from '../../core/pricing.js'
 import { stripEosOwned, recordVersion } from '../../core/eosfields.js'
-import { eosOnlyItemCreation, eosOnlyItemDeletion, itemsComeFromEosOnly, stripErpOwned, EOS_ONLY_EDIT_MESSAGE } from '../../core/policy.js'
+import { eosOnlyItemCreation, eosOnlyItemDeletion, itemsComeFromEosOnly, stripErpOwned, EOS_ONLY_EDIT_MESSAGE, fabricationCreationInErp, FABRICATION_CATEGORY } from '../../core/policy.js'
 import { recommendEquipment } from '../../core/equipmentRecommend.js'
+import { availabilityByIds } from '../../core/availability.js'
+import { priceItem as enginePrice } from '../../core/priceEngine.js'
+import XLSX from 'xlsx'
 import {
   applyVrDirectAsApprover,
   createPendingVrRequest,
@@ -207,6 +210,161 @@ r.get('/recommend', authRequired, authorize('sales', 'read'), asyncWrap(async (r
   res.json(result)
 }))
 
+// ── S4B3 — Excel export (before /:id). Dep: existing `xlsx` package. ─────────
+r.get('/export.xlsx', authRequired, internalOnly, asyncWrap(async (req, res) => {
+  const search = String(req.query.search || req.query.q || '').trim()
+  const family = String(req.query.family || '').trim()
+  const brand = String(req.query.brand || '').trim()
+  const status = String(req.query.status || '').trim().toLowerCase()
+  const includeDisabled = req.query.include_disabled === '1' || status === 'all' || !status
+
+  let q = supabase.from('items').select('*').order('item_name', { ascending: true }).limit(5000)
+  if (status === 'disabled') q = q.eq('disabled', true)
+  else if (status === 'active' || (!includeDisabled && status !== 'all')) q = q.eq('disabled', false)
+  if (family) q = q.eq('product_family', family)
+  if (brand) q = q.ilike('brand', brand)
+  if (search) {
+    const esc = search.replace(/[%_\\]/g, '\\$&')
+    q = q.or(`item_name.ilike.%${esc}%,item_code.ilike.%${esc}%,brand.ilike.%${esc}%,model.ilike.%${esc}%`)
+  }
+  const { data, error } = await q
+  if (error) throw error
+  const rows = data || []
+  const avail = await availabilityByIds(rows.map((i) => i.id))
+  const fin = canSeeFinancials(req.user.role)
+  const brandNames = [...new Set(rows.map((i) => i.brand).filter(Boolean))]
+  const brandMap = {}
+  for (const b of brandNames) brandMap[b] = await getBrand(b)
+
+  const headers = fin
+    ? ['code', 'name', 'brand', 'model', 'family', 'category', 'status', 'VR', 'exchange_factor', 'price_factor', 'selling', 'available', 'reserved', 'incoming', 'eos_entry_id', 'item_source', 'disabled']
+    : ['code', 'name', 'brand', 'model', 'family', 'category', 'status', 'selling', 'available', 'reserved', 'incoming', 'eos_entry_id', 'item_source', 'disabled']
+
+  const sheetRows = [headers]
+  for (const it of rows) {
+    const a = avail[it.id] || {}
+    const brandRec = it.brand ? brandMap[it.brand] : null
+    const exch = it.exchange_factor != null ? Number(it.exchange_factor) : (brandRec?.exchange_factor != null ? Number(brandRec.exchange_factor) : null)
+    const pf = it.price_factor != null ? Number(it.price_factor) : (brandRec?.price_factor != null ? Number(brandRec.price_factor) : null)
+    const base = {
+      code: it.item_code || it.code || '',
+      name: it.item_name || it.name || '',
+      brand: it.brand || '',
+      model: it.model || '',
+      family: it.product_family || '',
+      category: it.category || it.item_group || '',
+      status: it.disabled ? 'Disabled' : (it.status || 'Active'),
+      selling: it.selling_price ?? it.standard_rate ?? '',
+      available: a.available ?? 0,
+      reserved: a.reserved ?? 0,
+      incoming: a.incoming ?? 0,
+      eos_entry_id: it.eos_entry_id || '',
+      item_source: it.item_source || (it.eos_entry_id ? 'eos' : ''),
+      disabled: it.disabled ? 'yes' : 'no',
+    }
+    if (fin) {
+      sheetRows.push(headers.map((h) => {
+        if (h === 'VR') return it.valuation_rate ?? ''
+        if (h === 'exchange_factor') return exch ?? ''
+        if (h === 'price_factor') return pf ?? ''
+        return base[h] ?? ''
+      }))
+    } else {
+      sheetRows.push(headers.map((h) => base[h] ?? ''))
+    }
+  }
+
+  const wb = XLSX.utils.book_new()
+  const ws = XLSX.utils.aoa_to_sheet(sheetRows)
+  XLSX.utils.book_append_sheet(wb, ws, 'Item Master')
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' })
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  res.setHeader('Content-Disposition', 'attachment; filename="item-master-export.xlsx"')
+  res.send(Buffer.from(buf))
+}))
+
+// ── S4B3 — Custom Fabrication create (Management only; bypasses EOS-only lock) ─
+r.post('/fabrication', authRequired, asyncWrap(async (req, res) => {
+  if (!isManagement(req.user.role) && req.user.role !== 'System Admin') {
+    return res.status(403).json({ error: 'Only Management may create Custom Fabrication items' })
+  }
+  if (!(await fabricationCreationInErp())) {
+    return res.status(403).json({
+      error: 'Fabrication creation is set to EOS — create fabrication catalog there, or switch fabrication_creation to erp in Company Settings.',
+      policy: 'fabrication_creation=eos',
+    })
+  }
+  const p = req.body || {}
+  const family = String(p.product_family || p.family || '').trim()
+  const name = String(p.item_name || p.name || '').trim()
+  if (!family) return res.status(422).json({ error: 'product_family is required' })
+  if (!name) return res.status(422).json({ error: 'name is required' })
+
+  // Ensure family row exists
+  const { data: fam } = await supabase.from('product_families').select('id, name').ilike('name', family).limit(1).maybeSingle()
+  if (!fam) {
+    await supabase.from('product_families').insert({ name: family, category: FABRICATION_CATEGORY })
+  }
+
+  const item_code = (p.item_code || p.code || '').trim() || `FAB-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`
+  const vr = p.valuation_rate != null ? Number(p.valuation_rate) : null
+  const exch = p.exchange_factor != null ? Number(p.exchange_factor) : 1
+  const pf = p.price_factor != null ? Number(p.price_factor) : null
+
+  let selling = p.selling_price != null ? Number(p.selling_price) : null
+  let landed = null
+  if (vr != null && Number.isFinite(vr)) {
+    const brandLike = { exchange_factor: exch, price_factor: pf != null ? pf : 1.75 }
+    const priced = enginePrice({ valuation_rate: vr, brand: p.brand || null }, brandLike)
+    if (priced?.priced) {
+      selling = priced.selling
+      landed = priced.expected_landed ?? priced.estimated_cost
+    }
+  }
+
+  const specs = p.specifications ?? p.specs ?? (p.dimensions ? { dimensions: p.dimensions } : null)
+  const row = nullEmpty({
+    item_code,
+    code: item_code,
+    name,
+    item_name: name,
+    brand: p.brand || null,
+    model: p.model || null,
+    product_family: family,
+    category: FABRICATION_CATEGORY,
+    item_group: FABRICATION_CATEGORY,
+    item_source: 'fabrication',
+    status: 'Active',
+    disabled: false,
+    is_stock_item: p.is_stock_item ?? true,
+    is_sales_item: true,
+    is_purchase_item: true,
+    uom: p.uom || 'Nos',
+    stock_uom: p.uom || 'Nos',
+    description: p.description || null,
+    specifications: typeof specs === 'string' ? specs : (specs ? JSON.stringify(specs) : null),
+    dimensions: p.dimensions || null,
+    image_url: p.image_url || null,
+    datasheet_url: p.datasheet_url || null,
+    valuation_rate: vr,
+    exchange_factor: exch,
+    price_factor: pf != null ? pf : (vr != null ? 1.75 : null),
+    selling_price: selling,
+    standard_rate: selling,
+    cost: landed,
+    landed_cost: landed,
+    eos_entry_id: null,
+  })
+
+  const { data: item, error } = await supabase.from('items').insert(row).select().single()
+  if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: error.message })
+
+  await logAudit(req.user, 'item', item.id, 'fabrication-created', {
+    item_code, product_family: family, category: FABRICATION_CATEGORY, item_source: 'fabrication',
+  })
+  res.status(201).json(redact(req.user, item))
+}))
+
 // ── GET ONE (full item + all child tables) ──
 r.get('/:id', authRequired, internalOnly, asyncWrap(async (req, res) => {
   const { data: item, error } = await supabase.from('items').select('*').eq('id', req.params.id).single()
@@ -218,7 +376,19 @@ r.get('/:id', authRequired, internalOnly, asyncWrap(async (req, res) => {
     children.suppliers = []
     children.item_defaults = []
   }
-  res.json({ ...redact(req.user, item), ...children })
+  let family_datasheet_url = null
+  if (item.product_family) {
+    const { data: fam } = await supabase.from('product_families').select('datasheet_url').ilike('name', item.product_family).limit(1).maybeSingle()
+    family_datasheet_url = fam?.datasheet_url || null
+  }
+  res.json({
+    ...redact(req.user, item),
+    ...children,
+    family_datasheet_url,
+    // Convenience for UI: prefer item datasheet, else family
+    effective_datasheet_url: item.datasheet_url || family_datasheet_url || null,
+    datasheet_source: item.datasheet_url ? 'item' : (family_datasheet_url ? 'family' : null),
+  })
 }))
 
 // (8) Product comparison — same-family alternatives ranked via recommendation engine (G83)

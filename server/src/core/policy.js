@@ -27,6 +27,13 @@ export async function itemsComeFromEosOnly() {
   return (await setting('item_creation_source', 'eos')).toLowerCase() === 'eos'
 }
 
+/** S4B3 — Custom Fabrication may be created in ERP when setting is 'erp' (default). */
+export async function fabricationCreationInErp() {
+  return (await setting('fabrication_creation', 'erp')).toLowerCase() !== 'eos'
+}
+
+export const FABRICATION_CATEGORY = 'Custom Fabrication'
+
 // The one message every blocked path returns, so the user is told WHERE to go instead.
 export const EOS_ONLY_MESSAGE =
   'Items are created in CULINOVA EOS, not in the ERP. Create the item in EOS, complete it, have it reviewed and approved — it then syncs into the Item Master automatically. (Use “Import from EOS” to pull an approved item in immediately.)'

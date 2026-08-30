@@ -729,6 +729,14 @@ export default function Quotations() {
                   </p>
                 </div>
                 <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Sent</p>
+                  <p className="mt-0.5 text-xs font-medium text-slate-600">
+                    {q.sent_at
+                      ? new Date(q.sent_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+                      : '—'}
+                  </p>
+                </div>
+                <div>
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Stock</p>
                   <div className="mt-0.5">
                     {st ? (
@@ -767,6 +775,7 @@ export default function Quotations() {
                 {showFin && <th className="th">GP</th>}
                 <th className="th">Stock</th>
                 <th className="th">Valid Till</th>
+                <th className="th">Sent</th>
                 <th className="th">Rev.</th>
                 <th className="th">Status</th>
                 <th className="th">Actions</th>
@@ -801,6 +810,11 @@ export default function Quotations() {
                       {q.valid_till
                         ? `${q.valid_till}${q.validity_days ? ` (${q.validity_days} days)` : ''}`
                         : (q.validity ? `${q.validity} days` : '—')}
+                    </td>
+                    <td className="td text-slate-500 text-xs">
+                      {q.sent_at
+                        ? new Date(q.sent_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+                        : (q.status === 'Sent' || q.status === 'Open' || q.status === 'Ordered' ? '—' : '—')}
                     </td>
                     <td className="td text-slate-400">r{q.revision ?? 0}</td>
                     <td className="td"><Badge tone={statusTone(q.status)}>{q.status === 'Open' ? 'Sent' : q.status}</Badge></td>
@@ -985,15 +999,27 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
     } finally { setSmartBusy(false) }
   }
 
+  const smartPanelRef = useRef(null)
+
   const openAltsForLine = (lineIndex, line) => {
+    // Toggle closed if same line already open
+    if (swapLineIdx === lineIndex && smartOpen) {
+      setSwapLineIdx(null)
+      setSmartOpen(false)
+      setSmartRecs([])
+      return
+    }
     setSwapLineIdx(lineIndex)
     setSmartFamily(line.product_family || '')
     setSmartQty(Math.max(1, n0(line.qty) || 1))
     setSmartBrand('')
     setSmartOpen(true)
-    // Prefill panel with server-ranked alternatives (G80)
     setSmartRecs(Array.isArray(line.suggested_alternatives) ? line.suggested_alternatives : [])
     setSmartAlts([])
+    // Modal is long — scroll the panel into view (chip alone used to feel like a no-op)
+    requestAnimationFrame(() => {
+      smartPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    })
   }
 
   const addRecLine = async (rec) => {
@@ -1218,22 +1244,26 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
           )}
         </div>
 
-        {smartOpen && productFamilies.length > 0 && (
-          <div className="mb-3 flex flex-wrap items-end gap-2 rounded-xl border border-brand-100 bg-brand-50/40 p-3">
+        {smartOpen && (
+          <div ref={smartPanelRef} className="mb-3 flex flex-wrap items-end gap-2 rounded-xl border border-brand-100 bg-brand-50/40 p-3">
             {swapLineIdx != null && (
               <p className="w-full text-[11px] font-semibold text-brand-700">
                 Swapping line {swapLineIdx + 1} — pick an alternative below (family + qty preloaded)
               </p>
             )}
-            <Select label="Product Family" value={smartFamily} onChange={(e) => { setSmartFamily(e.target.value); setSmartBrand(''); setSmartRecs([]); setSmartAlts([]) }}
-              options={[{ value: '', label: '— pick family —' }, ...productFamilies.map((f) => ({ value: f, label: f }))]} />
-            <Select label="Customer specified brand?" value={smartBrand} onChange={(e) => { setSmartBrand(e.target.value); setSmartRecs([]); setSmartAlts([]) }}
-              options={[{ value: '', label: '— any brand —' }, ...familyBrands.map((b) => ({ value: b, label: b }))]} />
-            <Field label="Qty needed" type="number" min="1" value={smartQty} onChange={(e) => setSmartQty(Number(e.target.value) || 1)} />
-            <button type="button" onClick={loadSmartRecs} disabled={!smartFamily || smartBusy}
-              className="mb-0.5 inline-flex items-center gap-1.5 rounded-xl bg-brand-500 px-3 py-2.5 text-xs font-semibold text-white hover:bg-brand-600 disabled:opacity-50">
-              {smartBusy ? <Loader2 size={14} className="animate-spin" /> : <Boxes size={14} />} Suggest equipment
-            </button>
+            {productFamilies.length > 0 && (
+              <>
+                <Select label="Product Family" value={smartFamily} onChange={(e) => { setSmartFamily(e.target.value); setSmartBrand(''); setSmartRecs([]); setSmartAlts([]) }}
+                  options={[{ value: '', label: '— pick family —' }, ...productFamilies.map((f) => ({ value: f, label: f }))]} />
+                <Select label="Customer specified brand?" value={smartBrand} onChange={(e) => { setSmartBrand(e.target.value); setSmartRecs([]); setSmartAlts([]) }}
+                  options={[{ value: '', label: '— any brand —' }, ...familyBrands.map((b) => ({ value: b, label: b }))]} />
+                <Field label="Qty needed" type="number" min="1" value={smartQty} onChange={(e) => setSmartQty(Number(e.target.value) || 1)} />
+                <button type="button" onClick={loadSmartRecs} disabled={!smartFamily || smartBusy}
+                  className="mb-0.5 inline-flex items-center gap-1.5 rounded-xl bg-brand-500 px-3 py-2.5 text-xs font-semibold text-white hover:bg-brand-600 disabled:opacity-50">
+                  {smartBusy ? <Loader2 size={14} className="animate-spin" /> : <Boxes size={14} />} Suggest equipment
+                </button>
+              </>
+            )}
             {(smartRecs.length > 0 || smartAlts.length > 0) && (
               <div className="w-full space-y-1 pt-1">
                 {smartRecs.map((rec) => (
@@ -1274,6 +1304,9 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
                   </>
                 )}
               </div>
+            )}
+            {smartRecs.length === 0 && smartAlts.length === 0 && swapLineIdx != null && (
+              <p className="w-full text-xs text-slate-500">No preloaded alternatives — pick a family and click Suggest equipment.</p>
             )}
           </div>
         )}
@@ -1358,13 +1391,37 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
                           )}
                           {l.datasheet_url && <span className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-semibold text-brand-500"><FileText size={11} /> datasheet</span>}
                           {Array.isArray(l.suggested_alternatives) && l.suggested_alternatives.length > 0 && !l.brand_explicit && (
-                            <button
-                              type="button"
-                              onClick={() => openAltsForLine(i, l)}
-                              className="mt-1 inline-flex items-center gap-1 rounded-full bg-brand-50 px-2 py-0.5 text-[10px] font-bold text-brand-700 hover:bg-brand-100"
-                            >
-                              {l.suggested_alternatives.length} alternative{l.suggested_alternatives.length === 1 ? '' : 's'}
-                            </button>
+                            <>
+                              <button
+                                type="button"
+                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); openAltsForLine(i, l) }}
+                                className={`mt-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold hover:bg-brand-100 ${
+                                  swapLineIdx === i && smartOpen ? 'bg-brand-500 text-white' : 'bg-brand-50 text-brand-700'
+                                }`}
+                              >
+                                {l.suggested_alternatives.length} alternative{l.suggested_alternatives.length === 1 ? '' : 's'}
+                              </button>
+                              {/* Inline list — visible next to the chip (no scroll-up needed) */}
+                              {swapLineIdx === i && smartOpen && (
+                                <div className="mt-2 w-full min-w-[16rem] max-w-md space-y-1 rounded-lg border border-brand-200 bg-brand-50/60 p-2">
+                                  <p className="text-[10px] font-bold uppercase tracking-wide text-brand-700">Swap with</p>
+                                  {l.suggested_alternatives.map((rec) => (
+                                    <button
+                                      key={rec.item_id}
+                                      type="button"
+                                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); addRecLine(rec) }}
+                                      className="flex w-full flex-col gap-0.5 rounded-md border border-white bg-white px-2.5 py-1.5 text-left text-[11px] hover:border-brand-300"
+                                    >
+                                      <span className="flex justify-between gap-2">
+                                        <span className="font-semibold text-ink">{rec.item_name}{rec.brand ? ` · ${rec.brand}` : ''}</span>
+                                        <span className="shrink-0 font-bold text-brand-600">Swap · {sar(rec.selling_price)}</span>
+                                      </span>
+                                      <span className="text-slate-500">{(rec.reasons || [rec.reason]).filter(Boolean).join(' · ')}</span>
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </>
                           )}
                           <div className="mt-1"><StockBadge s={allocFor(i, l)} err={stockErr} /></div>
                         </div>

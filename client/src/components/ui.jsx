@@ -1,23 +1,73 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { TrendingUp, TrendingDown, ChevronDown } from 'lucide-react'
 
-// Elegant, accessible dropdown menu for grouping toolbar actions (keeps headers uncluttered + responsive).
+// Elegant, accessible dropdown — portal + fixed so it never paints under page cards (z-index / overflow).
 export function Menu({ label, icon: Icon, variant = 'ghost', align = 'right', children }) {
   const [open, setOpen] = useState(false)
+  const btnRef = useRef(null)
+  const [pos, setPos] = useState({ top: 0, left: 0, right: 0, minW: 190 })
+
+  const place = () => {
+    const el = btnRef.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    const pad = 8
+    const minW = Math.max(220, r.width)
+    const maxW = Math.min(360, window.innerWidth - pad * 2)
+    const width = Math.min(minW, maxW)
+    let left = align === 'right' ? r.right - width : r.left
+    left = Math.max(pad, Math.min(left, window.innerWidth - width - pad))
+    setPos({
+      top: Math.min(r.bottom + 6, window.innerHeight - pad),
+      left,
+      right: window.innerWidth - r.right,
+      minW: width,
+    })
+  }
+
+  useLayoutEffect(() => {
+    if (!open) return
+    place()
+  }, [open, align])
+
+  useEffect(() => {
+    if (!open) return
+    const onScroll = () => place()
+    window.addEventListener('resize', onScroll)
+    window.addEventListener('scroll', onScroll, true)
+    return () => {
+      window.removeEventListener('resize', onScroll)
+      window.removeEventListener('scroll', onScroll, true)
+    }
+  }, [open, align])
+
   return (
-    <div className="relative">
-      <button className={variant === 'primary' ? 'btn-primary' : 'btn-ghost'} onClick={() => setOpen((o) => !o)}>
+    <div className="relative z-30">
+      <button
+        ref={btnRef}
+        type="button"
+        className={variant === 'primary' ? 'btn-primary' : 'btn-ghost'}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        onClick={() => setOpen((o) => !o)}
+      >
         {Icon && <Icon size={16} />} <span className="whitespace-nowrap">{label}</span>
         <ChevronDown size={14} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
-      {open && (
+      {open && createPortal(
         <>
-          <div className="fixed inset-0 z-[70]" onClick={() => setOpen(false)} />
-          <div onClick={() => setOpen(false)}
-            className={`absolute z-[71] mt-1.5 min-w-[190px] rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg animate-fade-up ${align === 'right' ? 'right-0' : 'left-0'}`}>
+          <div className="fixed inset-0 z-[200]" onClick={() => setOpen(false)} aria-hidden />
+          <div
+            role="menu"
+            onClick={() => setOpen(false)}
+            style={{ top: pos.top, left: pos.left, minWidth: pos.minW, maxWidth: 'min(22.5rem, calc(100vw - 1rem))' }}
+            className="fixed z-[201] max-h-[min(70vh,24rem)] overflow-y-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg animate-fade-up"
+          >
             {children}
           </div>
-        </>
+        </>,
+        document.body,
       )}
     </div>
   )
@@ -25,9 +75,10 @@ export function Menu({ label, icon: Icon, variant = 'ghost', align = 'right', ch
 
 export function MenuItem({ icon: Icon, children, onClick, tone }) {
   return (
-    <button onClick={onClick}
-      className={`flex w-full items-center gap-2.5 whitespace-nowrap rounded-lg px-3 py-2 text-left text-sm font-medium transition hover:bg-slate-100 ${tone === 'brand' ? 'text-brand-600 hover:bg-brand-50' : 'text-slate-600 hover:text-ink'}`}>
-      {Icon && <Icon size={15} className={tone === 'brand' ? 'text-brand-500' : 'text-slate-400'} />} {children}
+    <button type="button" role="menuitem" onClick={onClick}
+      className={`flex w-full items-start gap-2.5 rounded-lg px-3 py-2 text-left text-sm font-medium transition hover:bg-slate-100 ${tone === 'brand' ? 'text-brand-600 hover:bg-brand-50' : 'text-slate-600 hover:text-ink'}`}>
+      {Icon && <Icon size={15} className={`mt-0.5 shrink-0 ${tone === 'brand' ? 'text-brand-500' : 'text-slate-400'}`} />}
+      <span className="min-w-0 whitespace-normal break-words leading-snug">{children}</span>
     </button>
   )
 }
@@ -41,12 +92,16 @@ const accentMap = {
 
 export function PageHeader({ title, subtitle, children }) {
   return (
-    <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between animate-fade-up">
-      <div>
-        <h1 className="font-display text-2xl font-extrabold text-ink tracking-tight">{title}</h1>
+    <div className="relative z-20 mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between animate-fade-up">
+      <div className="min-w-0">
+        <h1 className="font-display text-2xl font-extrabold tracking-tight text-ink">{title}</h1>
         {subtitle && <p className="mt-1 text-sm text-muted">{subtitle}</p>}
       </div>
-      {children && <div className="flex flex-wrap items-center gap-2 sm:justify-end">{children}</div>}
+      {children && (
+        <div className="relative z-20 flex max-w-full flex-wrap items-center gap-2 sm:max-w-[min(100%,36rem)] sm:justify-end">
+          {children}
+        </div>
+      )}
     </div>
   )
 }

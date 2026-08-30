@@ -199,6 +199,11 @@ export default function ItemView({ open, itemId, onClose, onEdit, canEditData = 
           )}
 
           {it.datasheet_url && <a href={it.datasheet_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 hover:underline"><FileText size={15} /> View Datasheet</a>}
+          {!it.datasheet_url && (it.effective_datasheet_url || it.family_datasheet_url) && (
+            <a href={it.effective_datasheet_url || it.family_datasheet_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 hover:underline">
+              <FileText size={15} /> Family datasheet
+            </a>
+          )}
 
           {/* alternatives / comparison — ranked via recommendation engine */}
           {alts.length > 0 && (
