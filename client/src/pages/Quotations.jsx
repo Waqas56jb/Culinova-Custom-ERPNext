@@ -156,7 +156,7 @@ function QuoteAct({ onClick, tone = 'brand', icon: Icon, children, disabled, loa
 
 function QuoteActions({
   q, canEditRow, canSend, canApprove, canRevise, locked, pending,
-  isBusy, setPreview, openRevisions, openBuilder, confirmSend, markLost, run, approveQuotation, reject, reviseQuote,
+  isBusy, setPreview, openRevisions, openAudit, openBuilder, confirmSend, markLost, run, approveQuotation, reject, reviseQuote,
 }) {
   const miss = q.missing_fields?.length ? q.missing_fields : missingMandatory(q)
   const incomplete = q.status === 'Draft' && miss.length > 0
@@ -165,6 +165,7 @@ function QuoteActions({
     <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
       <QuoteAct onClick={() => setPreview(q)} tone="slate" icon={FileText}>PDF</QuoteAct>
       <QuoteAct onClick={() => openRevisions(q)} tone="slate" icon={History} loading={isBusy(q.id, 'revisions')}>Revisions</QuoteAct>
+      <QuoteAct onClick={() => openAudit(q)} tone="slate" icon={ClipboardList} loading={isBusy(q.id, 'audit')}>Audit</QuoteAct>
       {canEditRow(q) && (
         <QuoteAct onClick={() => openBuilder(q)} icon={Pencil} loading={isBusy(q.id, 'build')}>
           {q.status === 'Draft' ? 'Build' : 'Edit'}
@@ -250,6 +251,7 @@ export default function Quotations() {
   const [preview_, setPreview] = useState(null)
   const [builder, setBuilder] = useState(null)   // { editingId, ...header, lines: [] }
   const [revView, setRevView] = useState(null)   // { quotation, revisions }
+  const [auditView, setAuditView] = useState(null) // { quotation, items }
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -510,8 +512,16 @@ export default function Quotations() {
     catch (e) { alert(e.message) } finally { setBusy(null) }
   }
 
+  const openAudit = async (q) => {
+    setBusy(`${q.id}:audit`)
+    try {
+      const trail = await api(`/sales/quotations/${q.id}/audit`)
+      setAuditView({ quotation: q, items: trail.items || [] })
+    } catch (e) { alert(e.message) } finally { setBusy(null) }
+  }
+
   const actionProps = {
-    canEditRow, canSend, canApprove, canRevise, isBusy, setPreview, openRevisions, openBuilder,
+    canEditRow, canSend, canApprove, canRevise, isBusy, setPreview, openRevisions, openAudit, openBuilder,
     confirmSend, markLost, run, approveQuotation, reject, reviseQuote,
   }
 
@@ -751,6 +761,7 @@ export default function Quotations() {
       )}
 
       {revView && <RevisionsModal open onClose={() => setRevView(null)} data={revView} showFin={showFin} />}
+      {auditView && <AuditModal open onClose={() => setAuditView(null)} data={auditView} />}
       <QuotationPreview open={!!preview_} onClose={() => setPreview(null)} quotation={preview_} />
       <LostReasonModal
         open={!!lostModal}
@@ -1387,7 +1398,17 @@ function ItemThumb({ src }) {
 // ── Revision history ─────────────────────────────────────────────────────────
 function RevisionsModal({ open, onClose, data, showFin }) {
   const { quotation, revisions } = data
-  const label = (a) => ({ created: 'Created', revised: 'Revised', edited: 'Edited', lost: 'Marked Lost' }[a] || a || 'Change')
+  const label = (a) => ({ created: 'Created', revised: 'Revised', edited: 'Edited', lost: 'Marked Lost', 'auto: edit': 'Auto edit', 'line-deleted': 'Line deleted' }[a] || a || 'Change')
+  const reasonChip = (c) => {
+    const r = c.reason || (c.action === 'auto: edit' ? 'auto: edit' : (c.action === 'revised' || c.note ? 'manual' : null))
+    if (!r) return null
+    const auto = r === 'auto: edit'
+    return (
+      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${auto ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
+        {auto ? 'auto' : 'manual'}
+      </span>
+    )
+  }
   return (
     <Modal open={open} onClose={onClose} size="lg" title={`Revision History — ${quotation.ref}`} subtitle={`${revisions.length} record(s) · revisions are never deleted`}>
       {revisions.length === 0 && <p className="text-sm text-slate-400">No revisions recorded yet.</p>}
@@ -1400,12 +1421,13 @@ function RevisionsModal({ open, onClose, data, showFin }) {
               <span className="absolute -left-[27px] top-1 grid h-4 w-4 place-items-center rounded-full bg-brand-500 text-white"><History size={9} /></span>
               <div className="flex flex-wrap items-center gap-2">
                 <Badge tone="blue">rev {r.revision >= 9999 ? '—' : r.revision}</Badge>
+                {reasonChip(c)}
                 <span className="text-sm font-semibold text-ink">{label(c.action)}</span>
                 {c.by && <span className="text-xs text-slate-500">by {c.by}</span>}
                 <span className="ml-auto text-[11px] text-slate-400">{(r.created_at || '').replace('T', ' ').slice(0, 16)}</span>
               </div>
               {c.note && <p className="mt-1 text-xs text-slate-600">“{c.note}”</p>}
-              {c.reason && <p className="mt-1 text-xs text-rose-600">Reason: {c.reason}</p>}
+              {c.reason && c.reason !== 'auto: edit' && c.reason !== 'manual' && <p className="mt-1 text-xs text-rose-600">Reason: {c.reason}</p>}
               {diff.length > 0 && (
                 <ul className="mt-1.5 space-y-0.5">
                   {diff.map((d, i) => (
@@ -1421,6 +1443,35 @@ function RevisionsModal({ open, onClose, data, showFin }) {
             </li>
           )
         })}
+      </ol>
+    </Modal>
+  )
+}
+
+function AuditModal({ open, onClose, data }) {
+  const { quotation, items } = data
+  return (
+    <Modal open={open} onClose={onClose} size="lg" title={`Audit trail — ${quotation.ref || quotation.number}`} subtitle={`${items.length} event(s) · newest first`}>
+      {items.length === 0 && <p className="text-sm text-slate-400">No audit events yet.</p>}
+      <ol className="space-y-3">
+        {items.map((e) => (
+          <li key={`${e.kind}-${e.id}`} className="rounded-xl border border-slate-100 px-3 py-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge tone={e.kind === 'revision' ? 'blue' : 'slate'}>{e.kind}</Badge>
+              <span className="text-sm font-semibold text-ink">{e.action}</span>
+              {e.reason && (
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${e.reason === 'auto: edit' ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
+                  {e.reason === 'auto: edit' ? 'auto' : e.reason === 'manual' ? 'manual' : e.reason}
+                </span>
+              )}
+              {e.actor && <span className="text-xs text-slate-500">by {e.actor}</span>}
+              <span className="ml-auto text-[11px] text-slate-400">{(e.at || '').replace('T', ' ').slice(0, 16)}</span>
+            </div>
+            {e.details && Object.keys(e.details).length > 0 && (
+              <pre className="mt-1.5 max-h-24 overflow-auto rounded bg-slate-50 p-2 text-[10px] text-slate-600">{JSON.stringify(e.details, null, 0)}</pre>
+            )}
+          </li>
+        ))}
       </ol>
     </Modal>
   )

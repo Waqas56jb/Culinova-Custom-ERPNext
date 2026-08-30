@@ -229,7 +229,69 @@ function diffSnap(prev, cur) {
   }
   const pn = (prev.items || []).length, cn = (cur.items || []).length
   if (pn !== cn) out.push({ field: 'items', from: `${pn} line(s)`, to: `${cn} line(s)` })
+  // line identity/qty/rate changes
+  const max = Math.max(pn, cn)
+  for (let i = 0; i < max; i++) {
+    const a = (prev.items || [])[i], b = (cur.items || [])[i]
+    if (!a && b) out.push({ field: `item[${i}]`, from: null, to: b.item_name })
+    else if (a && !b) out.push({ field: `item[${i}]`, from: a.item_name, to: null })
+    else if (a && b && (String(a.qty) !== String(b.qty) || String(a.rate) !== String(b.rate) || a.item_name !== b.item_name)) {
+      out.push({ field: `item[${i}]`, from: `${a.item_name}×${a.qty}@${a.rate}`, to: `${b.item_name}×${b.qty}@${b.rate}` })
+    }
+  }
   return out
+}
+
+const COMMERCIAL_KEYS = ['discount_pct', 'discount_fixed', 'validity_days', 'payment_terms', 'valid_till']
+
+function commercialOrLinesChanged(existing, patch, itemsReplaced) {
+  if (itemsReplaced) return true
+  for (const k of COMMERCIAL_KEYS) {
+    if (patch[k] !== undefined && String(patch[k] ?? '') !== String(existing[k] ?? '')) return true
+  }
+  return false
+}
+
+/**
+ * Sprint 3 Block 3 — auto revision snapshot before builder edit.
+ * Throttle: same editor + reason auto: edit within 10 minutes → update latest row.
+ */
+async function autoEditSnapshot(existing, user) {
+  const curSnap = snapshotOf(existing, existing.quotation_items)
+  const { data: last } = await supabase.from('quotation_revisions').select('*')
+    .eq('quotation_id', existing.id).order('created_at', { ascending: false }).limit(1).maybeSingle()
+  const lastChanges = last?.changes || {}
+  const isAuto = lastChanges.reason === 'auto: edit' || lastChanges.action === 'auto: edit'
+  const sameEditor = last?.changed_by === user.id
+  const ageMs = last?.created_at ? (Date.now() - new Date(last.created_at).getTime()) : Infinity
+  const within10 = ageMs < 10 * 60 * 1000
+
+  if (last && isAuto && sameEditor && within10) {
+    await supabase.from('quotation_revisions').update({
+      changes: {
+        action: 'auto: edit',
+        reason: 'auto: edit',
+        by: user.name,
+        snapshot: curSnap,
+        updated_at: new Date().toISOString(),
+      },
+    }).eq('id', last.id)
+    return { mode: 'updated', id: last.id }
+  }
+
+  const rev = Number(existing.revision) || 0
+  const { data: row } = await supabase.from('quotation_revisions').insert({
+    quotation_id: existing.id,
+    revision: rev,
+    changed_by: user.id,
+    changes: {
+      action: 'auto: edit',
+      reason: 'auto: edit',
+      by: user.name,
+      snapshot: curSnap,
+    },
+  }).select('id').single()
+  return { mode: 'created', id: row?.id }
 }
 
 const notEditable = (q) => (
@@ -601,6 +663,12 @@ export function quotationRouter() {
       }
     }
 
+    if (Object.keys(patch).length || replaced) {
+      if (commercialOrLinesChanged(existing, patch, replaced)) {
+        try { await autoEditSnapshot(existing, req.user) } catch { /* snapshot best-effort */ }
+      }
+    }
+
     if (Object.keys(patch).length) {
       const { error } = await supabase.from('quotations').update(patch).eq('id', existing.id)
       if (error) return res.status(422).json({ error: error.message })
@@ -790,7 +858,15 @@ export function quotationRouter() {
     }).eq('id', q.id)
     await supabase.from('quotation_revisions').insert({
       quotation_id: q.id, revision: newRev, changed_by: req.user.id,
-      changes: { action: 'revised', by: req.user.name, note, diff, snapshot: curSnap, from_status: q.status },
+      changes: {
+        action: 'revised',
+        reason: 'manual',
+        by: req.user.name,
+        note,
+        diff,
+        snapshot: curSnap,
+        from_status: q.status,
+      },
     })
     await logAudit(req.user, 'quotation', q.id, 'revised', { revision: newRev, changed: diff.length, from_status: q.status })
     const { data: full } = await supabase.from('quotations').select('*, quotation_items(*)').eq('id', q.id).single()

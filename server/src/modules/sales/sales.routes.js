@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { supabase } from '../../config/supabase.js'
 import { authRequired } from '../../middleware/auth.js'
 import { authorize, redactFinancials } from '../../middleware/rbac.js'
-import { isManagement } from '../../rbac/permissions.js'
+import { isManagement, canSeeFinancials } from '../../rbac/permissions.js'
 import { asyncWrap } from '../../middleware/error.js'
 import { logAudit } from '../../core/audit.js'
 import { uploadAttachment, signAttachments } from '../../core/chatfiles.js'
@@ -20,6 +20,7 @@ import { assertTransition, LIVE_QUOTE_STATUSES } from '../../core/quotationStatu
 import { validateLostReason, LOST_REASONS } from '../../core/lostReasons.js'
 import { sendQuotationToCustomer } from '../../core/sendQuotation.js'
 import { creditStatus } from '../../core/customerCredit.js'
+import { quotationAuditTrail } from '../../core/quotationAudit.js'
 
 const r = Router()
 // Document numbers come from the editable numbering_series (Company Settings), NOT from Date.now();
@@ -35,21 +36,9 @@ const safeApproval = (role, d) => {
   return { ...rest, reason: parts.join(' · ') || (d.needsApproval ? 'Sent for management approval' : null) }
 }
 
-// Resolve each line's COST from the Item Master (by name) when not explicitly given.
-// → Salesperson never enters/sees cost, yet GP can still be computed (rule #5).
-async function resolveItems(items = []) {
-  const out = []
-  for (const it of items) {
-    const name = it.item_name || it.name
-    let cost = Number(it.cost) || 0
-    if (!cost && name) {
-      const { data } = await supabase.from('items').select('cost').ilike('name', name).limit(1).maybeSingle()
-      if (data && data.cost != null) cost = Number(data.cost) || 0
-    }
-    out.push({ item_name: name, qty: Number(it.qty) || 0, rate: Number(it.rate) || 0, cost })
-  }
-  return out
-}
+// Resolve each line's COST from the Item Master — REMOVED Sprint 3 Block 3 (legacy janaza).
+// Use quotation builder (/api/quotations) which snapshots via priceEngine.
+
 const validTillFrom = (days) => new Date(Date.now() + Number(days) * 86400000).toISOString().slice(0, 10)
 
 // ── SALES ORDERS enriched with linked project number + BOQ installation progress ──
@@ -166,62 +155,26 @@ r.get('/quotations/:id', authRequired, authorize('sales', 'read'), asyncWrap(asy
   res.json(redactFinancials(req.user.role, { ...enriched, missing_fields: validateRequiredFields(enriched) }))
 }))
 
-// ── CREATE (legacy) — retired in Sprint 1a Block 4; use the quotation builder (/api/quotations) ──
-r.post('/quotations', authRequired, authorize('sales', 'create'), asyncWrap(async (req, res) => {
-  res.status(410).json({ error: 'Use the quotation builder' })
+// Sprint 3 Block 3 — merged audit trail (audit_log + revisions)
+r.get('/quotations/:id/audit', authRequired, authorize('sales', 'read'), asyncWrap(async (req, res) => {
+  const { data: q } = await supabase.from('quotations').select('id, owner_id, number').eq('id', req.params.id).maybeSingle()
+  if (!q) return res.status(404).json({ error: 'Not found' })
+  // Sales may only see trail for own quotations (Management/financial see all)
+  if (!canSeeFinancials(req.user.role) && !isManagement(req.user.role) && q.owner_id !== req.user.id) {
+    return res.status(403).json({ error: 'You can only view the audit trail for your own quotations' })
+  }
+  const items = await quotationAuditTrail(req.params.id, req.user.role)
+  res.json({ quotation_id: q.id, number: q.number, items })
 }))
 
-// ── EDIT — recomputes, re-evaluates approval, keeps revision history (#10) ──
+// ── CREATE (legacy) — retired in Sprint 1a Block 4; use the quotation builder (/api/quotations) ──
+r.post('/quotations', authRequired, authorize('sales', 'create'), asyncWrap(async (req, res) => {
+  res.status(410).json({ error: 'Use the quotation builder', code: 'LEGACY_QUOTE_CREATE_GONE' })
+}))
+
+// ── EDIT (legacy) — retired Sprint 3 Block 3; use PATCH /api/quotations/:id builder ──
 r.patch('/quotations/:id', authRequired, authorize('sales', 'update'), asyncWrap(async (req, res) => {
-  const { data: existing } = await supabase.from('quotations').select('*, quotation_items(*)').eq('id', req.params.id).single()
-  if (!existing) return res.status(404).json({ error: 'Not found' })
-  if (existing.status === 'Ordered') return res.status(422).json({ error: 'An ordered quotation cannot be edited' })
-  if (existing.status === 'Lost') return res.status(422).json({ error: 'A lost quotation cannot be edited' })
-
-  const p = req.body
-  const patch = {}
-  for (const f of ['customer', 'contact_person', 'project_name', 'project_location', 'customer_email', 'payment_terms']) {
-    if (p[f] != null && p[f] !== '') patch[f] = p[f]
-  }
-  if (p.validity_days != null) {
-    if (!RULES.VALID_DAYS.includes(Number(p.validity_days))) return res.status(422).json({ error: 'validity_days must be 15, 30 or 60' })
-    patch.validity_days = Number(p.validity_days)
-    patch.valid_till = validTillFrom(p.validity_days)
-  }
-  if (p.delivery_date !== undefined) patch.delivery_date = p.delivery_date || null
-  if (p.notes !== undefined) patch.notes = p.notes || null
-
-  let fin = null, decision = null
-  const itemsChanged = Array.isArray(p.items)
-  const discountChanged = p.discount_pct != null || p.discount_fixed != null
-  if (itemsChanged || discountChanged) {
-    const srcItems = itemsChanged ? p.items : (existing.quotation_items || [])
-    const items = await resolveItems(srcItems)
-    fin = computeFinancials(items, p.discount_pct != null ? p.discount_pct : existing.discount_pct, p.discount_fixed != null ? p.discount_fixed : existing.discount_fixed)
-    decision = evaluateApproval(fin, req.user.role)
-    if (decision.blocked) return res.status(422).json({ error: decision.reason })
-    Object.assign(patch, fin)
-    patch.status = decision.needsApproval
-      ? 'Pending Approval'
-      : (['Sent', 'Open', 'Under Negotiation'].includes(existing.status) ? 'Sent' : 'Draft')
-    patch.approval_status = decision.needsApproval ? 'Pending' : 'Not Required'
-    patch.discount_source = discountSource(req.user.role)
-    // replace line items
-    await supabase.from('quotation_items').delete().eq('quotation_id', existing.id)
-    if (items.length) {
-      await supabase.from('quotation_items').insert(items.map((it) => ({
-        quotation_id: existing.id, item_name: it.item_name, qty: it.qty, rate: it.rate, cost: it.cost, amount: it.qty * it.rate,
-      })))
-    }
-  }
-  patch.revision = (existing.revision || 0) + 1
-  const { data: updated, error } = await supabase.from('quotations').update(patch).eq('id', existing.id).select().single()
-  if (error) throw error
-  // #10 — revision history is NEVER deleted, every edit is appended
-  await supabase.from('quotation_revisions').insert({ quotation_id: existing.id, revision: patch.revision, changed_by: req.user.id, changes: { action: 'edited', ...(fin || {}) } })
-  if (decision?.needsApproval) await notifyManagementApproval(updated, req.user.name) // edit pushed it >20% → admin notification
-  await logAudit(req.user, 'quotation', existing.id, 'edited', { revision: patch.revision })
-  res.json({ ...redactFinancials(req.user.role, updated), _approval: safeApproval(req.user.role, decision) })
+  res.status(410).json({ error: 'Use the quotation builder to edit', code: 'LEGACY_QUOTE_EDIT_GONE' })
 }))
 
 // ── APPROVE (Approval/Full Admin only) — #11 → Sent ──

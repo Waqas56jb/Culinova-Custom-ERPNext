@@ -12,6 +12,7 @@ import { stripCustomerQuotationFields } from '../../rbac/permissions.js'
 import { acceptQuotation } from '../../core/acceptQuotation.js'
 import { assertTransition } from '../../core/quotationStatus.js'
 import { validateLostReason } from '../../core/lostReasons.js'
+import { logAudit } from '../../core/audit.js'
 
 const r = Router()
 const num = (p) => `${p}-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`
@@ -161,6 +162,12 @@ r.post('/customer/quotations/:id/reject', authRequired, asyncWrap(async (req, re
     customer_name: req.user.name, customer_email: req.user.email, sender: 'customer',
     body: `❌ I have REJECTED quotation ${q.number}. Reason: ${reasonText}`,
   })
+  await logAudit(req.user, 'quotation', q.id, 'quotation_rejected', {
+    reason: parsed.reason,
+    note: parsed.note || null,
+    actor_role: 'Customer',
+    channel: 'portal',
+  })
   res.json({ ok: true })
 }))
 
@@ -184,6 +191,12 @@ r.post('/customer/quotations/:id/concession', authRequired, asyncWrap(async (req
   await supabase.from('messages').insert({
     customer_name: req.user.name, customer_email: req.user.email, sender: 'customer',
     body: `💬 Concession request on quotation ${q.number}: ${note || 'Could you please offer a better price?'}`,
+  })
+  await logAudit(req.user, 'quotation', q.id, 'concession_requested', {
+    note: note || null,
+    actor_role: 'Customer',
+    channel: 'portal',
+    to_status: 'Under Negotiation',
   })
   res.json({ ok: true, status: 'Under Negotiation' })
 }))

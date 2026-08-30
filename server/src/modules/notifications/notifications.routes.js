@@ -8,6 +8,7 @@ import { approveVrRequest, rejectVrRequest } from '../../core/vrApproval.js'
 import { isManagement } from '../../rbac/permissions.js'
 import { redactFinancials } from '../../middleware/rbac.js'
 import { decideCreditOverride } from '../../core/creditOverride.js'
+import { logAudit } from '../../core/audit.js'
 
 const r = Router()
 
@@ -51,6 +52,16 @@ r.post('/:id/act', authRequired, asyncWrap(async (req, res) => {
     return res.status(422).json({ error: 'This request was already actioned' })
   }
 
+  const auditDecision = async (extra = {}) => {
+    await logAudit(req.user, n.ref_type || 'notification', n.ref_id, 'approval_decision', {
+      type: n.type,
+      decision,
+      target_id: n.ref_id,
+      notification_id: n.id,
+      ...extra,
+    })
+  }
+
   // Quotation discount approval (existing)
   if (n.type === 'approval' && n.ref_type === 'quotation') {
     const patch = decision === 'approved'
@@ -60,6 +71,7 @@ r.post('/:id/act', authRequired, asyncWrap(async (req, res) => {
     if (error) throw error
     await supabase.from('notifications').update({ action_status: decision, read: true }).eq('ref_id', n.ref_id).eq('type', 'approval')
     await notifyOwnerDecision(q, decision, req.user.name)
+    await auditDecision({ quotation_number: q?.number })
     return res.json({ ok: true, decision })
   }
 
@@ -70,6 +82,7 @@ r.post('/:id/act', authRequired, asyncWrap(async (req, res) => {
     } catch (e) {
       return res.status(e.status || 500).json({ error: e.message })
     }
+    await auditDecision()
     return res.json({ ok: true, decision })
   }
 
@@ -85,6 +98,7 @@ r.post('/:id/act', authRequired, asyncWrap(async (req, res) => {
       return res.status(e.status || 500).json({ error: e.message })
     }
     await supabase.from('notifications').update({ action_status: decision, read: true }).eq('ref_id', n.ref_id).eq('type', 'vr_change')
+    await auditDecision()
     return res.json({ ok: true, decision })
   }
 

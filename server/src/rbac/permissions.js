@@ -75,6 +75,11 @@ export const restrictedFields = [
   'estimated_cost', 'pricing_basis', 'needs_rate',
   // strategic override (Management-only; Sales/Customer must not see)
   'override_reason',
+  // Sprint 3 — lost / credit / send internals
+  'lost_reason_note',
+  'credit_warning',
+  'credit_override',
+  'channels',
   // profit
   'gp_percent', 'gross_profit', 'net_profit', 'np_percent', 'margin', 'markup', 'opex_pct',
   // documents
@@ -94,6 +99,9 @@ export const customerOnlyStripFields = [
   'cost',
   'cost_amount',
   'gp_percent',
+  'lost_reason_note',
+  'credit_warning',
+  'channels',
 ]
 
 export function stripCustomerQuotationFields(data) {
