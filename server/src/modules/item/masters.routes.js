@@ -13,6 +13,7 @@ r.use(authRequired, internalOnly)
 const BRAND_EDITABLE = [
   'currency', 'exchange_factor', 'price_factor', 'add_margin_pct', 'special_offer_pct',
   'brand', 'description', 'country_of_origin', 'country_of_purchase',
+  'preferred', // S4B1 — Brand Master star; must not be stripped
 ]
 const FIN_AUDIT_FIELDS = new Set(['exchange_factor', 'price_factor', 'currency', 'add_margin_pct', 'special_offer_pct'])
 const str = (v) => (v == null ? '' : String(v))
@@ -135,6 +136,10 @@ r.patch('/brands/:id', authRequired, authorize('warehouse', 'update'), asyncWrap
 
   const patch = {}
   for (const f of BRAND_EDITABLE) {
+    if (f === 'preferred') {
+      if (Object.prototype.hasOwnProperty.call(req.body, 'preferred')) patch.preferred = !!req.body.preferred
+      continue
+    }
     if (req.body[f] != null) patch[f] = req.body[f]
   }
   if (!Object.keys(patch).length) {

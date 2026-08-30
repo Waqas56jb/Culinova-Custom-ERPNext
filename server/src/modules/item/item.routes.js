@@ -9,6 +9,7 @@ import { resolveItemAuto, getBrand, supplierPriceFor } from '../../core/itempric
 import { priceItem, persistable } from '../../core/pricing.js'
 import { stripEosOwned, recordVersion } from '../../core/eosfields.js'
 import { eosOnlyItemCreation, eosOnlyItemDeletion, itemsComeFromEosOnly, stripErpOwned, EOS_ONLY_EDIT_MESSAGE } from '../../core/policy.js'
+import { recommendEquipment } from '../../core/equipmentRecommend.js'
 import {
   applyVrDirectAsApprover,
   createPendingVrRequest,
@@ -190,6 +191,22 @@ r.post('/vr-requests/:id/cancel', authRequired, asyncWrap(async (req, res) => {
   }
 }))
 
+// Sprint 4 Block 1 — commercial recommendations (must be before /:id)
+r.get('/recommend', authRequired, authorize('sales', 'read'), asyncWrap(async (req, res) => {
+  const family = req.query.product_family || req.query.family
+  if (!family) return res.status(422).json({ error: 'product_family query param is required' })
+  const includeMargin = canSeeFinancials(req.user.role) || isManagement(req.user.role)
+  const result = await recommendEquipment({
+    product_family: family,
+    qty: Number(req.query.qty) || 1,
+    requested_brand: req.query.requested_brand || req.query.brand || null,
+    brand_preference: req.query.brand_preference || null,
+    limit: Number(req.query.limit) || 8,
+    includeMargin,
+  })
+  res.json(result)
+}))
+
 // ── GET ONE (full item + all child tables) ──
 r.get('/:id', authRequired, internalOnly, asyncWrap(async (req, res) => {
   const { data: item, error } = await supabase.from('items').select('*').eq('id', req.params.id).single()
@@ -204,12 +221,38 @@ r.get('/:id', authRequired, internalOnly, asyncWrap(async (req, res) => {
   res.json({ ...redact(req.user, item), ...children })
 }))
 
-// (8) Product comparison — alternatives = other items in the same Product Family
+// (8) Product comparison — same-family alternatives ranked via recommendation engine (G83)
 r.get('/:id/alternatives', authRequired, asyncWrap(async (req, res) => {
-  const { data: it } = await supabase.from('items').select('product_family').eq('id', req.params.id).single()
+  const { data: it } = await supabase.from('items').select('id, product_family').eq('id', req.params.id).single()
   if (!it?.product_family) return res.json([])
-  const { data } = await supabase.from('items').select('*').ilike('product_family', it.product_family).neq('id', req.params.id)
-  res.json((data || []).map((x) => redact(req.user, x)))
+  const includeMargin = canSeeFinancials(req.user?.role) || isManagement(req.user?.role)
+  const { recommendations } = await recommendEquipment({
+    product_family: it.product_family,
+    qty: 1,
+    limit: 12,
+    includeMargin,
+    exclude_item_id: it.id,
+  })
+  res.json(recommendations.map((r) => ({
+    id: r.item_id,
+    item_id: r.item_id,
+    item_name: r.item_name,
+    brand: r.brand,
+    model: r.model,
+    product_family: r.product_family,
+    standard_rate: r.selling_price,
+    selling_price: r.selling_price,
+    available: r.available,
+    available_qty: r.available_qty,
+    incoming: r.incoming,
+    incoming_qty: r.incoming_qty,
+    shortfall: r.shortfall,
+    to_purchase: r.to_purchase,
+    reasons: r.reasons,
+    reason: r.reason,
+    eta_days: r.eta_days,
+    preferred_brand: r.preferred_brand,
+  })))
 }))
 
 // (7) pricing history (financial — restricted)

@@ -14,6 +14,7 @@ import { useData } from '../store/DataContext.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
 import QuotationPreview from '../components/QuotationPreview.jsx'
 import LostReasonModal from '../components/LostReasonModal.jsx'
+import ItemPickerFilters, { filterItems } from '../components/ItemPickerFilters.jsx'
 
 const MANDATORY_FIELDS = ['customer', 'contact_person', 'project_name', 'project_location', 'validity_days', 'payment_terms']
 const FIELD_LABEL = {
@@ -339,6 +340,7 @@ export default function Quotations() {
       item_name: l.item_name,
       brand: l.brand,
       model: l.model,
+      product_family: l.product_family || null,
       uom: l.uom || 'Nos',
       description: l.description,
       specifications: l.specifications,
@@ -349,6 +351,14 @@ export default function Quotations() {
       rate: n0(l.rate),
       cost: l.cost != null ? n0(l.cost) : null,
       discount_pct: n0(l.discount_pct),
+      brand_explicit: !!l.brand_explicit,
+      available: l.available,
+      reserved: l.reserved,
+      incoming: l.incoming,
+      // G80 — server attaches only for generic-brand EOS lines
+      ...(Array.isArray(l.suggested_alternatives) && l.suggested_alternatives.length
+        ? { suggested_alternatives: l.suggested_alternatives }
+        : {}),
     }))
     setBuilder({
       editingId: null,
@@ -363,6 +373,7 @@ export default function Quotations() {
       sales_consultant_email: prefill.sales_consultant_email || '',
       sales_consultant_phone: prefill.sales_consultant_phone || '',
       lines: preLines,
+      pendingSwaps: [],
     })
     if (prefill.unresolved?.length) {
       setError(`${prefill.unresolved.length} BOQ line(s) could not be matched to Item Master — add them manually.`)
@@ -429,6 +440,60 @@ export default function Quotations() {
   const setLine = (i, patch) => setBuilder((b) => ({ ...b, linesDirty: true, lines: b.lines.map((l, idx) => (idx === i ? { ...l, ...patch } : l)) }))
   const removeLine = (i) => setBuilder((b) => ({ ...b, linesDirty: true, lines: b.lines.filter((_, idx) => idx !== i) }))
 
+  /** G80 — swap a prefilled line to a ranked alternative; reprice via server; audit. */
+  const swapLineItem = async (lineIndex, alt) => {
+    if (!builder || lineIndex == null || !alt?.item_id) return
+    const from = builder.lines[lineIndex]
+    if (!from) return
+    const it = (items || []).find((x) => x.id === alt.item_id) || {
+      id: alt.item_id, item_name: alt.item_name, name: alt.item_name,
+      brand: alt.brand, model: alt.model, selling_price: alt.selling_price,
+    }
+    const price = await fetchServerPrice(it)
+    const reason_shown = (alt.reasons || [alt.reason]).filter(Boolean).join(' · ') || null
+    const to = {
+      item_id: it.id || alt.item_id,
+      item_name: it.item_name || it.name || alt.item_name,
+      brand: it.brand || alt.brand,
+      rate: price.rate,
+    }
+    const payload = {
+      quotation_id: builder.editingId || null,
+      from: { item_id: from.item_id, item_name: from.item_name, brand: from.brand, rate: n0(from.rate) },
+      to,
+      reason_shown,
+    }
+    setBuilder((b) => ({
+      ...b,
+      linesDirty: true,
+      lines: b.lines.map((l, idx) => (idx !== lineIndex ? l : {
+        ...l,
+        item_id: to.item_id,
+        item_code: it.item_code || it.code || l.item_code,
+        item_name: to.item_name,
+        brand: to.brand,
+        model: it.model || alt.model || l.model,
+        product_family: it.product_family || l.product_family,
+        image_url: it.image_url || l.image_url,
+        specifications: it.specifications || l.specifications,
+        datasheet_url: it.datasheet_url || l.datasheet_url,
+        rate: price.rate,
+        base_rate: price.rate,
+        cost: price.cost,
+        needs_rate: price.needs_rate,
+        stale_price: price.stale,
+        brand_explicit: true,
+        suggested_alternatives: undefined,
+      })),
+      pendingSwaps: b.editingId ? (b.pendingSwaps || []) : [...(b.pendingSwaps || []), payload],
+    }))
+    if (builder.editingId) {
+      try {
+        await api('/quotations/line-swap-audit', { method: 'POST', body: { ...payload, quotation_id: builder.editingId } })
+      } catch { /* best-effort */ }
+    }
+  }
+
   // live totals (server recomputes authoritatively on save)
   const bNet = builder ? builder.lines.reduce((s, l) => s + n0(l.qty) * n0(l.rate) * (1 - n0(l.discount_pct) / 100), 0) : 0
   const bCost = builder ? builder.lines.reduce((s, l) => s + n0(l.qty) * (l.cost != null ? n0(l.cost) : 0), 0) : 0
@@ -475,12 +540,21 @@ export default function Quotations() {
       } : {}),
     }
     try {
+      let savedId = builder.editingId
       if (builder.editingId) await api(`/quotations/${builder.editingId}`, { method: 'PATCH', body })
       else {
         const created = await api('/quotations', { method: 'POST', body })
+        savedId = created?.id || created?.quotation?.id
         if (created?.credit_warning?.overdue_amount > 0) {
           // Banner already shown live; soft notice on success
         }
+      }
+      // Flush G80 swaps audited before the quote existed
+      const pending = builder.pendingSwaps || []
+      if (savedId && pending.length) {
+        await Promise.all(pending.map((p) =>
+          api('/quotations/line-swap-audit', { method: 'POST', body: { ...p, quotation_id: savedId } }).catch(() => null),
+        ))
       }
       setBuilder(null)
       setSaving(false)
@@ -753,7 +827,7 @@ export default function Quotations() {
       {builder && (
         <Builder
           builder={builder} setH={setH} items={items} customers={customers} projects={projectOpts} opportunities={opportunities}
-          currencies={settings?.currencies || []} addLine={addLine} setLine={setLine} removeLine={removeLine}
+          currencies={settings?.currencies || []} addLine={addLine} setLine={setLine} removeLine={removeLine} swapLineItem={swapLineItem}
           totals={{ net: bNet, discAmt: bDiscAmt, vat: bVat, total: bTotal, gp: bGp, cost: bCost, vatRate }}
           showFin={showFin} canEditRate={showFin} canLineMargin={isMgmt} onClose={() => setBuilder(null)} onSave={saveBuilder} onRevise={revise}
           saving={saving} error={error} canRefreshPrices={showFin || SENDERS.includes(user?.role)}
@@ -776,7 +850,7 @@ export default function Quotations() {
 }
 
 // ── The quotation BUILDER ────────────────────────────────────────────────────
-function Builder({ builder, setH, items, customers, projects, opportunities, currencies, addLine, setLine, removeLine, totals, showFin, canEditRate, canLineMargin, onClose, onSave, onRevise, saving, error, canRefreshPrices }) {
+function Builder({ builder, setH, items, customers, projects, opportunities, currencies, addLine, setLine, removeLine, swapLineItem, totals, showFin, canEditRate, canLineMargin, onClose, onSave, onRevise, saving, error, canRefreshPrices }) {
   const d = useData()
   const nav = useNavigate()
   const [creditWarn, setCreditWarn] = useState(null)
@@ -801,8 +875,15 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
   const [customValidity, setCustomValidity] = useState(false)
   const [smartFamily, setSmartFamily] = useState('')
   const [smartBrand, setSmartBrand] = useState('')
+  const [smartQty, setSmartQty] = useState(1)
   const [smartRecs, setSmartRecs] = useState([])
+  const [smartAlts, setSmartAlts] = useState([])
   const [smartBusy, setSmartBusy] = useState(false)
+  const [smartOpen, setSmartOpen] = useState(false)
+  const [swapLineIdx, setSwapLineIdx] = useState(null)
+  const [pickerFamily, setPickerFamily] = useState('')
+  const [pickerCategory, setPickerCategory] = useState('')
+  const [pickerReasons, setPickerReasons] = useState({})
   const [searchPrices, setSearchPrices] = useState({})
   const [refreshBusy, setRefreshBusy] = useState(false)
 
@@ -822,15 +903,36 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
   // as a dependency — a dependency array is read during render, so referencing this const from that
   // array before this line runs throws "Cannot access 'results' before initialization" (its temporal
   // dead zone), which crashes the whole Quotations page to a blank screen.
+  // S4B2: Family + Category filters combine with text search (show results when any filter active).
   const results = useMemo(() => {
-    const s = q.trim().toLowerCase()
-    if (!s) return []
-    return (items || []).filter((it) => {
-      if (it.disabled) return false
-      const hay = `${it.item_name || it.name || ''} ${it.brand || ''} ${it.model || ''} ${it.item_group || ''}`.toLowerCase()
-      return hay.includes(s)
-    }).slice(0, 8)
-  }, [q, items])
+    const has = q.trim() || pickerFamily || pickerCategory
+    if (!has) return []
+    return filterItems(items, { q, family: pickerFamily, category: pickerCategory, limit: 40 })
+  }, [q, items, pickerFamily, pickerCategory])
+
+  // One recommend call per family filter — map primary reason onto matching result rows (no per-row calls).
+  useEffect(() => {
+    if (!pickerFamily) { setPickerReasons({}); return }
+    let cancelled = false
+    const qs = new URLSearchParams({
+      product_family: pickerFamily,
+      qty: String(Math.max(1, Number(smartQty) || 1)),
+      limit: '40',
+    })
+    api(`/items/recommend?${qs}`)
+      .then((data) => {
+        if (cancelled) return
+        const recs = Array.isArray(data) ? data : (data?.recommendations || [])
+        const map = {}
+        for (const r of recs) {
+          const primary = (r.reasons || [r.reason]).filter(Boolean)[0]
+          if (r.item_id && primary) map[r.item_id] = primary
+        }
+        setPickerReasons(map)
+      })
+      .catch(() => { if (!cancelled) setPickerReasons({}) })
+    return () => { cancelled = true }
+  }, [pickerFamily, smartQty])
 
   // Server VR-chain prices for search results (rates never invented client-side).
   useEffect(() => {
@@ -865,17 +967,43 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
     if (!smartFamily) return
     setSmartBusy(true)
     try {
-      const qs = new URLSearchParams({ product_family: smartFamily, limit: '5' })
-      if (smartBrand) qs.set('brand', smartBrand)
-      const recs = await api(`/engineering/equipment-recommendations?${qs}`)
-      setSmartRecs(Array.isArray(recs) ? recs : [])
+      const qs = new URLSearchParams({
+        product_family: smartFamily,
+        qty: String(Math.max(1, Number(smartQty) || 1)),
+        limit: '8',
+      })
+      if (smartBrand) qs.set('requested_brand', smartBrand)
+      const data = await api(`/items/recommend?${qs}`)
+      const recs = Array.isArray(data) ? data : (data?.recommendations || [])
+      const alts = Array.isArray(data) ? [] : (data?.alternatives || [])
+      setSmartRecs(recs)
+      setSmartAlts(alts)
     } catch (e) {
       setSmartRecs([])
+      setSmartAlts([])
       alert(e.message || 'Could not load recommendations')
     } finally { setSmartBusy(false) }
   }
 
+  const openAltsForLine = (lineIndex, line) => {
+    setSwapLineIdx(lineIndex)
+    setSmartFamily(line.product_family || '')
+    setSmartQty(Math.max(1, n0(line.qty) || 1))
+    setSmartBrand('')
+    setSmartOpen(true)
+    // Prefill panel with server-ranked alternatives (G80)
+    setSmartRecs(Array.isArray(line.suggested_alternatives) ? line.suggested_alternatives : [])
+    setSmartAlts([])
+  }
+
   const addRecLine = async (rec) => {
+    if (swapLineIdx != null) {
+      await swapLineItem?.(swapLineIdx, rec)
+      setSwapLineIdx(null)
+      setSmartOpen(false)
+      setSmartRecs([])
+      return
+    }
     const it = (items || []).find((x) => x.id === rec.item_id)
     if (it) await addLine(it)
     else await addLine({
@@ -1080,31 +1208,84 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
 
       {/* item picker */}
       <div className="rounded-xl border border-slate-200 p-4">
-        <div className="mb-2 flex items-center gap-2 text-sm font-bold text-ink"><Package size={16} className="text-brand-500" /> Equipment Lines</div>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-sm font-bold text-ink"><Package size={16} className="text-brand-500" /> Equipment Lines</div>
+          {productFamilies.length > 0 && (
+            <button type="button" onClick={() => { setSmartOpen((o) => !o); setSwapLineIdx(null) }}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-brand-200 bg-brand-50 px-3 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-100">
+              <Boxes size={14} /> Smart suggest
+            </button>
+          )}
+        </div>
 
-        {productFamilies.length > 0 && (
+        {smartOpen && productFamilies.length > 0 && (
           <div className="mb-3 flex flex-wrap items-end gap-2 rounded-xl border border-brand-100 bg-brand-50/40 p-3">
-            <Select label="Smart selection — Product Family" value={smartFamily} onChange={(e) => { setSmartFamily(e.target.value); setSmartBrand(''); setSmartRecs([]) }}
+            {swapLineIdx != null && (
+              <p className="w-full text-[11px] font-semibold text-brand-700">
+                Swapping line {swapLineIdx + 1} — pick an alternative below (family + qty preloaded)
+              </p>
+            )}
+            <Select label="Product Family" value={smartFamily} onChange={(e) => { setSmartFamily(e.target.value); setSmartBrand(''); setSmartRecs([]); setSmartAlts([]) }}
               options={[{ value: '', label: '— pick family —' }, ...productFamilies.map((f) => ({ value: f, label: f }))]} />
-            <Select label="Preferred brand (optional)" value={smartBrand} onChange={(e) => { setSmartBrand(e.target.value); setSmartRecs([]) }}
-              options={[{ value: '', label: '— no preference —' }, ...familyBrands.map((b) => ({ value: b, label: b }))]} />
+            <Select label="Customer specified brand?" value={smartBrand} onChange={(e) => { setSmartBrand(e.target.value); setSmartRecs([]); setSmartAlts([]) }}
+              options={[{ value: '', label: '— any brand —' }, ...familyBrands.map((b) => ({ value: b, label: b }))]} />
+            <Field label="Qty needed" type="number" min="1" value={smartQty} onChange={(e) => setSmartQty(Number(e.target.value) || 1)} />
             <button type="button" onClick={loadSmartRecs} disabled={!smartFamily || smartBusy}
               className="mb-0.5 inline-flex items-center gap-1.5 rounded-xl bg-brand-500 px-3 py-2.5 text-xs font-semibold text-white hover:bg-brand-600 disabled:opacity-50">
               {smartBusy ? <Loader2 size={14} className="animate-spin" /> : <Boxes size={14} />} Suggest equipment
             </button>
-            {smartRecs.length > 0 && (
+            {(smartRecs.length > 0 || smartAlts.length > 0) && (
               <div className="w-full space-y-1 pt-1">
                 {smartRecs.map((rec) => (
                   <button key={rec.item_id} type="button" onClick={() => addRecLine(rec)}
-                    className="flex w-full items-center justify-between rounded-lg border border-white bg-white px-3 py-2 text-left text-xs hover:border-brand-200">
-                    <span><b>{rec.item_name}</b> · {rec.reason}{rec.in_stock ? ' · in stock' : ''}</span>
-                    <span className="font-semibold text-brand-600">{sar(rec.selling_price)}</span>
+                    className="flex w-full flex-col gap-0.5 rounded-lg border border-white bg-white px-3 py-2 text-left text-xs hover:border-brand-200">
+                    <span className="flex w-full items-center justify-between gap-2">
+                      <span><b>{rec.item_name}</b>{rec.brand ? ` · ${rec.brand}` : ''}</span>
+                      <span className="shrink-0 font-semibold text-brand-600">
+                        {swapLineIdx != null ? 'Swap · ' : ''}{sar(rec.selling_price)}
+                      </span>
+                    </span>
+                    <span className="text-[11px] text-slate-500">
+                      {(rec.reasons || [rec.reason]).filter(Boolean).join(' · ')}
+                      {rec.available_qty > 0 || rec.available > 0
+                        ? ` · stock ${rec.available_qty ?? rec.available}`
+                        : ''}
+                    </span>
+                    {(rec.shortfall > 0 || rec.to_purchase > 0) && (
+                      <span className="text-[11px] font-semibold text-amber-700">
+                        Shortfall: {rec.shortfall ?? rec.to_purchase} — to purchase
+                      </span>
+                    )}
                   </button>
                 ))}
+                {smartAlts.length > 0 && (
+                  <>
+                    <p className="pt-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">Alternatives if brand is flexible</p>
+                    {smartAlts.map((rec) => (
+                      <button key={`alt-${rec.item_id}`} type="button" onClick={() => addRecLine(rec)}
+                        className="flex w-full flex-col gap-0.5 rounded-lg border border-dashed border-slate-200 bg-slate-50/80 px-3 py-2 text-left text-xs hover:border-brand-200">
+                        <span className="flex w-full items-center justify-between gap-2">
+                          <span><b>{rec.item_name}</b>{rec.brand ? ` · ${rec.brand}` : ''}</span>
+                          <span className="shrink-0 font-semibold text-brand-600">{sar(rec.selling_price)}</span>
+                        </span>
+                        <span className="text-[11px] text-slate-500">{(rec.reasons || [rec.reason]).filter(Boolean).join(' · ')}</span>
+                      </button>
+                    ))}
+                  </>
+                )}
               </div>
             )}
           </div>
         )}
+
+        <ItemPickerFilters
+          items={items}
+          family={pickerFamily}
+          category={pickerCategory}
+          onFamily={(f) => setPickerFamily(f)}
+          onCategory={(c) => setPickerCategory(c)}
+          className="mb-2"
+        />
 
         <div className="relative">
           <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -1120,13 +1301,18 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
                     <p className="truncate text-sm font-semibold text-ink">{it.item_name || it.name}</p>
                     <p className="truncate text-[11px] text-slate-500">{[it.brand, it.model].filter(Boolean).join(' · ') || it.item_group}{(() => { const pv = preview(it.specifications || it.description, 60); return pv ? ` — ${pv}` : '' })()}</p>
                     <AvailabilityChips a={avail[it.id]} />
+                    {pickerFamily && pickerReasons[it.id] && (
+                      <span className="mt-1 inline-flex rounded bg-brand-50 px-1.5 py-0.5 text-[10px] font-bold text-brand-700">
+                        {pickerReasons[it.id]}
+                      </span>
+                    )}
                   </div>
                   <span className="shrink-0 text-xs font-semibold text-brand-600">{sar(displayRate(it))}</span>
                 </button>
               ))}
             </div>
           )}
-          {q.trim() && results.length === 0 && <p className="mt-2 text-xs text-slate-400">No matching items in the Item Master.</p>}
+          {(q.trim() || pickerFamily || pickerCategory) && results.length === 0 && <p className="mt-2 text-xs text-slate-400">No matching items in the Item Master.</p>}
         </div>
 
         {/* lines */}
@@ -1171,6 +1357,15 @@ function Builder({ builder, setH, items, customers, projects, opportunities, cur
                             </p>
                           )}
                           {l.datasheet_url && <span className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-semibold text-brand-500"><FileText size={11} /> datasheet</span>}
+                          {Array.isArray(l.suggested_alternatives) && l.suggested_alternatives.length > 0 && !l.brand_explicit && (
+                            <button
+                              type="button"
+                              onClick={() => openAltsForLine(i, l)}
+                              className="mt-1 inline-flex items-center gap-1 rounded-full bg-brand-50 px-2 py-0.5 text-[10px] font-bold text-brand-700 hover:bg-brand-100"
+                            >
+                              {l.suggested_alternatives.length} alternative{l.suggested_alternatives.length === 1 ? '' : 's'}
+                            </button>
+                          )}
                           <div className="mt-1"><StockBadge s={allocFor(i, l)} err={stockErr} /></div>
                         </div>
                       </div>
@@ -1462,11 +1657,13 @@ const AUDIT_ACTION_LABELS = {
   'line-added': 'Line added',
   'line-deleted': 'Line deleted',
   'refresh-prices': 'Prices refreshed',
+  line_item_swapped: 'Line item swapped',
   lost: 'Marked lost',
 }
 
 const AUDIT_FIELD_LABELS = {
   reason: 'Reason',
+  reason_shown: 'Reason shown',
   note: 'Note',
   channel: 'Channel',
   actor_role: 'Actor',
@@ -1512,7 +1709,14 @@ function auditDetailRows(details) {
   const skip = new Set(['diff', 'snapshot', 'channels', 'credit_warning', 'email_detail', 'portal_recipients'])
   for (const [k, v] of Object.entries(details)) {
     if (skip.has(k) || v == null || v === '') continue
-    if (typeof v === 'object') continue
+    if (typeof v === 'object') {
+      if (k === 'from' || k === 'to') {
+        const label = k === 'from' ? 'From item' : 'To item'
+        const parts = [v.item_name, v.brand, v.rate != null ? sar(v.rate) : null].filter(Boolean)
+        if (parts.length) rows.push({ label, value: parts.join(' · ') })
+      }
+      continue
+    }
     const label = AUDIT_FIELD_LABELS[k] || k.replace(/_/g, ' ')
     let value = v
     if (k === 'snapshot_total' && typeof v === 'number') value = sar(v)

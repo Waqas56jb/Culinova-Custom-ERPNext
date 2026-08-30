@@ -12,6 +12,7 @@ import { api, getToken } from '../api.js'
 import { erpApiBase } from '@deploy'
 import { specPreview } from '@shared/specs.js'
 import { StockAvailabilityChips } from '../components/StockAvailabilityChips.jsx'
+import ItemPickerFilters, { filterItems } from '../components/ItemPickerFilters.jsx'
 
 // Roles allowed to see cost / margin / supplier price (mirrors server rbac/permissions.financialRoles).
 // The server ALSO redacts, so a non-financial viewer simply gets undefined — we never render it.
@@ -350,17 +351,17 @@ function NewBoqModal({ onClose, onCreate, projects, currencies }) {
 
 function AddItemModal({ onClose, items, fin, onAdd }) {
   const [q, setQ] = useState('')
+  const [family, setFamily] = useState('')
+  const [category, setCategory] = useState('')
   const [sel, setSel] = useState(null)
   const [qty, setQty] = useState('1')
   const [group, setGroup] = useState('')
   const [sell, setSell] = useState('')
   const [cost, setCost] = useState('')
-  const results = useMemo(() => {
-    const t = q.trim().toLowerCase()
-    const base = (items || []).filter((i) => !i.disabled)
-    const list = t ? base.filter((i) => `${i.item_name || i.name || ''} ${i.item_code || i.code || ''}`.toLowerCase().includes(t)) : base
-    return list.slice(0, 40)
-  }, [q, items])
+  const results = useMemo(
+    () => filterItems(items, { q, family, category, limit: 40 }),
+    [q, items, family, category],
+  )
   const choose = (i) => {
     setSel(i)
     setGroup(i.item_group || i.product_family || 'General')
@@ -382,6 +383,7 @@ function AddItemModal({ onClose, items, fin, onAdd }) {
       </>}>
       {!sel ? (
         <>
+          <ItemPickerFilters items={items} family={family} category={category} onFamily={setFamily} onCategory={setCategory} className="mb-3" />
           <label className="block">
             <span className="mb-1.5 block text-xs font-semibold text-slate-600">Search the Item Master</span>
             <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/60 px-3">
@@ -395,7 +397,7 @@ function AddItemModal({ onClose, items, fin, onAdd }) {
                 <Package size={16} className="shrink-0 text-slate-400" />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium text-ink">{i.item_name || i.name}</div>
-                  <div className="text-xs text-muted">{i.item_code || i.code || '—'}{i.item_group ? ` · ${i.item_group}` : ''}</div>
+                  <div className="text-xs text-muted">{i.item_code || i.code || '—'}{i.item_group ? ` · ${i.item_group}` : ''}{i.product_family ? ` · ${i.product_family}` : ''}</div>
                 </div>
                 {i.selling_price != null && <span className="shrink-0 text-xs font-semibold text-brand-600">{sar(i.selling_price)}</span>}
               </button>

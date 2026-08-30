@@ -492,6 +492,21 @@ export function quotationRouter() {
     res.json(out)
   }))
 
+  // S4B2 — audit a line swap from suggested alternatives (prefill or builder)
+  r.post('/line-swap-audit', authRequired, authorize('sales', 'create'), asyncWrap(async (req, res) => {
+    const p = req.body || {}
+    const from = p.from || null
+    const to = p.to || null
+    if (!from?.item_id || !to?.item_id) return res.status(422).json({ error: 'from.item_id and to.item_id required' })
+    const qid = p.quotation_id || 'prefill'
+    await logAudit(req.user, 'quotation', qid, 'line_item_swapped', {
+      from: { item_id: from.item_id, item_name: from.item_name, brand: from.brand, rate: from.rate },
+      to: { item_id: to.item_id, item_name: to.item_name, brand: to.brand, rate: to.rate },
+      reason_shown: p.reason_shown || null,
+    })
+    res.json({ ok: true })
+  }))
+
   // ── Refresh line prices from live VR chain (Draft only; preview then apply) ──
   r.post('/:id/refresh-prices', authRequired, authorize('sales', 'read'), asyncWrap(async (req, res) => {
     const apply = req.body?.apply === true

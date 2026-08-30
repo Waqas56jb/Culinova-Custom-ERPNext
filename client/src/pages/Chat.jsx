@@ -33,11 +33,12 @@ function Attachment({ m, mine }) {
 
 export default function Chat() {
   const navigate = useNavigate()
-  const { chatMessages, sendChatReply, markChatRead, openForm, salesOrders, quotations, customerDir } = useData()
+  const { chatMessages, sendChatReply, markChatRead, openForm, salesOrders, quotations, customerDir, opportunities, getOpportunityQuotationPrefill } = useData()
   const [active, setActive] = useState(null)
   const [text, setText] = useState('')
   const [file, setFile] = useState(null)
   const [sending, setSending] = useState(false)
+  const [quoting, setQuoting] = useState(false)
   const [q, setQ] = useState('')
   const [preview, setPreview] = useState(null)
   const endRef = useRef(null); const fileRef = useRef(null); const taRef = useRef(null)
@@ -65,6 +66,35 @@ export default function Chat() {
 
   const openThread = (t) => { setActive(t.email); setFile(null); setText(''); if (t.unread) markChatRead(t.email) }
   const pickFile = async (e) => { const f = e.target.files?.[0]; e.target.value = ''; if (!f) return; if (f.size > 10 * 1024 * 1024) return alert('File too large (max 10MB)'); setFile({ name: f.name, type: f.type, dataUrl: await fileToDataUrl(f) }) }
+  /** Block 4 / S3B3: Chat → Quote opens quotation builder (not legacy modal). Needs an open Opportunity. */
+  const startQuoteFromChat = async () => {
+    if (!current || quoting) return
+    setQuoting(true)
+    try {
+      const open = (opportunities || []).find((o) =>
+        (o.customer || '').toLowerCase() === (current.name || '').toLowerCase()
+        && o.stage !== 'Lost' && o.stage !== 'Won')
+      if (!open?.id) {
+        alert('No open Opportunity for this customer. Create / open one on Opportunities, then use Quotation — or create Opportunity first.')
+        navigate('/sales/opportunities')
+        return
+      }
+      const prefill = await getOpportunityQuotationPrefill(open.id)
+      navigate('/sales/quotations', {
+        state: {
+          quotePrefill: {
+            ...prefill,
+            customer: current.name,
+            customer_email: current.email || prefill.customer_email || '',
+          },
+        },
+      })
+    } catch (e) {
+      alert(e.message)
+    } finally {
+      setQuoting(false)
+    }
+  }
   const send = async () => {
     if ((!text.trim() && !file) || !current) return
     const body = text.trim(), att = file; setText(''); setFile(null); setSending(true)
@@ -123,7 +153,7 @@ export default function Chat() {
               </div>
               {/* right side of profile: locked quotation PDF + actions */}
               {latestQuote && <button onClick={() => setPreview(latestQuote)} title="View quotation PDF" className="inline-flex items-center gap-1.5 rounded-lg border border-brand-200 px-3 py-1.5 text-xs font-semibold text-brand-600 hover:bg-brand-50"><FileText size={14} /> PDF</button>}
-              <button onClick={() => navigate('/sales/opportunities')} className="hidden items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 sm:inline-flex"><Plus size={14} /> Quote</button>
+              <button onClick={startQuoteFromChat} disabled={quoting} className="hidden items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 sm:inline-flex disabled:opacity-50"><Plus size={14} /> {quoting ? 'Opening…' : 'Quote'}</button>
               <button onClick={() => openForm('lead', { company: current.name, email: current.email, name: current.name })} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"><UserPlus size={14} /><span className="hidden sm:inline">Lead</span></button>
             </div>
 

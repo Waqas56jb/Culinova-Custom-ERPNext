@@ -10,6 +10,7 @@ import { pushEngineeringRequest, syncEngineeringStatus, patchEngineeringOnEos, S
 import { recommendEquipment } from '../../core/equipmentRecommend.js'
 import { resolveApprovedItems } from '../../core/approvedItemsResolve.js'
 import { uploadAttachment } from '../../core/chatfiles.js'
+import { canSeeFinancials } from '../../rbac/permissions.js'
 
 const r = Router()
 const clean = (v) => (v === '' || v === undefined ? null : v)
@@ -62,7 +63,20 @@ r.get('/requests/:id', authRequired, authorize('sales', 'read'), asyncWrap(async
     await supabase.from('engineering_requests').update(patch).eq('id', data.id)
     Object.assign(data, patch)
   }
-  res.json({ ...data, attachments: await signAttachmentList(data.attachments), _eos: eos || null })
+  let resolved_lines = []
+  if (Array.isArray(data.approved_items) && data.approved_items.length) {
+    const includeMargin = canSeeFinancials(req.user.role) || isManagement(req.user.role)
+    const resolved = await resolveApprovedItems(data.approved_items, {
+      user: req.user, includeMargin, attachAlternatives: false, tryImport: false,
+    })
+    resolved_lines = redactFinancials(req.user.role, resolved.lines || [])
+  }
+  res.json({
+    ...data,
+    attachments: await signAttachmentList(data.attachments),
+    _eos: eos || null,
+    resolved_lines,
+  })
 }))
 
 r.post('/requests', authRequired, authorize('sales', 'create'), asyncWrap(async (req, res) => {
@@ -159,12 +173,17 @@ r.get('/requests/:id/quotation-prefill', authRequired, authorize('sales', 'read'
     return res.status(422).json({ error: `Engineering request must be "Ready for Quotation" (current: ${er.status})` })
   }
   const { data: opp } = await supabase.from('opportunities').select('*').eq('id', er.opportunity_id).maybeSingle()
-  const { lines, unresolved } = await resolveApprovedItems(er.approved_items || [], { user: req.user })
+  const { lines, unresolved } = await resolveApprovedItems(er.approved_items || [], {
+    user: req.user,
+    includeMargin: canSeeFinancials(req.user.role) || isManagement(req.user.role),
+    attachAlternatives: true,
+  })
   // resolveApprovedItems puts landed `cost` on every line. Every other quotation endpoint redacts its
   // output; this one must too, or a Sales user sees each item's cost in the prefill payload (Sales must
   // never see cost/margin). redactFinancials recurses into `lines` and strips cost for non-financial
   // roles, and passes the payload through unchanged for Management — and the save path re-derives cost
   // from the Item Master server-side, so GP is unaffected.
+  // suggested_alternatives stay (selling_price + reasons only — no cost fields).
   res.json(redactFinancials(req.user.role, {
     opportunity_id: er.opportunity_id,
     customer: er.customer || opp?.customer,
@@ -182,13 +201,20 @@ r.get('/requests/:id/quotation-prefill', authRequired, authorize('sales', 'read'
 r.get('/equipment-recommendations', authRequired, authorize('sales', 'read'), asyncWrap(async (req, res) => {
   const family = req.query.product_family || req.query.family
   if (!family) return res.status(422).json({ error: 'product_family query param is required' })
-  const rows = await recommendEquipment({
+  // S4B1: prefer /items/recommend; this endpoint keeps shape for older callers
+  const result = await recommendEquipment({
     product_family: family,
-    brand_preference: req.query.brand,
+    qty: Number(req.query.qty) || 1,
+    requested_brand: req.query.requested_brand || null,
+    brand_preference: req.query.brand || req.query.brand_preference || null,
     limit: Number(req.query.limit) || 5,
     includeMargin: isManagement(req.user.role),
   })
-  res.json(rows)
+  // Legacy UI expected a flat array — return recommendations only when no hard brand filter
+  if (req.query.flat === '1' || (!req.query.requested_brand && req.query.format !== 'full')) {
+    return res.json(result.recommendations)
+  }
+  res.json(result)
 }))
 
 r.get('/dashboard-metrics', authRequired, authorize('sales', 'read'), asyncWrap(async (req, res) => {

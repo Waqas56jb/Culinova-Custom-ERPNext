@@ -1,9 +1,20 @@
 import { supabase } from '../config/supabase.js'
 import { priceItemLive } from './priceEngine.js'
 import { importEosEntry } from './eos.js'
+import { recommendEquipment } from './equipmentRecommend.js'
+import { availabilityByIds } from './availability.js'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const n0 = (v) => Number(v) || 0
+
+/** §10 / G80 — no customer brand → offer ranked alternatives. */
+export function isGenericBrand(brand, rawBrand) {
+  const b = String(rawBrand ?? brand ?? '').trim().toLowerCase()
+  if (!b) return true
+  if (['culinova', 'culinova-generic', 'generic', 'tbd', 'n/a', 'na', 'none', '-'].includes(b)) return true
+  if (b.includes('culinova') && b.includes('generic')) return true
+  return false
+}
 
 async function findByEosEntry(eosId) {
   if (!eosId) return null
@@ -101,15 +112,35 @@ async function rateForItem(item) {
   return { selling, landed }
 }
 
+function slimAlt(r) {
+  return {
+    item_id: r.item_id,
+    item_name: r.item_name,
+    brand: r.brand,
+    model: r.model,
+    selling_price: r.selling_price,
+    reasons: r.reasons,
+    reason: r.reason,
+    available: r.available,
+    available_qty: r.available_qty,
+    incoming: r.incoming,
+    shortfall: r.shortfall,
+    to_purchase: r.to_purchase,
+  }
+}
+
 /**
  * Turn EOS/ERP approved_items JSON into quotation-builder lines.
- * Returns { lines, unresolved } — unresolved entries have no Item Master match.
+ * G80: generic-brand lines get suggested_alternatives[] (top 3). Explicit brand → field absent.
+ * Returns { lines, unresolved }.
  */
 export async function resolveApprovedItems(approvedItems = [], opts = {}) {
+  const { includeMargin = false, attachAlternatives = true } = opts
   const lines = []
   const unresolved = []
   const list = Array.isArray(approvedItems) ? approvedItems : []
 
+  const resolvedRows = []
   for (let i = 0; i < list.length; i++) {
     const raw = list[i] || {}
     const qty = Math.max(0.001, n0(raw.qty) || n0(raw.quantity) || 1)
@@ -118,14 +149,24 @@ export async function resolveApprovedItems(approvedItems = [], opts = {}) {
       unresolved.push({ index: i, input: raw, reason: 'No matching Item Master row' })
       continue
     }
-    const { item, match } = resolved
+    resolvedRows.push({ i, raw, qty, ...resolved })
+  }
+
+  const availMap = await availabilityByIds(resolvedRows.map((r) => r.item.id))
+
+  for (const row of resolvedRows) {
+    const { item, match, raw, qty } = row
     const { selling, landed } = await rateForItem(item)
-    lines.push({
+    const a = availMap[item.id] || {}
+    const generic = isGenericBrand(item.brand, raw.brand)
+    const line = {
       item_id: item.id,
       item_code: item.item_code || item.code || raw.item_code || null,
       item_name: item.item_name || item.name,
       brand: item.brand,
       model: item.model,
+      product_family: item.product_family || null,
+      item_group: item.item_group || null,
       uom: item.uom || item.stock_uom || item.sales_uom || 'Nos',
       description: item.description,
       specifications: item.specifications,
@@ -136,8 +177,28 @@ export async function resolveApprovedItems(approvedItems = [], opts = {}) {
       cost: landed,
       discount_pct: n0(raw.discount_pct),
       pos: raw.pos || raw.area || null,
+      available: n0(a.available),
+      reserved: n0(a.reserved),
+      incoming: n0(a.incoming),
+      brand_explicit: !generic,
       _match: match,
-    })
+    }
+
+    if (attachAlternatives && generic && item.product_family) {
+      try {
+        const { recommendations } = await recommendEquipment({
+          product_family: item.product_family,
+          qty,
+          limit: 4,
+          includeMargin,
+          exclude_item_id: item.id,
+        })
+        const alts = (recommendations || []).filter((r) => r.item_id !== item.id).slice(0, 3).map(slimAlt)
+        if (alts.length) line.suggested_alternatives = alts
+      } catch { /* best-effort */ }
+    }
+
+    lines.push(line)
   }
   return { lines, unresolved }
 }

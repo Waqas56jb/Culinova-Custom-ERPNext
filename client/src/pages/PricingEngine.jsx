@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback, Fragment } from 'react'
 import { useSearchParams, useLocation, useNavigate } from 'react-router-dom'
 import {
   Percent, Coins, Layers, Calculator, RefreshCw, Search, TrendingUp,
-  AlertTriangle, Loader2, Plus, DollarSign, History, Trash2, ChevronDown, ChevronUp,
+  AlertTriangle, Loader2, Plus, DollarSign, History, Trash2, ChevronDown, ChevronUp, Star,
 } from 'lucide-react'
 import { PageHeader, KpiCard } from '../components/ui.jsx'
 import { Modal } from '../components/Modal.jsx'
@@ -723,6 +723,8 @@ function BrandMasterTab() {
   const { user } = useAuth()
   // Brand delete follows same gate as edit — Edit / Approval / Full Admin (not Create-only).
   const canDelete = ['Edit', 'Approval', 'Full Admin'].includes(user?.access_level)
+  const canPrefer = ['Management', 'System Admin'].includes(user?.role) || canDelete
+  const [prefBusy, setPrefBusy] = useState(null)
   const [q, setQ] = useState('')
   const [edits, setEdits] = useState({})   // id → { field: value }
   const [savingId, setSavingId] = useState(null)
@@ -772,6 +774,17 @@ function BrandMasterTab() {
   const showSuccess = (text) => setFlash({ type: 'success', text })
   const showError = (text) => setFlash({ type: 'error', text })
   const clearFlash = () => setFlash(null)
+
+  const togglePreferred = async (b) => {
+    if (!canPrefer || prefBusy) return
+    setPrefBusy(b.id); clearFlash()
+    try {
+      await d.updateBrand(b.id, { preferred: !b.preferred })
+      showSuccess(b.preferred ? `Removed preferred from "${b.brand}"` : `"${b.brand}" marked preferred`)
+    } catch (e) {
+      showError(e.message || 'Could not update preferred flag')
+    } finally { setPrefBusy(null) }
+  }
 
   const save = async (b) => {
     setSavingId(b.id); clearFlash()
@@ -950,7 +963,17 @@ function BrandMasterTab() {
                       title="Brand details (description, countries, rename)">
                       {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                     </button>
+                    {canPrefer && (
+                      <button type="button" disabled={prefBusy === b.id} onClick={() => togglePreferred(b)}
+                        title={b.preferred ? 'Preferred brand (click to clear)' : 'Mark as preferred brand'}
+                        className={`mr-1.5 inline-flex rounded p-0.5 ${b.preferred ? 'text-amber-500' : 'text-slate-300 hover:text-amber-400'}`}>
+                        <Star size={14} fill={b.preferred ? 'currentColor' : 'none'} />
+                      </button>
+                    )}
                     {val(b, 'brand', b.brand)}
+                    {b.preferred && (
+                      <span className="ml-2 inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700">Preferred</span>
+                    )}
                     {b.factors_pending && (
                       <span className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">Factors pending</span>
                     )}

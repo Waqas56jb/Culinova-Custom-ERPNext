@@ -1,10 +1,11 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { Plus, Loader2, Send, FileText, RefreshCw, Info } from 'lucide-react'
+import { Plus, Loader2, Send, FileText, RefreshCw, Info, Eye } from 'lucide-react'
 import { PageHeader, Badge, statusTone } from '../components/ui.jsx'
 import { Modal, Field, TextArea, Row } from '../components/Modal.jsx'
 import { api } from '../api.js'
 import { useData } from '../store/DataContext.jsx'
+import { StockAvailabilityChips } from '../components/StockAvailabilityChips.jsx'
 
 const STATUSES = ['Pending Engineering Review', 'Under Design', 'Awaiting Information', 'Equipment Selection Completed', 'Ready for Quotation']
 const ENG_TYPE = 'Project Requiring Engineering'
@@ -16,6 +17,7 @@ export default function EngineeringRequests() {
   const [rows, setRows] = useState([])
   const [busy, setBusy] = useState(null)
   const [modal, setModal] = useState(null)
+  const [detail, setDetail] = useState(null)
   const [form, setForm] = useState({ opportunity_id: '', boq_text: '', sales_notes: '', required_date: '', attachments: [] })
 
   const load = () => api('/engineering/requests').then(setRows).catch(() => setRows([]))
@@ -75,6 +77,15 @@ export default function EngineeringRequests() {
     try { await api(`/engineering/requests/${id}`); await load() } catch (e) { alert(e.message) } finally { setBusy(null) }
   }
 
+  const openDetail = async (id) => {
+    setBusy(`detail:${id}`)
+    try {
+      const data = await api(`/engineering/requests/${id}`)
+      setDetail(data)
+      await load()
+    } catch (e) { alert(e.message) } finally { setBusy(null) }
+  }
+
   const createQuote = async (er) => {
     setBusy(er.id)
     try {
@@ -110,6 +121,9 @@ export default function EngineeringRequests() {
                 <td className="td"><Badge tone={statusTone(r.status)}>{r.status}</Badge></td>
                 <td className="td">
                   <div className="flex gap-1.5">
+                    <button onClick={() => openDetail(r.id)} disabled={busy === `detail:${r.id}`} className="text-xs font-semibold text-slate-500 hover:text-brand-600" title="View details">
+                      {busy === `detail:${r.id}` ? <Loader2 size={13} className="animate-spin" /> : <Eye size={13} />}
+                    </button>
                     <button onClick={() => refresh(r.id)} disabled={busy === r.id} className="text-xs font-semibold text-slate-500 hover:text-brand-600">
                       {busy === r.id ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
                     </button>
@@ -164,6 +178,39 @@ export default function EngineeringRequests() {
         <TextArea label="Sales Instructions to Engineering" value={form.sales_notes} onChange={(e) => setForm((s) => ({ ...s, sales_notes: e.target.value }))} rows={3} placeholder="Client preferences, drawings received, site visit notes…" />
         <AttachmentsField attachments={form.attachments} onChange={(atts) => setForm((s) => ({ ...s, attachments: atts }))} />
       </Modal>
+
+      {detail && (
+        <Modal open onClose={() => setDetail(null)} size="lg" title={detail.number || 'Engineering Request'}
+          subtitle={[detail.customer, detail.project_name].filter(Boolean).join(' · ') || detail.status}
+          footer={<button className="btn-ghost" onClick={() => setDetail(null)}>Close</button>}>
+          <div className="mb-3 flex flex-wrap gap-2 text-xs text-slate-600">
+            <Badge tone={statusTone(detail.status)}>{detail.status}</Badge>
+            {detail.project_location && <span>{detail.project_location}</span>}
+            {detail.required_date && <span>Required {detail.required_date}</span>}
+          </div>
+          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Approved items</p>
+          {(detail.resolved_lines || []).length === 0 && !(detail.approved_items || []).length && (
+            <p className="text-sm text-slate-400">No approved items yet — waiting on EOS.</p>
+          )}
+          <ul className="divide-y divide-slate-100 rounded-xl border border-slate-200">
+            {(detail.resolved_lines || []).map((l, i) => (
+              <li key={l.item_id || i} className="flex items-start justify-between gap-3 px-3 py-2.5">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-ink">{l.item_name}</p>
+                  <p className="text-[11px] text-slate-500">{[l.brand, l.model, l.qty != null ? `qty ${l.qty}` : null].filter(Boolean).join(' · ')}</p>
+                  <StockAvailabilityChips available={l.available} reserved={l.reserved} incoming={l.incoming} compact />
+                </div>
+              </li>
+            ))}
+            {!(detail.resolved_lines || []).length && (detail.approved_items || []).map((raw, i) => (
+              <li key={i} className="px-3 py-2.5 text-sm text-slate-600">
+                {raw.item_name || raw.name || raw.brand || `Line ${i + 1}`}
+                <span className="ml-2 text-[11px] text-slate-400">unresolved in Item Master</span>
+              </li>
+            ))}
+          </ul>
+        </Modal>
+      )}
     </>
   )
 }
