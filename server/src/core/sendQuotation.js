@@ -13,9 +13,19 @@ import { logAudit } from './audit.js'
 import { assertTransition } from './quotationStatus.js'
 import { validateRequiredFields } from '../modules/sales/quotation.rules.js'
 import { creditStatus } from './customerCredit.js'
-import { customerPortalUrl } from '../config/deploy.js'
+import { customerPortalUrl, URLS } from '../config/deploy.js'
 
-const portalBase = () => customerPortalUrl()
+/** Never put localhost in customer-facing emails (phones cannot open it). */
+const portalBase = () => {
+  const u = customerPortalUrl()
+  try {
+    const host = new URL(u).hostname
+    if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0') {
+      return URLS.erp.customer
+    }
+  } catch { /* fall through */ }
+  return u
+}
 
 function smtpConfigured() {
   return !!(process.env.SMTP_HOST && process.env.SMTP_FROM)
