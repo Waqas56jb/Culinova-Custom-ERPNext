@@ -251,7 +251,10 @@ try {
   })
   pass('d1 send → Sent', sendOk.status === 200 && sendOk.body?.status === 'Sent', JSON.stringify(sendOk.body))
   pass('d2 channels portal', sendOk.body?.channels?.portal === true, JSON.stringify(sendOk.body?.channels))
-  pass('d3 email skipped', sendOk.body?.channels?.email === 'skipped', sendOk.body?.channels?.email_detail || '')
+  // Local may be skipped (no SMTP) OR sent (SMTP configured) — both valid
+  const emailCh = sendOk.body?.channels?.email
+  pass('d3 email channel', emailCh === 'skipped' || emailCh === 'sent',
+    `${emailCh} ${sendOk.body?.channels?.email_detail || ''}`)
 
   const { data: portalNotifs } = await supabase.from('notifications').select('id, type, title')
     .eq('user_id', custUser.id).eq('type', 'quotation_sent').eq('ref_id', sendId)
