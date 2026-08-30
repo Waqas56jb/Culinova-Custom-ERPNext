@@ -1448,30 +1448,120 @@ function RevisionsModal({ open, onClose, data, showFin }) {
   )
 }
 
+const AUDIT_ACTION_LABELS = {
+  created: 'Created',
+  edited: 'Edited',
+  revised: 'Revised',
+  'auto: edit': 'Auto-saved edit',
+  'customer-rejected': 'Customer rejected',
+  quotation_rejected: 'Quotation rejected',
+  concession_requested: 'Concession requested',
+  quotation_sent: 'Sent to customer',
+  approval_decision: 'Approval decision',
+  'discount-applied': 'Discount applied',
+  'line-added': 'Line added',
+  'line-deleted': 'Line deleted',
+  'refresh-prices': 'Prices refreshed',
+  lost: 'Marked lost',
+}
+
+const AUDIT_FIELD_LABELS = {
+  reason: 'Reason',
+  note: 'Note',
+  channel: 'Channel',
+  actor_role: 'Actor',
+  to: 'Sent to',
+  to_status: 'New status',
+  from_status: 'From status',
+  decision: 'Decision',
+  type: 'Request type',
+  quotation_number: 'Quotation',
+  number: 'Number',
+  status: 'Status',
+  lines: 'Lines',
+  from_stock: 'From stock',
+  to_purchase: 'To purchase',
+  revision: 'Revision',
+  target_id: 'Target',
+  notification_id: 'Notification',
+  snapshot_total: 'Total at snapshot',
+  snapshot_gp: 'GP % at snapshot',
+}
+
+function humanAuditAction(action) {
+  if (!action) return 'Event'
+  return AUDIT_ACTION_LABELS[action] || String(action).replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+function formatAuditChannels(ch) {
+  if (!ch || typeof ch !== 'object') return null
+  const parts = []
+  if (ch.portal) parts.push(ch.portal_recipients ? `Portal (${ch.portal_recipients})` : 'Portal')
+  if (ch.email === 'sent') parts.push('Email sent')
+  else if (ch.email === 'skipped') parts.push('Email skipped')
+  else if (ch.email) parts.push(`Email: ${ch.email}`)
+  if (ch.pdf === 'portal-link') parts.push('PDF via portal link')
+  else if (ch.pdf) parts.push(`PDF: ${ch.pdf}`)
+  return parts.length ? parts.join(' · ') : null
+}
+
+/** Flatten details into readable label/value rows (no raw JSON). */
+function auditDetailRows(details) {
+  if (!details || typeof details !== 'object') return []
+  const rows = []
+  const skip = new Set(['diff', 'snapshot', 'channels', 'credit_warning', 'email_detail', 'portal_recipients'])
+  for (const [k, v] of Object.entries(details)) {
+    if (skip.has(k) || v == null || v === '') continue
+    if (typeof v === 'object') continue
+    const label = AUDIT_FIELD_LABELS[k] || k.replace(/_/g, ' ')
+    let value = v
+    if (k === 'snapshot_total' && typeof v === 'number') value = sar(v)
+    else if (typeof v === 'boolean') value = v ? 'Yes' : 'No'
+    else value = String(v)
+    rows.push({ label, value })
+  }
+  const ch = formatAuditChannels(details.channels)
+  if (ch) rows.push({ label: 'Channels', value: ch })
+  return rows
+}
+
 function AuditModal({ open, onClose, data }) {
   const { quotation, items } = data
   return (
     <Modal open={open} onClose={onClose} size="lg" title={`Audit trail — ${quotation.ref || quotation.number}`} subtitle={`${items.length} event(s) · newest first`}>
       {items.length === 0 && <p className="text-sm text-slate-400">No audit events yet.</p>}
       <ol className="space-y-3">
-        {items.map((e) => (
-          <li key={`${e.kind}-${e.id}`} className="rounded-xl border border-slate-100 px-3 py-2.5">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge tone={e.kind === 'revision' ? 'blue' : 'slate'}>{e.kind}</Badge>
-              <span className="text-sm font-semibold text-ink">{e.action}</span>
-              {e.reason && (
-                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${e.reason === 'auto: edit' ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
-                  {e.reason === 'auto: edit' ? 'auto' : e.reason === 'manual' ? 'manual' : e.reason}
-                </span>
+        {items.map((e) => {
+          const rows = auditDetailRows(e.details)
+          const reasonChip = e.reason || e.details?.reason
+          return (
+            <li key={`${e.kind}-${e.id}`} className="rounded-xl border border-slate-100 px-3 py-2.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge tone={e.kind === 'revision' ? 'blue' : 'slate'}>
+                  {e.kind === 'revision' ? 'Revision' : 'Event'}
+                </Badge>
+                <span className="text-sm font-semibold text-ink">{humanAuditAction(e.action)}</span>
+                {reasonChip && (
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${reasonChip === 'auto: edit' ? 'bg-amber-50 text-amber-700' : 'bg-violet-50 text-violet-700'}`}>
+                    {reasonChip === 'auto: edit' ? 'auto' : reasonChip === 'manual' ? 'manual' : reasonChip}
+                  </span>
+                )}
+                {e.actor && <span className="text-xs text-slate-500">by {e.actor}</span>}
+                <span className="ml-auto text-[11px] text-slate-400">{(e.at || '').replace('T', ' ').slice(0, 16)}</span>
+              </div>
+              {rows.length > 0 && (
+                <dl className="mt-2 grid gap-1 sm:grid-cols-2">
+                  {rows.map((r) => (
+                    <div key={r.label} className="flex gap-2 rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs">
+                      <dt className="shrink-0 font-semibold text-slate-500">{r.label}</dt>
+                      <dd className="min-w-0 break-words text-ink">{r.value}</dd>
+                    </div>
+                  ))}
+                </dl>
               )}
-              {e.actor && <span className="text-xs text-slate-500">by {e.actor}</span>}
-              <span className="ml-auto text-[11px] text-slate-400">{(e.at || '').replace('T', ' ').slice(0, 16)}</span>
-            </div>
-            {e.details && Object.keys(e.details).length > 0 && (
-              <pre className="mt-1.5 max-h-24 overflow-auto rounded bg-slate-50 p-2 text-[10px] text-slate-600">{JSON.stringify(e.details, null, 0)}</pre>
-            )}
-          </li>
-        ))}
+            </li>
+          )
+        })}
       </ol>
     </Modal>
   )
