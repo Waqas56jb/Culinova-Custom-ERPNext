@@ -29,7 +29,7 @@ console.log(`count=${res.rowCount}`)
 if (CLEAN && res.rowCount) {
   const ids = res.rows.map((r) => r.id)
   const u = await c.query(
-    `update stock_reservations set status='Released', updated_at=now() where id = any($1::uuid[]) returning id`,
+    `update stock_reservations set status='Released' where id = any($1::uuid[]) returning id`,
     [ids],
   )
   console.log(`Released ${u.rowCount} TBS.110 reservations`)
@@ -53,14 +53,14 @@ console.table(q.rows)
 if (CLEAN) {
   const lost = await c.query(`
     update quotations
-    set status='Lost',
-        lost_reason=coalesce(nullif(lost_reason,''), 'S5B1 hygiene — test artifact')
+    set status='Lost'
     where status not in ('Ordered','Lost','Cancelled')
       and (
         number = 'QTN-2026-000181'
         or coalesce(notes,'') ilike '%[S2B1-TEST]%'
         or coalesce(notes,'') ilike '%[S3%'
         or coalesce(notes,'') ilike '%[S4%'
+        or (number = 'QTN-2026-000064' and coalesce(notes,'') ilike '%test%')
       )
     returning number, status
   `)
