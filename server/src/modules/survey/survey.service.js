@@ -364,6 +364,26 @@ export async function updateVisit(id, body, actor) {
   return enrichVisit(data)
 }
 
+export async function deleteVisit(id, actor) {
+  const visit = await loadVisit(id)
+  assertVisitAccess(visit, actor)
+  const { data: lines, error: lErr } = await supabase.from('survey_visit_lines').select('id').eq('visit_id', id)
+  if (lErr) throw lErr
+  const lineIds = (lines || []).map((l) => l.id)
+  if (lineIds.length) {
+    const { data: photos, error: pErr } = await supabase.from('survey_photos').select('id, path').in('line_id', lineIds)
+    if (pErr) throw pErr
+    await removeSurveyPhotos((photos || []).map((p) => p.path))
+    const { error: pdErr } = await supabase.from('survey_photos').delete().in('line_id', lineIds)
+    if (pdErr) throw pdErr
+    const { error: ldErr } = await supabase.from('survey_visit_lines').delete().eq('visit_id', id)
+    if (ldErr) throw ldErr
+  }
+  const { error } = await supabase.from('survey_visits').delete().eq('id', id)
+  if (error) throw error
+  return { ok: true }
+}
+
 export async function submitVisit(id, actor) {
   const visit = await loadVisit(id)
   assertVisitAccess(visit, actor)

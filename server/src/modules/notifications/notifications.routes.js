@@ -116,25 +116,48 @@ r.get('/audiences', authRequired, authorize('admin', 'read'), asyncWrap(async (r
   })
 }))
 
+function isSurveyOfficeUser(u, slice = 'all') {
+  const role = String(u?.role || '')
+  const des = String(u?.designation || '')
+  const tech = role === 'Technician'
+  const sub = des === 'Sub Admin'
+  const adm = des === 'Administrator'
+  if (slice === 'technicians') return tech
+  if (slice === 'subadmins') return sub
+  if (slice === 'admins') return adm
+  return tech || sub || adm
+}
+
 // ── admin: send a notification / announcement to a target audience ──
 r.post('/send', authRequired, authorize('admin', 'create'), asyncWrap(async (req, res) => {
   const { audience, value, title, body } = req.body
   const msg = (body || '').trim()
   if (!msg) return res.status(422).json({ error: 'Message is required' })
 
-  let q = supabase.from('users').select('id')
-  if (audience === 'all_customers') q = q.eq('role', 'Customer')
-  else if (audience === 'all_employees') q = q.neq('role', 'Customer')
-  else if (audience === 'designation') {
-    if (!value) return res.status(422).json({ error: 'Pick a designation' })
-    q = q.neq('role', 'Customer').ilike('designation', value)
-  } else if (audience === 'email') {
-    if (!value) return res.status(422).json({ error: 'Enter the recipient email' })
-    q = q.ilike('email', value.trim())
-  } else return res.status(422).json({ error: 'Choose who should receive this' })
+  let recipients
+  if (audience === 'survey_team') {
+    const { data, error } = await supabase.from('users').select('id, role, designation, department')
+    if (error) throw error
+    recipients = (data || []).filter((u) => isSurveyOfficeUser(u, value || 'all'))
+  } else {
+    let q = supabase.from('users').select('id')
+    if (audience === 'all_customers') q = q.eq('role', 'Customer')
+    else if (audience === 'all_employees') q = q.neq('role', 'Customer')
+    else if (audience === 'designation') {
+      if (!value) return res.status(422).json({ error: 'Pick a designation' })
+      q = q.neq('role', 'Customer').ilike('designation', value)
+    } else if (audience === 'email') {
+      if (!value) return res.status(422).json({ error: 'Enter the recipient email' })
+      q = q.ilike('email', value.trim())
+    } else if (audience === 'role') {
+      if (!value) return res.status(422).json({ error: 'Pick a role' })
+      q = q.eq('role', value)
+    } else return res.status(422).json({ error: 'Choose who should receive this' })
+    const { data, error } = await q
+    if (error) throw error
+    recipients = data
+  }
 
-  const { data: recipients, error } = await q
-  if (error) throw error
   if (!recipients?.length) return res.status(404).json({ error: 'No matching recipients found' })
 
   const rows = recipients.map((u) => ({ user_id: u.id, title: (title || 'Announcement').trim(), body: msg, sender: req.user.name }))

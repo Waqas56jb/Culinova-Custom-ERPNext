@@ -8,7 +8,7 @@ import { asyncWrap } from '../../middleware/error.js'
 import { logAudit } from '../../core/audit.js'
 import {
   listSites, createSite, updateSite, getCatalog,
-  listVisits, getVisit, createVisit, updateVisit, submitVisit,
+  listVisits, getVisit, createVisit, updateVisit, deleteVisit, submitVisit,
   addLine, updateLine, deleteLine, addPhoto, deletePhoto, updatePhoto,
 } from './survey.service.js'
 
@@ -66,6 +66,12 @@ r.post('/visits', authorize('survey', 'create'), asyncWrap(async (req, res) => {
 
 r.get('/visits/:id', authorize('survey', 'read'), asyncWrap(async (req, res) => {
   res.json(await getVisit(req.params.id, req.user))
+}))
+
+r.delete('/visits/:id', authorizeSurvey('delete'), asyncWrap(async (req, res) => {
+  const result = await deleteVisit(req.params.id, req.user)
+  await logAudit(req.user, 'survey_visit', req.params.id, 'delete', null)
+  res.json(result)
 }))
 
 r.patch('/visits/:id', authorizeSurvey('update'), asyncWrap(async (req, res) => {
