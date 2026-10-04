@@ -29,6 +29,7 @@ import { aiRouter } from '../modules/ai/ai.routes.js'                        // 
 import engineeringRoutes from '../modules/engineering/engineering.routes.js'
 import { lookupsRouter } from '../modules/lookups/lookups.routes.js'
 import eosInboundRoutes from '../modules/integrations/eosInbound.routes.js'
+import surveyRoutes from '../modules/survey/survey.routes.js'
 import { resources } from '../core/resources.js'
 import { crudRouter } from '../core/crud.js'
 import { rolePanels } from '../rbac/permissions.js'
@@ -81,6 +82,7 @@ api.use('/ai', aiRouter())                      // M9 AI Business Intelligence (
 api.use('/lookups', lookupsRouter())            // shared read-only pickers (projects/customers/suppliers/items/warehouses)
 api.use('/engineering', engineeringRoutes)      // Engineering Request ERP ↔ EOS handoff
 api.use('/integrations/eos', eosInboundRoutes)  // EOS → ERP push (engineering sync)
+api.use('/survey', surveyRoutes)                // Equipment condition survey (modular; shares customers + sites)
 
 // STOCK MOVEMENT — these intercept POST at the same paths as the generic CRUD so creating a
 // document ALSO moves real stock (stock_balances + stock_ledger). Other verbs fall through.

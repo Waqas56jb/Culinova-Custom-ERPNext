@@ -2,12 +2,13 @@
 export const rolePanels = {
   Management: ['*'],
   'Sales User': ['sales'],
-  'Project Manager': ['projects', 'procurement', 'site'],
+  'Project Manager': ['projects', 'procurement', 'site', 'survey'],
   'Purchase User': ['procurement'],
   'Stock User': ['warehouse'],
   'Accounts User': ['finance'],
-  'Site Engineer': ['site'],
-  'Service User': ['service'],
+  'Site Engineer': ['site', 'survey'],
+  Technician: ['survey'],
+  'Service User': ['service', 'survey'],
   'HR User': ['hr'],
 }
 

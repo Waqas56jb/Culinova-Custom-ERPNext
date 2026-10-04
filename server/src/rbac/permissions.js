@@ -5,7 +5,7 @@
 
 export const PANELS = [
   'admin', 'sales', 'projects', 'procurement', 'warehouse',
-  'finance', 'site', 'service', 'hr',
+  'finance', 'site', 'service', 'hr', 'survey',
 ]
 
 // role → allowed panels ('*' = all)
@@ -14,13 +14,13 @@ export const rolePanels = {
   'System Admin': ['*'],
   'Sales User': ['sales'],
   'Sales Manager': ['sales'],
-  'Project Manager': ['projects', 'procurement', 'site'],
+  'Project Manager': ['projects', 'procurement', 'site', 'survey'],
   'Purchase User': ['procurement'],
   'Stock User': ['warehouse'],
   'Accounts User': ['finance'],
-  'Site Engineer': ['site'],
-  Technician: ['site'],
-  'Service User': ['service'],
+  'Site Engineer': ['site', 'survey'],
+  Technician: ['site', 'survey'],
+  'Service User': ['service', 'survey'],
   'HR User': ['hr'],
 }
 

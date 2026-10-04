@@ -24,6 +24,19 @@ export function lookupsRouter() {
     supabase.from('projects').select('id, number, name, customer').order('created_at', { ascending: false }).limit(500)
       .then(({ data, error }) => ({ data: (data || []).map((p) => ({ id: p.id, ref: p.number, name: p.name, label: [p.number, p.name].filter(Boolean).join(' · '), customer: p.customer })), error }))))
 
+  // sites → { id, name, customer_id } (physical location under a customer — not a project)
+  r.get('/sites', list('sites', (req) => {
+    let q = supabase.from('sites').select('id, name, customer_id, location, project_id').order('name').limit(1000)
+    if (req.query.customer_id) q = q.eq('customer_id', req.query.customer_id)
+    return q.then(({ data, error }) => ({
+      data: (data || []).map((s) => ({
+        id: s.id, name: s.name, customer_id: s.customer_id, location: s.location, project_id: s.project_id,
+        label: s.name,
+      })),
+      error,
+    }))
+  }))
+
   // customers → { id, name, code }
   r.get('/customers', list('customers', () =>
     supabase.from('customers').select('id, name, code, category').order('name').limit(1000)
