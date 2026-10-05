@@ -3,6 +3,7 @@ import { uploadSurveyPhoto, signSurveyPhoto, removeSurveyPhotos } from './storag
 import {
   PHOTO_KINDS, VISIT_STATUSES, LINE_CONDITIONS,
   lineTotals, publicItem, catalogRowsFromMaster, normalizeLineQuantities,
+  normalizePhotoKind,
 } from './catalog.js'
 import { DATA as MASTER_DATA } from './data/masterData.js'
 
@@ -219,8 +220,18 @@ async function loadVisit(id) {
   return data
 }
 
-function assertDraft(visit) {
-  if (visit.status !== 'Draft') fail(422, 'Submitted visits cannot be edited')
+function assertEditable(visit) {
+  if (visit.locked) fail(422, 'This visit is locked and cannot be edited')
+}
+
+async function touchLastModified(visitId, actor) {
+  const patch = {
+    last_modified_at: nowIso(),
+    last_modified_by: actor?.id || null,
+    last_modified_by_name: actor?.name || null,
+  }
+  const { error } = await supabase.from('survey_visits').update(patch).eq('id', visitId)
+  if (error) throw error
 }
 
 async function enrichVisit(visit) {
@@ -348,7 +359,7 @@ export async function createVisit(body, actor) {
 export async function updateVisit(id, body, actor) {
   const visit = await loadVisit(id)
   assertVisitAccess(visit, actor)
-  assertDraft(visit)
+  assertEditable(visit)
   const patch = {}
   if (body.visited_at !== undefined) patch.visited_at = body.visited_at || nowIso()
   if (body.notes !== undefined) patch.notes = str(body.notes)
@@ -358,6 +369,12 @@ export async function updateVisit(id, body, actor) {
     const site = await loadSite(body.site_id)
     patch.site_id = site.id
   }
+  if (body.locked !== undefined && !isTechnician(actor)) {
+    patch.locked = !!body.locked
+  }
+  patch.last_modified_at = nowIso()
+  patch.last_modified_by = actor?.id || null
+  patch.last_modified_by_name = actor?.name || null
   if (!Object.keys(patch).length) return enrichVisit(visit)
   const { data, error } = await supabase.from('survey_visits').update(patch).eq('id', id).select().single()
   if (error) throw error
@@ -393,6 +410,9 @@ export async function submitVisit(id, actor) {
   const { data, error } = await supabase.from('survey_visits').update({
     status: 'Submitted',
     submitted_at: nowIso(),
+    last_modified_at: nowIso(),
+    last_modified_by: actor?.id || null,
+    last_modified_by_name: actor?.name || null,
   }).eq('id', id).select().single()
   if (error) throw error
   return enrichVisit(data)
@@ -401,19 +421,20 @@ export async function submitVisit(id, actor) {
 export async function addLine(visitId, body, actor) {
   const visit = await loadVisit(visitId)
   assertVisitAccess(visit, actor)
-  assertDraft(visit)
+  assertEditable(visit)
   const type = await resolveType(body.type_code)
   await assertItem(uuid(body.item_id))
   const row = sanitizeLine(body, { type })
   const { data, error } = await supabase.from('survey_visit_lines').insert({ visit_id: visitId, ...row }).select().single()
   if (error) throw error
+  await touchLastModified(visitId, actor)
   return data
 }
 
 export async function updateLine(visitId, lineId, body, actor) {
   const visit = await loadVisit(visitId)
   assertVisitAccess(visit, actor)
-  assertDraft(visit)
+  assertEditable(visit)
   const { data: existing } = await supabase.from('survey_visit_lines').select('*').eq('id', lineId).eq('visit_id', visitId).maybeSingle()
   if (!existing) fail(404, 'Line not found')
   const type = body.type_code ? await resolveType(body.type_code) : { code: existing.type_code, name: existing.type_name, category: existing.category }
@@ -421,13 +442,14 @@ export async function updateLine(visitId, lineId, body, actor) {
   const merged = sanitizeLine({ ...existing, ...body }, { type })
   const { data, error } = await supabase.from('survey_visit_lines').update(merged).eq('id', lineId).select().single()
   if (error) throw error
+  await touchLastModified(visitId, actor)
   return data
 }
 
 export async function deleteLine(visitId, lineId, actor) {
   const visit = await loadVisit(visitId)
   assertVisitAccess(visit, actor)
-  assertDraft(visit)
+  assertEditable(visit)
   const { data: existing } = await supabase.from('survey_visit_lines').select('id').eq('id', lineId).eq('visit_id', visitId).maybeSingle()
   if (!existing) fail(404, 'Line not found')
   const { data: photos, error: photoErr } = await supabase.from('survey_photos').select('id, path').eq('line_id', lineId)
@@ -435,17 +457,21 @@ export async function deleteLine(visitId, lineId, actor) {
   await removeSurveyPhotos((photos || []).map((p) => p.path))
   const { error } = await supabase.from('survey_visit_lines').delete().eq('id', lineId)
   if (error) throw error
+  await touchLastModified(visitId, actor)
   return { ok: true }
 }
 
 export async function addPhoto(visitId, lineId, body, actor) {
   const visit = await loadVisit(visitId)
   assertVisitAccess(visit, actor)
-  assertDraft(visit)
+  assertEditable(visit)
   const { data: line } = await supabase.from('survey_visit_lines').select('id').eq('id', lineId).eq('visit_id', visitId).maybeSingle()
   if (!line) fail(404, 'Line not found')
   const site = await loadSite(visit.site_id)
-  const kind = PHOTO_KINDS.includes(body.kind) ? body.kind : 'Other'
+  const kind = normalizePhotoKind(body.kind) || 'Other'
+  const bucket = body.condition_bucket === 'ns' || body.condition_bucket === 'oos'
+    ? body.condition_bucket
+    : null
   const stored = await uploadSurveyPhoto({
     dataUrl: body.dataUrl,
     name: body.name || 'photo.jpg',
@@ -459,8 +485,10 @@ export async function addPhoto(visitId, lineId, body, actor) {
     kind,
     path: stored.path,
     name: stored.name,
+    condition_bucket: bucket,
   }).select().single()
   if (error) throw error
+  await touchLastModified(visitId, actor)
   const [signed] = await signPhotos([data])
   return signed
 }
@@ -472,7 +500,8 @@ export async function deletePhoto(photoId, actor) {
   if (line?.visit_id) {
     const visit = await loadVisit(line.visit_id)
     assertVisitAccess(visit, actor)
-    assertDraft(visit)
+    assertEditable(visit)
+    await touchLastModified(line.visit_id, actor)
   }
   await removeSurveyPhotos([photo.path])
   const { error } = await supabase.from('survey_photos').delete().eq('id', photoId)
@@ -487,12 +516,26 @@ export async function updatePhoto(photoId, body, actor) {
   if (line?.visit_id) {
     const visit = await loadVisit(line.visit_id)
     assertVisitAccess(visit, actor)
-    assertDraft(visit)
+    assertEditable(visit)
   }
-  const kind = str(body.kind)
-  if (!PHOTO_KINDS.includes(kind)) fail(400, `kind must be one of: ${PHOTO_KINDS.join(', ')}`)
-  const { data, error } = await supabase.from('survey_photos').update({ kind }).eq('id', photoId).select().single()
+  const patch = {}
+  if (body.kind !== undefined) {
+    const kind = normalizePhotoKind(body.kind)
+    if (!kind) fail(400, `kind must be one of: ${PHOTO_KINDS.join(', ')}`)
+    patch.kind = kind
+  }
+  if (body.condition_bucket !== undefined) {
+    const b = body.condition_bucket
+    if (b !== null && b !== 'ns' && b !== 'oos') fail(400, 'condition_bucket must be ns, oos, or null')
+    patch.condition_bucket = b
+  }
+  if (!Object.keys(patch).length) {
+    const [signed] = await signPhotos([photo])
+    return signed
+  }
+  const { data, error } = await supabase.from('survey_photos').update(patch).eq('id', photoId).select().single()
   if (error) throw error
+  if (line?.visit_id) await touchLastModified(line.visit_id, actor)
   const [signed] = await signPhotos([data])
   return signed
 }

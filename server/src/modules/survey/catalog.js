@@ -4,12 +4,20 @@
  */
 export const PHOTO_KINDS = [
   'Equipment',
-  'Nameplate',
   'Problem',
-  'Interior/Filter',
+  'Nameplate',
   'Control Panel',
+  'Interior or Filter',
   'Other',
 ]
+
+/** Older rows used "Interior/Filter"; accept both on write. */
+export function normalizePhotoKind(raw) {
+  const s = String(raw || '').trim()
+  if (s === 'Interior/Filter') return 'Interior or Filter'
+  if (PHOTO_KINDS.includes(s)) return s
+  return null
+}
 
 export const VISIT_STATUSES = ['Draft', 'Submitted']
 
